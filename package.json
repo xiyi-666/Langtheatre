@@ -1,0 +1,20 @@
+{
+  "name": "linguaquest",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/client",
+    "tests/e2e"
+  ],
+  "scripts": {
+    "client:dev": "npm run dev --workspace apps/client",
+    "client:build": "npm run build --workspace apps/client",
+    "client:test": "npm run test --workspace apps/client",
+    "server:dev": "go run ./cmd/server",
+    "server:test": "go test ./... -cover",
+    "lint": "npm run lint --workspace apps/client",
+    "typecheck": "npm run typecheck --workspace apps/client",
+    "test:e2e": "npm run test --workspace tests/e2e",
+    "test:perf": "k6 run tests/perf/k6-smoke.js"
+  }
+}

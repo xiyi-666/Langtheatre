@@ -1,0 +1,6 @@
+name = "linguaquest-api-edge"
+main = "worker.js"
+compatibility_date = "2026-03-25"
+
+[vars]
+ORIGIN_API = "https://api.linguaquest.example.com"

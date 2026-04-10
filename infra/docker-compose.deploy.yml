@@ -1,0 +1,57 @@
+services:
+  client:
+    image: ${DOCKERHUB_USERNAME}/linguaquest-client:${CLIENT_IMAGE_TAG:-latest}
+    container_name: linguaquest-client
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+
+  server:
+    image: ${DOCKERHUB_USERNAME}/linguaquest-server:${SERVER_IMAGE_TAG:-latest}
+    container_name: linguaquest-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      JWT_SECRET: ${JWT_SECRET}
+      REDIS_ADDR: redis:6379
+      SUPABASE_DB_URL: ${SUPABASE_DB_URL}
+      MIGRATIONS_DIR: migrations
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com}
+      TTS_API_URL: ${TTS_API_URL:-}
+      TTS_API_KEY: ${TTS_API_KEY:-}
+      TTS_VOICE: ${TTS_VOICE:-female-1}
+      TTS_USE_UPLOAD_PROMPT: ${TTS_USE_UPLOAD_PROMPT:-false}
+      TTS_PROMPT_AUDIO_PATH: ${TTS_PROMPT_AUDIO_PATH:-~/autodl-tmp/CosyVoice/test/test.225.wav}
+      TTS_RETURN_JSON: ${TTS_RETURN_JSON:-true}
+      TTS_TIMEOUT_SECONDS: ${TTS_TIMEOUT_SECONDS:-45}
+      TTS_MAX_RETRIES: ${TTS_MAX_RETRIES:-1}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    depends_on:
+      - redis
+      - rabbitmq
+
+  redis:
+    image: redis:7-alpine
+    container_name: linguaquest-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: linguaquest-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+volumes:
+  redis-data:
+  rabbitmq-data:

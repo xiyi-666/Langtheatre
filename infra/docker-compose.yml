@@ -1,0 +1,15 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: linguaquest-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: linguaquest-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
