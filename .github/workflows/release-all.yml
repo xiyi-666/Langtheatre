@@ -89,6 +89,21 @@ jobs:
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi
       - run: npm install
+
+      - name: Validate Tauri icon source
+        shell: bash
+        run: |
+          test -f apps/client/src-tauri/icons/app-icon.svg || (echo "Missing apps/client/src-tauri/icons/app-icon.svg" && exit 1)
+
+      - name: Generate Tauri icons (CI)
+        working-directory: apps/client
+        run: npx tauri icon src-tauri/icons/app-icon.svg
+
+      - name: Validate generated common icon
+        shell: bash
+        run: |
+          test -f apps/client/src-tauri/icons/icon.png || (echo "Missing generated icon: apps/client/src-tauri/icons/icon.png" && exit 1)
+
       - name: Init Android project (CI)
         run: npx tauri android init --ci
         working-directory: apps/client
