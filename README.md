@@ -46,3 +46,25 @@ LinguaQuest 是一个使用 Tauri 2 + React + TypeScript + Go 构建的跨平台
 - 前端单测：`npm run test --workspace apps/client`
 - 前端 E2E：`npm run test --workspace tests/e2e`
 - 性能基线：`npm run test:perf`（需安装 k6）
+
+## 全端 CI/CD（Web + 桌面 + Android + Docker）
+
+- 工作流：`.github/workflows/release-all.yml`
+- 触发方式：
+	- 推送 Tag（如 `v0.1.0`）自动触发
+	- 在 GitHub Actions 页面手动触发 `release-all`
+
+### 需要配置的 GitHub Secrets
+
+- `DOCKERHUB_USERNAME`：Docker Hub 用户名
+- `DOCKERHUB_TOKEN`：Docker Hub Access Token
+- `VITE_API_URL_PROD`：前端生产 API 地址（示例：`http://61.244.24.7:8080/graphql` 或 `https://api.yourdomain.com/graphql`）
+- `VITE_SENTRY_DSN`：可选，前端 Sentry DSN
+
+### 发布产物
+
+- `web-dist`：Web 静态站点构建产物
+- `tauri-windows-latest`：Windows 桌面安装包
+- `tauri-macos-latest`：macOS 桌面安装包
+- `android-apk`：Android APK 产物
+- Docker 镜像：`<DOCKERHUB_USERNAME>/linguaquest-server` 与 `<DOCKERHUB_USERNAME>/linguaquest-client`

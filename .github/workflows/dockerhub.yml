@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    tags: ["v*"]
     paths:
       - apps/client/**
       - apps/server/**
