@@ -1,4 +1,4 @@
-import { TouchEvent, useEffect, useRef, useState } from "react";
+import { TouchEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -63,8 +63,6 @@ export function TheaterPage() {
   }, []);
 
   const dialogueCount = theater?.dialogues.length ?? 0;
-  const safeActiveIndex = dialogueCount > 0 ? Math.min(activeIndex, dialogueCount - 1) : 0;
-  const active = theater?.dialogues[safeActiveIndex];
   const progress = dialogueCount > 1 ? Math.round((activeIndex / (dialogueCount - 1)) * 100) : 0;
   const speakers = theater?.characters?.length
     ? theater.characters.slice(0, 2).map((c) => c.name)
@@ -86,26 +84,29 @@ export function TheaterPage() {
     }, 1000);
   }
 
-  async function playDialogue(index: number) {
-    const target = theater?.dialogues[index];
-    if (!target) return;
-    setLoading(true);
-    try {
-      if (target.audioUrl) {
-        try {
-          await playClip(target.audioUrl, playbackRate);
-        } catch {
+  const playDialogue = useCallback(
+    async (index: number) => {
+      const target = theater?.dialogues[index];
+      if (!target) return;
+      setLoading(true);
+      try {
+        if (target.audioUrl) {
+          try {
+            await playClip(target.audioUrl, playbackRate);
+          } catch {
+            await speakText(target.text, playbackRate);
+          }
+        } else {
           await speakText(target.text, playbackRate);
         }
-      } else {
-        await speakText(target.text, playbackRate);
+      } catch {
+        showHint("音频不可用，请稍后重试");
+      } finally {
+        setLoading(false);
       }
-    } catch {
-      showHint("音频不可用，请稍后重试");
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+    [playbackRate, theater]
+  );
 
   async function handlePlayCurrent() {
     await playDialogue(activeIndex);
@@ -135,7 +136,7 @@ export function TheaterPage() {
     return () => {
       disposed = true;
     };
-  }, [autoPlay, dialogueCount, playbackRate, theater]);
+  }, [autoPlay, dialogueCount, playDialogue, theater]);
 
   async function handleToggleFavorite() {
     if (!theater) return;

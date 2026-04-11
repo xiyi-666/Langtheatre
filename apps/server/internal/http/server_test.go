@@ -13,7 +13,7 @@ import (
 )
 
 func TestGraphQLRegisterAndLogin(t *testing.T) {
-	svc := service.New(store.NewMemoryStore(), nil, nil, nil, nil, "integration-secret")
+	svc := service.New(store.NewMemoryStore(), nil, nil, nil, "integration-secret")
 	schema, err := graph.NewSchema(svc)
 	if err != nil {
 		t.Fatalf("schema init failed: %v", err)

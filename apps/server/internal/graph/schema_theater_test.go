@@ -11,7 +11,7 @@ import (
 )
 
 func TestTheaterTypeIncludesQuizQuestions(t *testing.T) {
-	svc := service.New(store.NewMemoryStore(), nil, nil, nil, nil, "test-secret")
+	svc := service.New(store.NewMemoryStore(), nil, nil, nil, "test-secret")
 	schema, err := NewSchema(svc)
 	if err != nil {
 		t.Fatalf("NewSchema: %v", err)

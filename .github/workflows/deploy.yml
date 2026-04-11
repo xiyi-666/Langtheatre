@@ -1,5 +1,8 @@
 name: deploy
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   workflow_dispatch:
   push:
@@ -16,6 +19,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
+          cache-dependency-path: apps/server/go.sum
       - run: go mod tidy
       - run: go build -o linguaquest-api ./cmd/server
       - uses: actions/upload-artifact@v4
@@ -36,8 +40,12 @@ jobs:
   smoke-test:
     runs-on: ubuntu-latest
     needs: [build-server, deploy-worker]
-    if: ${{ secrets.HEALTHCHECK_URL != '' }}
     steps:
+      - name: Skip when healthcheck URL is not configured
+        if: ${{ secrets.HEALTHCHECK_URL == '' }}
+        run: echo "HEALTHCHECK_URL is empty. Skip smoke test."
+
       - name: Check health endpoint
+        if: ${{ secrets.HEALTHCHECK_URL != '' }}
         run: |
           curl -fsSL "${{ secrets.HEALTHCHECK_URL }}" | tee health.json

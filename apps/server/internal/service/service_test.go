@@ -1,13 +1,27 @@
 package service
 
 import (
+	"context"
 	"testing"
 
+	"github.com/linguaquest/server/internal/domain"
 	"github.com/linguaquest/server/internal/store"
 )
 
+type fakeGenerator struct{}
+
+func (fakeGenerator) Generate(_ context.Context, _ string, _ string, _ float64, _ string) ([]domain.Dialogue, []domain.QuizQuestion, error) {
+	return []domain.Dialogue{
+		{Speaker: "阿明", Text: "欢迎光临茶餐厅", ZhSubtitle: "欢迎光临茶餐厅"},
+		{Speaker: "小美", Text: "我要一杯奶茶", ZhSubtitle: "我要一杯奶茶"},
+	}, []domain.QuizQuestion{
+		{Question: "小美点了什么？", Options: []string{"奶茶", "咖啡", "柠檬茶", "热水"}, AnswerKey: "奶茶"},
+		{Question: "场景在哪里？", Options: []string{"图书馆", "茶餐厅", "地铁站", "学校"}, AnswerKey: "茶餐厅"},
+	}, nil
+}
+
 func TestRegisterLoginAndGenerateFlow(t *testing.T) {
-	svc := New(store.NewMemoryStore(), nil, nil, nil, nil, "unit-test-secret")
+	svc := New(store.NewMemoryStore(), nil, fakeGenerator{}, nil, "unit-test-secret")
 	token, err := svc.Register("qa@linguaquest.app", "password123")
 	if err != nil || token == "" {
 		t.Fatalf("register failed: %v", err)
@@ -20,11 +34,11 @@ func TestRegisterLoginAndGenerateFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse token failed: %v", err)
 	}
-	theater, err := svc.GenerateTheater(user.ID, "CANTONESE", "茶餐厅对话", 5.5, "LISTENING")
+	theater, err := svc.GenerateTheater(user.ID, "CANTONESE", "茶餐厅对话", 5.5, "ROLEPLAY")
 	if err != nil {
 		t.Fatalf("generate failed: %v", err)
 	}
-	result, err := svc.SubmitAnswers(user.ID, theater.ID, []string{"茶餐厅对话", "緊張"})
+	result, err := svc.SubmitAnswers(user.ID, theater.ID, []string{"奶茶", "茶餐厅"})
 	if err != nil {
 		t.Fatalf("submit failed: %v", err)
 	}
