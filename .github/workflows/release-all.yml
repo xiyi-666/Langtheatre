@@ -107,7 +107,21 @@ jobs:
       - name: Init Android project (CI)
         run: npx tauri android init --ci
         working-directory: apps/client
-      - run: npm run tauri:android:build --workspace apps/client
+      - name: Build Android app (with retry)
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            echo "Android build attempt $i/3"
+            if npm run tauri:android:build --workspace apps/client; then
+              exit 0
+            fi
+            if [ "$i" -lt 3 ]; then
+              echo "Build failed (likely transient network/Gradle download issue). Retrying in 20s..."
+              sleep 20
+            fi
+          done
+          echo "Android build failed after 3 attempts."
+          exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
