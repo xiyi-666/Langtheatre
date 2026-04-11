@@ -38,17 +38,26 @@ jobs:
 
   tauri-core:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/client/src-tauri
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: npm run build --workspace apps/client
+
+      - name: Validate frontendDist exists for Tauri
+        shell: bash
+        run: |
+          test -d apps/client/dist || (echo "Missing apps/client/dist. Run frontend build before cargo check." && exit 1)
+
       - name: Install Linux dependencies for Tauri
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check
+        working-directory: apps/client/src-tauri
 
   e2e:
     runs-on: ubuntu-latest

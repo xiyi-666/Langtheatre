@@ -47,6 +47,21 @@ jobs:
           node-version: "20"
       - uses: dtolnay/rust-toolchain@stable
       - run: npm install
+      - name: Validate Tauri icon source
+        shell: bash
+        run: |
+          test -f apps/client/src-tauri/icons/app-icon.svg || (echo "Missing apps/client/src-tauri/icons/app-icon.svg" && exit 1)
+
+      - name: Generate Tauri icons (CI)
+        working-directory: apps/client
+        run: npx tauri icon src-tauri/icons/app-icon.svg
+
+      - name: Validate generated platform icons
+        shell: bash
+        run: |
+          test -f apps/client/src-tauri/icons/icon.ico || (echo "Missing generated Windows icon: apps/client/src-tauri/icons/icon.ico" && exit 1)
+          test -f apps/client/src-tauri/icons/icon.icns || (echo "Missing generated macOS icon: apps/client/src-tauri/icons/icon.icns" && exit 1)
+
       - run: npm run tauri:build --workspace apps/client
       - uses: actions/upload-artifact@v4
         with:
