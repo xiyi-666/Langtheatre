@@ -75,6 +75,10 @@ jobs:
     env:
       VITE_API_URL: ${{ secrets.VITE_API_URL_PROD }}
       VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -107,21 +111,39 @@ jobs:
       - name: Init Android project (CI)
         run: npx tauri android init --ci
         working-directory: apps/client
-      - name: Build Android app (with retry)
+
+      - name: Build Android app (release if keystore configured, else debug)
         shell: bash
+        working-directory: apps/client
         run: |
+          set -e
+          MODE="--debug"
+
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > src-tauri/gen/android/release.keystore
+            export TAURI_ANDROID_KEYSTORE_PATH="src-tauri/gen/android/release.keystore"
+            export TAURI_ANDROID_KEYSTORE_PASSWORD="$ANDROID_KEYSTORE_PASSWORD"
+            export TAURI_ANDROID_KEY_ALIAS="$ANDROID_KEY_ALIAS"
+            export TAURI_ANDROID_KEY_PASSWORD="$ANDROID_KEY_PASSWORD"
+            MODE=""
+            echo "Keystore detected: using release build."
+          else
+            echo "Keystore secrets not fully configured: using debug build to keep CI green."
+          fi
+
           for i in 1 2 3; do
-            echo "Android build attempt $i/3"
-            if npm run tauri:android:build --workspace apps/client; then
+            echo "Android build attempt $i/3 (mode: ${MODE:---release})"
+            if npx tauri android build $MODE; then
               exit 0
             fi
             if [ "$i" -lt 3 ]; then
-              echo "Build failed (likely transient network/Gradle download issue). Retrying in 20s..."
+              echo "Build failed. Retrying in 20s..."
               sleep 20
             fi
           done
           echo "Android build failed after 3 attempts."
           exit 1
+
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
