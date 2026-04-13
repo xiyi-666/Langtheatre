@@ -37,4 +37,3 @@ go.work.sum
 
 # Do not publish local GitHub automation/config
 .github/agents/
-.github/workflows/
