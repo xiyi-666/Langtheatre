@@ -1,4 +1,4 @@
-import { TouchEvent, useCallback, useEffect, useRef, useState } from "react";
+import { TouchEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -73,6 +73,68 @@ export function TheaterPage() {
       : theater?.mode === "APPRECIATION"
         ? { label: "完成欣赏", onClick: () => navigate("/library"), aria: "完成欣赏并返回剧场库" }
         : { label: "继续答题", onClick: () => navigate(`/quiz/${theater?.id ?? id}`), aria: "进入答题页面" };
+
+  const learningCards = useMemo(() => {
+    if (!theater) return [] as Array<{ term: string; note: string; detail: string }>;
+
+    const stopWords = new Set([
+      "the", "a", "an", "is", "are", "to", "of", "and", "in", "for", "on", "with", "that", "this", "it", "you", "we", "i",
+      "我", "你", "佢", "是", "的", "了", "在", "有", "和", "就", "都", "而", "及", "與", "呢", "啊", "嗎", "啦", "呀"
+    ]);
+
+    const baseText = [theater.topic, theater.sceneDescription ?? "", ...theater.dialogues.map((d) => d.text)].join(" ");
+    const candidates = baseText
+      .split(/[^\p{L}\p{N}'’-]+/u)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= (theater.language === "ENGLISH" ? 4 : 2))
+      .filter((token) => !stopWords.has(token.toLowerCase()));
+
+    const uniqueTerms = Array.from(new Set(candidates)).slice(0, 6);
+    const cards = uniqueTerms.map((term) => {
+      if (theater.language === "CANTONESE") {
+        return {
+          term,
+          note: "结合本剧情高频表达提炼",
+          detail: `「${term}」来自当前剧情语境。练习建议：先复述原句，再替换同义表达并进行 1 句情景扩展。`
+        };
+      }
+      return {
+        term,
+        note: "Extracted from current storyline",
+        detail: `"${term}" is extracted from this storyline. Practice by paraphrasing the original line, then create one new sentence in the same scene.`
+      };
+    });
+
+    if (theater.language === "CANTONESE") {
+      cards.push(
+        {
+          term: "语法：时间先后（先…再…）",
+          note: "叙事推进常用句式",
+          detail: "教学：用“先 + 动作A，再 + 动作B”表达步骤顺序。示例：先落单，再等位。请按剧情自己造 2 句。"
+        },
+        {
+          term: "语法：情态表达（想/要/可以）",
+          note: "请求与意图表达",
+          detail: "教学：想=愿望，要=需求，可以=许可/能力。示例：我想试下新品；我可以加杯热奶茶吗？"
+        }
+      );
+    } else {
+      cards.push(
+        {
+          term: "Grammar: Sequence (first...then...)",
+          note: "Useful for scene narration",
+          detail: "Use 'first + action A, then + action B' to describe order. Create 2 sentences based on the current scene."
+        },
+        {
+          term: "Grammar: Modal verbs (can / should / would)",
+          note: "Requests and suggestions",
+          detail: "Use can for ability/permission, should for advice, would for polite requests. Rewrite one dialogue line with each modal."
+        }
+      );
+    }
+
+    return cards.slice(0, 8);
+  }, [theater]);
 
   function showHint(text: string) {
     setGestureHint(text);
@@ -151,7 +213,7 @@ export function TheaterPage() {
     touchStartTimeRef.current = Date.now();
   }
 
-  function handleDialogueTouchEnd(event: TouchEvent<HTMLLIElement>) {
+  function handleDialogueTouchEnd(event: TouchEvent<HTMLLIElement>, index: number) {
     const startX = touchStartXRef.current;
     const startTime = touchStartTimeRef.current;
     touchStartXRef.current = null;
@@ -175,8 +237,9 @@ export function TheaterPage() {
       return;
     }
 
-    if (now - lastTapTimeRef.current < 280) {
-      void handlePlayCurrent();
+    if (now - lastTapTimeRef.current < 320) {
+      setActiveIndex(index);
+      void playDialogue(index);
       showHint("双击重播当前句");
       lastTapTimeRef.current = 0;
       return;
@@ -242,7 +305,12 @@ export function TheaterPage() {
                   animate={{ opacity: 1, y: 0 }}
                   onClick={() => setActiveIndex(index)}
                   onTouchStart={handleDialogueTouchStart}
-                  onTouchEnd={handleDialogueTouchEnd}
+                  onTouchEnd={(event) => handleDialogueTouchEnd(event, index)}
+                  onDoubleClick={() => {
+                    setActiveIndex(index);
+                    void playDialogue(index);
+                    showHint("双击重播当前句");
+                  }}
                 >
                   <strong>{dialogue.speaker}</strong>
                   {showSubtitle ? <p style={{ margin: "6px 0" }}>{dialogue.text}</p> : <p style={{ margin: "6px 0" }}>字幕已隐藏</p>}
@@ -355,46 +423,20 @@ export function TheaterPage() {
         </div>
 
         <aside className="floating-panel">
-          <h3>重点词汇</h3>
-          <div
-            className="route-point vocab-card"
-            onPointerDown={() =>
-              startVocabLongPress(
-                theater.language === "CANTONESE"
-                  ? "快靓正：在高频口语中表示速度快、卖相好、价格合理。"
-                  : "Hit the spot: a natural phrase for when food or action feels exactly right."
-              )
-            }
-            onPointerUp={stopVocabLongPress}
-            onPointerLeave={stopVocabLongPress}
-          >
-            <strong>{theater.language === "CANTONESE" ? "快靓正" : "Hit the spot"}</strong>
-            <small>
-              {theater.language === "CANTONESE"
-                ? "faai3 leng3 zeng3，形容快速且性价比高"
-                : "Natural phrase for food satisfaction"}
-            </small>
-          </div>
-          <div
-            className="route-point vocab-card"
-            style={{ marginTop: 10 }}
-            onPointerDown={() =>
-              startVocabLongPress(
-                theater.language === "CANTONESE"
-                  ? "茶餐厅：香港本地融合饮食文化空间，常用于练习点餐与寒暄。"
-                  : "Small talk opener: a phrase pattern to initiate short social conversations."
-              )
-            }
-            onPointerUp={stopVocabLongPress}
-            onPointerLeave={stopVocabLongPress}
-          >
-            <strong>{theater.language === "CANTONESE" ? "茶餐厅" : "small talk opener"}</strong>
-            <small>
-              {theater.language === "CANTONESE"
-                ? "caa4 caan1 teng1，香港本地饮食文化场景"
-                : "Useful conversational starter in roleplay sessions"}
-            </small>
-          </div>
+          <h3>重点词汇与语法</h3>
+          {learningCards.map((card, index) => (
+            <div
+              key={`${card.term}-${index}`}
+              className="route-point vocab-card"
+              style={index > 0 ? { marginTop: 10 } : undefined}
+              onPointerDown={() => startVocabLongPress(card.detail)}
+              onPointerUp={stopVocabLongPress}
+              onPointerLeave={stopVocabLongPress}
+            >
+              <strong>{card.term}</strong>
+              <small>{card.note}</small>
+            </div>
+          ))}
           {vocabDetail ? <div className="vocab-popover" role="status">{vocabDetail}</div> : null}
           <button type="button" className={favorite ? "control-chip active" : "control-chip"} onClick={handleToggleFavorite}>
             <Heart size={14} /> {favorite ? "已收藏" : "收藏剧场"}

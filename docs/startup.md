@@ -21,6 +21,8 @@ OPENAI_BASE_URL=https://api.openai.com
 TTS_API_URL=
 TTS_API_KEY=
 TTS_VOICE=female-1
+TTS_TIMEOUT_SECONDS=45
+TTS_MAX_RETRIES=1
 ```
 
 说明：

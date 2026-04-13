@@ -8,28 +8,70 @@ import { useAppStore } from "../store";
 export function RoleplayPage() {
   const { theaterId = "" } = useParams();
   const roleplay = useAppStore((s) => s.roleplay);
+  const user = useAppStore((s) => s.user);
   const setRoleplay = useAppStore((s) => s.setRoleplay);
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showZhSubtitle, setShowZhSubtitle] = useState(true);
   const navigate = useNavigate();
-  const latestEvaluation = useMemo(() => {
+  const latestEvaluationText = useMemo(() => {
     if (!roleplay?.transcript?.length) return "";
+
+    const stripSuggestedAnswer = (text: string) =>
+      text
+        .replace(/[\s\S]*?(本轮评分|Turn score)/, "$1")
+        .replace(/\n?\s*(建议回答|参考回答|Suggested reply|Model answer)[:：][\s\S]*/i, "")
+        .trim();
+
     for (let i = roleplay.transcript.length - 1; i >= 0; i -= 1) {
       const line = roleplay.transcript[i];
       if (!line?.text) continue;
       if (line.text.includes("本轮评分") || line.text.includes("Turn score")) {
-        return line.text;
+        return stripSuggestedAnswer(line.text);
       }
     }
     return "";
   }, [roleplay]);
 
+  const parsedEvaluation = useMemo(() => {
+    if (!latestEvaluationText) {
+      return { score: "", strengths: [] as string[], improvements: [] as string[], summary: "" };
+    }
+
+    const lines = latestEvaluationText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const scoreLine =
+      lines.find((line) => /^(本轮评分|Turn score)/i.test(line)) ??
+      lines.find((line) => /(评分|score)/i.test(line)) ??
+      "";
+
+    const strengths = lines.filter((line) => /(优点|亮点|做得好|strength|good point)/i.test(line));
+    const improvements = lines.filter((line) => /(改进|建议|提升|improve|suggestion|tip)/i.test(line));
+
+    const summary = lines
+      .filter((line) => line !== scoreLine && !strengths.includes(line) && !improvements.includes(line))
+      .join("\n");
+
+    return { score: scoreLine, strengths, improvements, summary };
+  }, [latestEvaluationText]);
+
+  const visibleTranscript = useMemo(() => {
+    if (!roleplay?.transcript?.length) return [];
+    return roleplay.transcript.filter((item) => {
+      const text = item?.text ?? "";
+      return !(text.includes("本轮评分") || text.includes("Turn score"));
+    });
+  }, [roleplay]);
+
   async function handleStart() {
     setError("");
     try {
-      const session = await startRoleplay(theaterId, "Learner");
+      const userRole = (user?.nickname || user?.email?.split("@")[0] || "Learner").trim();
+      const session = await startRoleplay(theaterId, userRole);
       setRoleplay(session);
     } catch (e) {
       setError((e as Error).message);
@@ -81,7 +123,7 @@ export function RoleplayPage() {
 
             <section>
               <ul className="dialogue-list transcript-panel">
-              {roleplay.transcript.map((item, idx) => (
+              {visibleTranscript.map((item, idx) => (
                 <motion.li
                   key={`${idx}-${item.speaker}`}
                   className={idx % 2 === 0 ? "speaker-left" : "speaker-right"}
@@ -100,10 +142,31 @@ export function RoleplayPage() {
                 <button type="submit" disabled={submitting}>{submitting ? "提交中..." : "提交回复"}</button>
               </form>
               <p><MessageSquare size={14} /> 回答后系统会生成下一句并更新评分。</p>
-              {latestEvaluation ? (
+              {latestEvaluationText ? (
                 <article className="stage-banner" style={{ marginTop: 8 }}>
                   <strong>即时评估</strong>
-                  <p style={{ whiteSpace: "pre-wrap" }}>{latestEvaluation}</p>
+                  {parsedEvaluation.score ? <p style={{ margin: "6px 0 0" }}><strong>{parsedEvaluation.score}</strong></p> : null}
+                  {parsedEvaluation.summary ? <p style={{ whiteSpace: "pre-wrap" }}>{parsedEvaluation.summary}</p> : null}
+                  {parsedEvaluation.strengths.length ? (
+                    <div style={{ marginTop: 6 }}>
+                      <strong>亮点</strong>
+                      <ul style={{ margin: "4px 0 0 18px" }}>
+                        {parsedEvaluation.strengths.map((item, idx) => (
+                          <li key={`strength-${idx}`}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {parsedEvaluation.improvements.length ? (
+                    <div style={{ marginTop: 6 }}>
+                      <strong>可改进</strong>
+                      <ul style={{ margin: "4px 0 0 18px" }}>
+                        {parsedEvaluation.improvements.map((item, idx) => (
+                          <li key={`improve-${idx}`}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                 </article>
               ) : null}
               {roleplay.finalFeedback ? <article className="stage-banner"><strong>总结反馈</strong><p>{roleplay.finalFeedback}</p></article> : null}

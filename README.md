@@ -60,6 +60,8 @@ LinguaQuest 是一个使用 Tauri 2 + React + TypeScript + Go 构建的跨平台
 - `DOCKERHUB_TOKEN`：Docker Hub Access Token
 - `VITE_API_URL_PROD`：前端生产 API 地址（示例：`http://61.244.24.7:8080/graphql` 或 `https://api.yourdomain.com/graphql`）
 - `VITE_SENTRY_DSN`：可选，前端 Sentry DSN
+- `TTS_TIMEOUT_SECONDS`：可选，生产 TTS 超时时间（秒，默认 `45`）
+- `TTS_MAX_RETRIES`：可选，生产 TTS 重试次数（默认 `1`）
 
 ### 发布产物
 

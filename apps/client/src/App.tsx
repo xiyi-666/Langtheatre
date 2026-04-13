@@ -1,4 +1,4 @@
-import { BookOpenText, Clapperboard, Compass, UserRound } from "lucide-react";
+import { BookOpenText, Clapperboard, Compass, ScrollText, UserRound } from "lucide-react";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { LoginPage } from "./pages/LoginPage";
 import { GeneratePage } from "./pages/GeneratePage";
@@ -9,16 +9,22 @@ import { CoursesPage } from "./pages/CoursesPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { RoleplayPage } from "./pages/RoleplayPage";
+import { ReadingPage } from "./pages/ReadingPage";
+import { ReadingDetailPage } from "./pages/ReadingDetailPage";
 
 function MobileBottomNav() {
   const location = useLocation();
   if (location.pathname.startsWith("/login")) return null;
 
   return (
-    <nav className="mobile-bottom-nav" aria-label="移动端主导航">
+    <nav className="mobile-bottom-nav" aria-label="主导航">
       <NavLink to="/courses" className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}>
         <Compass size={16} />
         <span>路线</span>
+      </NavLink>
+      <NavLink to="/reading" className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}>
+        <ScrollText size={16} />
+        <span>阅读</span>
       </NavLink>
       <NavLink to="/library" className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}>
         <BookOpenText size={16} />
@@ -48,6 +54,8 @@ export function App() {
         <Route path="/quiz/:id" element={<QuizPage />} />
         <Route path="/result" element={<ResultPage />} />
         <Route path="/library" element={<LibraryPage />} />
+        <Route path="/reading" element={<ReadingPage />} />
+        <Route path="/reading/:id" element={<ReadingDetailPage />} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/roleplay/:theaterId" element={<RoleplayPage />} />
       </Routes>

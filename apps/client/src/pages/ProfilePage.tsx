@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { BadgeCheck, IdCard, Mail, UserRound } from "lucide-react";
 import { me, updateProfile } from "../api";
@@ -12,6 +12,25 @@ export function ProfilePage() {
   const [bio, setBio] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [avatarLoadError, setAvatarLoadError] = useState(false);
+
+  const safeAvatarUrl = useMemo(() => {
+    const value = avatarUrl.trim();
+    if (!value) return "";
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "http:" || parsed.protocol === "https:" ? value : "";
+    } catch {
+      return "";
+    }
+  }, [avatarUrl]);
+
+  const resolvedAvatarUrl = useMemo(() => {
+    const value = avatarUrl.trim();
+    if (!value) return "";
+    if (/^https?:\/\//i.test(value)) return value;
+    return "";
+  }, [avatarUrl]);
 
   useEffect(() => {
     void (async () => {
@@ -62,10 +81,21 @@ export function ProfilePage() {
           <button type="submit">保存资料</button>
           {message ? <p>{message}</p> : null}
           {error ? <p className="error">{error}</p> : null}
+          {avatarUrl.trim() && !safeAvatarUrl ? <p className="error">头像链接无效，仅支持 http/https 图片链接。</p> : null}
+          {avatarLoadError && safeAvatarUrl ? <p className="error">头像加载失败，请确认图片链接可公开访问。</p> : null}
         </form>
 
         <aside className="floating-panel auth-side">
           <h3>成长轨迹</h3>
+          {safeAvatarUrl ? (
+            <img
+              src={safeAvatarUrl}
+              alt="头像预览"
+              style={{ width: 96, height: 96, borderRadius: "50%", objectFit: "cover", border: "1px solid #e3ccb5", marginBottom: 8 }}
+              onError={() => setAvatarLoadError(true)}
+              onLoad={() => setAvatarLoadError(false)}
+            />
+          ) : null}
           <p>你可以在这里维护学习身份信息，便于复练与分享时展示。</p>
           <div className="mini-progress" aria-hidden>
             <span style={{ width: `${Math.min(100, Math.max(8, (user?.totalXP ?? 0) / 10))}%` }} />

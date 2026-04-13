@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Clapperboard, Compass, Languages, Sparkles } from "lucide-react";
 import { generateTheater } from "../api";
@@ -36,8 +36,12 @@ const routeMap = {
 } as const;
 
 export function GeneratePage() {
-  const [language, setLanguage] = useState<"CANTONESE" | "ENGLISH">("CANTONESE");
-  const [topic, setTopic] = useState("讨论香港茶餐厅文化");
+  const [searchParams] = useSearchParams();
+  const presetLanguage = searchParams.get("language") === "ENGLISH" ? "ENGLISH" : "CANTONESE";
+  const presetTopic = searchParams.get("topic")?.trim() ?? "";
+
+  const [language, setLanguage] = useState<"CANTONESE" | "ENGLISH">(presetLanguage);
+  const [topic, setTopic] = useState(presetTopic || (presetLanguage === "ENGLISH" ? routeMap.ENGLISH.topicSeeds[0] : routeMap.CANTONESE.topicSeeds[0]));
   const [difficulty, setDifficulty] = useState(5.5);
   const [mode, setMode] = useState<"LISTENING" | "ROLEPLAY" | "APPRECIATION">("LISTENING");
   const [progress, setProgress] = useState(0);

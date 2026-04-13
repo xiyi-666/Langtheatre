@@ -20,6 +20,10 @@ type OpenAIGenerator struct {
 	Client  *http.Client
 }
 
+const (
+	modelAPIMaxRetries = 2
+)
+
 func NewOpenAIGenerator(apiKey string, model string, baseURL string) *OpenAIGenerator {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
@@ -51,6 +55,22 @@ func requiredQuizCount(difficulty float64) int {
 	return 2
 }
 
+func isReadingGeneration(mode string, topic string) bool {
+	return strings.EqualFold(strings.TrimSpace(mode), "APPRECIATION") && strings.Contains(strings.ToLower(topic), "reading")
+}
+
+func readingMinWords(topic string) int {
+	t := strings.ToUpper(topic)
+	switch {
+	case strings.Contains(t, "[IELTS READING]"):
+		return 620
+	case strings.Contains(t, "[CET READING]"):
+		return 480
+	default:
+		return 520
+	}
+}
+
 // Generate returns dialogues and comprehension questions with options and reference answers for server-side grading.
 func (g *OpenAIGenerator) Generate(ctx context.Context, language string, topic string, difficulty float64, mode string) ([]domain.Dialogue, []domain.QuizQuestion, error) {
 	apiKey := strings.TrimSpace(g.APIKey)
@@ -58,9 +78,37 @@ func (g *OpenAIGenerator) Generate(ctx context.Context, language string, topic s
 		return nil, nil, fmt.Errorf("OPENAI_API_KEY is empty")
 	}
 	quizCount := requiredQuizCount(difficulty)
+	readingMode := isReadingGeneration(mode, topic)
+	if readingMode {
+		quizCount = 5
+	}
 	sys := languageDirective(language) + " Output one JSON object only, no markdown fences."
-	user := fmt.Sprintf(
-		`Learning language code: %s. Topic: %s. Difficulty: %.1f. Mode: %s.
+	user := ""
+	if readingMode {
+		minWords := readingMinWords(topic)
+		user = fmt.Sprintf(
+			`Learning language code: %s. Topic: %s. Difficulty: %.1f. Mode: %s.
+Create an exam-style long reading passage suitable for IELTS/CET practice.
+Length requirement: total English word count MUST be at least %d words.
+Structure:
+- 8 to 10 passage segments in "dialogues" array.
+- Each segment text should be a coherent paragraph (not chat turns), around 65-95 words.
+- Keep style formal and information-dense, like real exam materials.
+JSON shape:
+{"dialogues":[{"speaker":"Passage","text":"...","zhSubtitle":"..."}],"quiz":[{"question":"...","options":["...","...","...","..."],"answerKey":"..."}]}
+Rules for dialogues.zhSubtitle:
+- Must be concise Simplified Chinese explanation of that paragraph's core idea.
+- Do not translate word-by-word.
+Rules for quiz:
+1) Create exactly %d multiple-choice questions.
+2) Cover varied skills: main idea, detail locating, inference, vocabulary-in-context, author attitude/structure.
+3) options must contain exactly 4 choices, only one correct.
+4) answerKey must be exactly one of the 4 option strings (verbatim match).`,
+			language, topic, difficulty, mode, minWords, quizCount,
+		)
+	} else {
+		user = fmt.Sprintf(
+			`Learning language code: %s. Topic: %s. Difficulty: %.1f. Mode: %s.
 Scene must be realistic and specific (place, time, roles). Use natural spoken lines for the target language.
 Produce exactly 8 dialogue turns and exactly %d listening comprehension single-choice questions based ONLY on those dialogues.
 Use clear speaker roles like 店员/顾客 for Cantonese or Barista/Customer for English.
@@ -75,8 +123,9 @@ Rules for quiz:
 3) answerKey must be exactly one of the 4 option strings (verbatim match).
 4) For CANTONESE, dialogue stays Traditional Chinese, but quiz question and options must use Simplified Chinese.
 5) Avoid generic/meta questions like "主题是什么" unless anchored by concrete dialogue details.`,
-		language, topic, difficulty, mode, quizCount,
-	)
+			language, topic, difficulty, mode, quizCount,
+		)
+	}
 	model := strings.TrimSpace(g.Model)
 	if model == "" {
 		model = "gpt-4o-mini"
@@ -89,47 +138,10 @@ Rules for quiz:
 		},
 		"temperature": 0.65,
 	}
-	raw, _ := json.Marshal(payload)
-	chatURL := g.BaseURL + "/v1/chat/completions"
-	if strings.HasSuffix(g.BaseURL, "/v1") {
-		chatURL = g.BaseURL + "/chat/completions"
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatURL, bytes.NewReader(raw))
+	content, err := g.callModelJSONPayload(ctx, payload)
 	if err != nil {
 		return nil, nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	// Some OpenAI-compatible gateways validate x-api-key instead of Authorization only.
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := g.Client.Do(req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("request model API failed: %w", err)
-	}
-	if resp.StatusCode >= 400 {
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, nil, fmt.Errorf("model API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	defer resp.Body.Close()
-	var parsed struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err = json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, nil, err
-	}
-	if len(parsed.Choices) == 0 {
-		return nil, nil, fmt.Errorf("model API returned empty choices")
-	}
-	content := strings.TrimSpace(parsed.Choices[0].Message.Content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	content = strings.TrimSpace(content)
 
 	dialogues, quiz := parseModelOutput(content)
 	if len(dialogues) == 0 {
@@ -138,7 +150,103 @@ Rules for quiz:
 	if len(quiz) < quizCount {
 		return nil, nil, fmt.Errorf("model output parsing failed: missing quiz questions")
 	}
+	if readingMode {
+		wordCount := 0
+		for _, d := range dialogues {
+			wordCount += len(strings.Fields(strings.TrimSpace(d.Text)))
+		}
+		if wordCount < readingMinWords(topic) {
+			return nil, nil, fmt.Errorf("model output too short: got %d words", wordCount)
+		}
+	}
 	return dialogues, quiz[:quizCount], nil
+}
+
+func (g *OpenAIGenerator) chatCompletionsURL() string {
+	if strings.HasSuffix(g.BaseURL, "/v1") {
+		return g.BaseURL + "/chat/completions"
+	}
+	return g.BaseURL + "/v1/chat/completions"
+}
+
+func shouldRetryModelStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+}
+
+func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[string]any) (string, error) {
+	raw, _ := json.Marshal(payload)
+	chatURL := g.chatCompletionsURL()
+	apiKey := strings.TrimSpace(g.APIKey)
+	var lastErr error
+
+	for attempt := 0; attempt <= modelAPIMaxRetries; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatURL, bytes.NewReader(raw))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		// Some OpenAI-compatible gateways validate x-api-key instead of Authorization only.
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := g.Client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request model API failed: %w", err)
+		} else {
+			var retryable bool
+			var content string
+			func() {
+				defer resp.Body.Close()
+				if resp.StatusCode >= 400 {
+					body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+					lastErr = fmt.Errorf("model API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+					retryable = shouldRetryModelStatus(resp.StatusCode)
+					return
+				}
+				var parsed struct {
+					Choices []struct {
+						Message struct {
+							Content string `json:"content"`
+						} `json:"message"`
+					} `json:"choices"`
+				}
+				if decodeErr := json.NewDecoder(resp.Body).Decode(&parsed); decodeErr != nil {
+					lastErr = decodeErr
+					return
+				}
+				if len(parsed.Choices) == 0 {
+					lastErr = fmt.Errorf("model API returned empty choices")
+					return
+				}
+				content = strings.TrimSpace(parsed.Choices[0].Message.Content)
+				content = strings.TrimPrefix(content, "```json")
+				content = strings.TrimPrefix(content, "```")
+				content = strings.TrimSuffix(content, "```")
+				lastErr = nil
+			}()
+			if lastErr == nil {
+				return strings.TrimSpace(content), nil
+			}
+			if !retryable {
+				break
+			}
+		}
+
+		if attempt == modelAPIMaxRetries {
+			break
+		}
+		backoff := time.Duration(attempt+1) * 500 * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("request model API failed: unknown error")
+	}
+	return "", lastErr
 }
 
 type genDialogue struct {

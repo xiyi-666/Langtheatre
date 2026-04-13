@@ -1,4 +1,4 @@
-import type { Course, PracticeResult, RoleplaySession, Theater, User } from "./types";
+import type { ContentSource, Course, PracticeResult, ReadingMaterial, RoleplaySession, Theater, User } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8177/graphql";
 
@@ -49,6 +49,26 @@ async function request<T>(query: string, variables?: Record<string, unknown>): P
     throw new Error("Empty response");
   }
   return result.data;
+}
+
+function isAnswerKeyFieldMissingError(err: unknown): boolean {
+  const message = (err as Error)?.message ?? "";
+  return message.includes('Cannot query field "answerKey" on type "TheaterQuizQuestion"');
+}
+
+function stripAnswerKeyField(query: string): string {
+  return query.replace(/\s*answerKey\s*/g, " ");
+}
+
+async function requestWithAnswerKeyFallback<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+  try {
+    return await request<T>(query, variables);
+  } catch (err) {
+    if (!isAnswerKeyFieldMissingError(err)) {
+      throw err;
+    }
+    return request<T>(stripAnswerKeyField(query), variables);
+  }
 }
 
 export async function register(email: string, password: string): Promise<string> {
@@ -221,4 +241,57 @@ export async function endRoleplay(sessionId: string): Promise<RoleplaySession> {
     { sessionId }
   );
   return data.endRoleplay;
+}
+
+export async function contentSources(filter?: { exam?: string; category?: string }): Promise<ContentSource[]> {
+  const data = await request<{ contentSources: ContentSource[] }>(
+    `query ContentSources($exam: String, $category: String) {
+      contentSources(exam: $exam, category: $category) {
+        id name domain category exam useCases contentMode enabled priority
+      }
+    }`,
+    filter
+  );
+  return data.contentSources;
+}
+
+export async function generateReading(input: {
+  exam: string;
+  topic: string;
+  level?: string;
+  sourceIds?: string[];
+}): Promise<ReadingMaterial> {
+  await ensureAccessToken();
+  const query = `mutation GenerateReading($exam: String!, $topic: String!, $level: String, $sourceIds: [String!]) {
+      generateReading(exam: $exam, topic: $topic, level: $level, sourceIds: $sourceIds) {
+        id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
+        questions { question options answerKey }
+      }
+    }`;
+  const data = await requestWithAnswerKeyFallback<{ generateReading: ReadingMaterial }>(query, input);
+  return data.generateReading;
+}
+
+export async function readingMaterials(exam?: string): Promise<ReadingMaterial[]> {
+  await ensureAccessToken();
+  const query = `query ReadingMaterials($exam: String) {
+      readingMaterials(exam: $exam) {
+        id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
+        questions { question options answerKey }
+      }
+    }`;
+  const data = await requestWithAnswerKeyFallback<{ readingMaterials: ReadingMaterial[] }>(query, { exam });
+  return data.readingMaterials;
+}
+
+export async function readingMaterial(id: string): Promise<ReadingMaterial> {
+  await ensureAccessToken();
+  const query = `query ReadingMaterial($id: ID!) {
+      readingMaterial(id: $id) {
+        id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
+        questions { question options answerKey }
+      }
+    }`;
+  const data = await requestWithAnswerKeyFallback<{ readingMaterial: ReadingMaterial }>(query, { id });
+  return data.readingMaterial;
 }

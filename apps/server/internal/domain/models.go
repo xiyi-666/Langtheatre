@@ -70,6 +70,37 @@ type Course struct {
 	IsActive    bool
 }
 
+type ContentSource struct {
+	ID           string
+	Name         string
+	Domain       string
+	Category     string
+	Exam         string
+	UseCases     []string
+	ContentMode  string
+	Enabled      bool
+	Priority     int
+}
+
+type ReadingMaterial struct {
+	ID             string
+	UserID         string
+	Exam           string
+	Language       string
+	Level          string
+	Topic          string
+	Title          string
+	Passage        string
+	Vocabulary     []string
+	Questions      []QuizQuestion
+	SourceIDs      []string
+	GenerationNote string
+	AudioURL       string
+	AudioURLs      []string
+	AudioStatus    string
+	CreatedAt      time.Time
+}
+
 type RoleplaySession struct {
 	ID            string
 	UserID        string

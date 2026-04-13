@@ -14,6 +14,8 @@
 - `TTS_API_URL=`
 - `TTS_API_KEY=`
 - `TTS_VOICE=female-1`
+- `TTS_TIMEOUT_SECONDS=45`
+- `TTS_MAX_RETRIES=1`
 - `R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`
 - `R2_ACCESS_KEY=xxx`
 - `R2_SECRET_KEY=xxx`

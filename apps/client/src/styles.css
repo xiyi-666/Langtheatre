@@ -44,6 +44,12 @@ body {
   padding: 28px;
 }
 
+.page {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
 .page-center {
   display: grid;
   place-items: center;
@@ -53,7 +59,8 @@ body {
   background: color-mix(in srgb, var(--paper-strong) 90%, #ffffff 10%);
   border-radius: var(--radius-xl);
   padding: 24px;
-  width: min(980px, 96vw);
+  width: min(1180px, 100%);
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -470,8 +477,31 @@ button:hover,
 }
 
 .option-item.selected {
-  background: #fff0e4;
-  border-color: #ff9d64;
+  background: linear-gradient(120deg, #ffd9b8, #ffe9c2);
+  border-color: #ff8d42;
+  box-shadow: 0 0 0 2px rgba(255, 141, 66, 0.2);
+}
+
+.option-item.correct {
+  background: #e8f8ef;
+  border-color: #1d7d55;
+  box-shadow: 0 0 0 2px rgba(29, 125, 85, 0.2);
+}
+
+.option-item.wrong {
+  background: #fdecea;
+  border-color: #c64232;
+  box-shadow: 0 0 0 2px rgba(198, 66, 50, 0.2);
+}
+
+.audio-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.audio-inline audio {
+  width: 100%;
 }
 
 .result-shell {
@@ -592,12 +622,13 @@ button:hover,
 
 .mobile-bottom-nav {
   position: fixed;
-  left: 10px;
-  right: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(760px, calc(100% - 20px));
   bottom: 10px;
   z-index: 40;
-  display: none;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   border: 1px solid #d9c2aa;
   border-radius: 16px;
@@ -783,6 +814,12 @@ select:focus-visible,
   }
 }
 
+@media (max-width: 1280px) {
+  .card {
+    width: min(1080px, 100%);
+  }
+}
+
 @media (max-width: 1024px) {
   .route-shell,
   .auth-shell,
@@ -794,7 +831,18 @@ select:focus-visible,
   }
 
   .card {
-    width: min(96vw, 760px);
+    width: min(100%, 920px);
+  }
+}
+
+@media (max-width: 1200px) {
+  .mobile-bottom-nav {
+    display: grid;
+  }
+
+  .page,
+  .page-center {
+    padding-bottom: 86px;
   }
 }
 
@@ -831,10 +879,6 @@ select:focus-visible,
   .actor-avatar {
     width: 48px;
     height: 48px;
-  }
-
-  .mobile-bottom-nav {
-    display: grid;
   }
 }
 

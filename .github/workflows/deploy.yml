@@ -2,6 +2,8 @@ name: deploy
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TTS_TIMEOUT_SECONDS: ${{ secrets.TTS_TIMEOUT_SECONDS || '45' }}
+  TTS_MAX_RETRIES: ${{ secrets.TTS_MAX_RETRIES || '1' }}
 
 on:
   workflow_dispatch:

@@ -28,8 +28,9 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 	theaterQuizPublicType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "TheaterQuizQuestion",
 		Fields: graphql.Fields{
-			"question": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"options":  &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphql.String)))},
+			"question":  &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"options":   &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphql.String)))},
+			"answerKey": &graphql.Field{Type: graphql.String},
 		},
 	})
 
@@ -144,6 +145,58 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 		},
 	})
 
+	contentSourceType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ContentSource",
+		Fields: graphql.Fields{
+			"id":          &graphql.Field{Type: graphql.String},
+			"name":        &graphql.Field{Type: graphql.String},
+			"domain":      &graphql.Field{Type: graphql.String},
+			"category":    &graphql.Field{Type: graphql.String},
+			"exam":        &graphql.Field{Type: graphql.String},
+			"useCases":    &graphql.Field{Type: graphql.NewList(graphql.String)},
+			"contentMode": &graphql.Field{Type: graphql.String},
+			"enabled":     &graphql.Field{Type: graphql.Boolean},
+			"priority":    &graphql.Field{Type: graphql.Int},
+		},
+	})
+
+	readingMaterialType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ReadingMaterial",
+		Fields: graphql.Fields{
+			"id":             &graphql.Field{Type: graphql.String},
+			"exam":           &graphql.Field{Type: graphql.String},
+			"language":       &graphql.Field{Type: graphql.String},
+			"level":          &graphql.Field{Type: graphql.String},
+			"topic":          &graphql.Field{Type: graphql.String},
+			"title":          &graphql.Field{Type: graphql.String},
+			"passage":        &graphql.Field{Type: graphql.String},
+			"vocabulary":     &graphql.Field{Type: graphql.NewList(graphql.String)},
+			"sourceIds":      &graphql.Field{Type: graphql.NewList(graphql.String)},
+			"generationNote": &graphql.Field{Type: graphql.String},
+			"audioUrl":       &graphql.Field{Type: graphql.String},
+			"audioUrls":      &graphql.Field{Type: graphql.NewList(graphql.String)},
+			"audioStatus":    &graphql.Field{Type: graphql.String},
+			"questions": &graphql.Field{
+				Type: graphql.NewList(theaterQuizPublicType),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					m, ok := p.Source.(domain.ReadingMaterial)
+					if !ok {
+						return nil, errors.New("invalid reading material source")
+					}
+					public := make([]map[string]interface{}, 0, len(m.Questions))
+					for _, q := range m.Questions {
+						options := q.Options
+						if options == nil {
+							options = []string{}
+						}
+						public = append(public, map[string]interface{}{"question": q.Question, "options": options, "answerKey": q.AnswerKey})
+					}
+					return public, nil
+				},
+			},
+		},
+	})
+
 	roleplayType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "RoleplaySession",
 		Fields: graphql.Fields{
@@ -230,6 +283,45 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					language, _ := p.Args["language"].(string)
 					return svc.ListCourses(language)
+				},
+			},
+			"contentSources": &graphql.Field{
+				Type: graphql.NewList(contentSourceType),
+				Args: graphql.FieldConfigArgument{
+					"exam":     &graphql.ArgumentConfig{Type: graphql.String},
+					"category": &graphql.ArgumentConfig{Type: graphql.String},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					exam, _ := p.Args["exam"].(string)
+					category, _ := p.Args["category"].(string)
+					return svc.ListContentSources(exam, category)
+				},
+			},
+			"readingMaterials": &graphql.Field{
+				Type: graphql.NewList(readingMaterialType),
+				Args: graphql.FieldConfigArgument{
+					"exam": &graphql.ArgumentConfig{Type: graphql.String},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
+					exam, _ := p.Args["exam"].(string)
+					return svc.ReadingMaterials(userID, exam)
+				},
+			},
+			"readingMaterial": &graphql.Field{
+				Type: readingMaterialType,
+				Args: graphql.FieldConfigArgument{
+					"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
+					return svc.ReadingMaterial(userID, p.Args["id"].(string))
 				},
 			},
 			"roleplaySession": &graphql.Field{
@@ -343,6 +435,29 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 					}
 					_ = json.Unmarshal(raw, &payload)
 					return svc.GenerateTheater(userID, payload.Language, payload.Topic, payload.Difficulty, payload.Mode)
+				},
+			},
+			"generateReading": &graphql.Field{
+				Type: readingMaterialType,
+				Args: graphql.FieldConfigArgument{
+					"exam":      &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+					"topic":     &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+					"level":     &graphql.ArgumentConfig{Type: graphql.String},
+					"sourceIds": &graphql.ArgumentConfig{Type: graphql.NewList(graphql.String)},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
+					sourceIDs := []string{}
+					if anyIDs, ok := p.Args["sourceIds"].([]interface{}); ok {
+						for _, id := range anyIDs {
+							sourceIDs = append(sourceIDs, id.(string))
+						}
+					}
+					level, _ := p.Args["level"].(string)
+					return svc.GenerateReadingMaterial(userID, p.Args["exam"].(string), p.Args["topic"].(string), level, sourceIDs)
 				},
 			},
 			"submitAnswers": &graphql.Field{

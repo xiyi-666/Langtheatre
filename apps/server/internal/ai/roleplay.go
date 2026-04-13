@@ -1,12 +1,9 @@
 package ai
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 
 	"github.com/linguaquest/server/internal/domain"
@@ -145,46 +142,7 @@ func (g *OpenAIGenerator) callJSONCompletion(ctx context.Context, systemPrompt s
 		},
 		"temperature": 0.5,
 	}
-	raw, _ := json.Marshal(payload)
-	chatURL := g.BaseURL + "/v1/chat/completions"
-	if strings.HasSuffix(g.BaseURL, "/v1") {
-		chatURL = g.BaseURL + "/chat/completions"
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatURL, bytes.NewReader(raw))
-	if err != nil {
-		return "", err
-	}
-	apiKey := strings.TrimSpace(g.APIKey)
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := g.Client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return "", fmt.Errorf("model API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var parsed struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", err
-	}
-	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("model API returned empty choices")
-	}
-	content := strings.TrimSpace(parsed.Choices[0].Message.Content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	return strings.TrimSpace(content), nil
+	return g.callModelJSONPayload(ctx, payload)
 }
 
 func clamp(v, min, max int) int {

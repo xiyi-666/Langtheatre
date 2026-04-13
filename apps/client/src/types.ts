@@ -20,6 +20,7 @@ export interface Dialogue {
 export interface TheaterQuizQuestion {
   question: string;
   options?: string[];
+  answerKey?: string;
 }
 
 export interface Character {
@@ -71,4 +72,33 @@ export interface RoleplaySession {
   status: string;
   finalFeedback: string;
   transcript: Dialogue[];
+}
+
+export interface ContentSource {
+  id: string;
+  name: string;
+  domain: string;
+  category: string;
+  exam: string;
+  useCases: string[];
+  contentMode: string;
+  enabled: boolean;
+  priority: number;
+}
+
+export interface ReadingMaterial {
+  id: string;
+  exam: string;
+  language: string;
+  level: string;
+  topic: string;
+  title: string;
+  passage: string;
+  vocabulary: string[];
+  questions: TheaterQuizQuestion[];
+  sourceIds: string[];
+  generationNote: string;
+  audioUrl?: string;
+  audioUrls?: string[];
+  audioStatus?: "PENDING" | "READY" | "FAILED";
 }
