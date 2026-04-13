@@ -34,3 +34,7 @@ go.work.sum
 # Local tool metadata
 .cursor/
 .spec-workflow/
+
+# Do not publish local GitHub automation/config
+.github/agents/
+.github/workflows/
