@@ -333,18 +333,17 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 	// Reading generation should not pollute theater library.
 	quizCount := 5
 	generated, q, err := s.generator.Generate(context.Background(), language, fmt.Sprintf("[%s Reading] %s", exam, topic), difficulty, "APPRECIATION")
-	if err != nil || len(generated) == 0 || len(q) < quizCount {
-		log.Printf("reading generation degraded to fallback err=%v dialogues=%d quiz=%d", err, len(generated), len(q))
-		generated, q = fallbackGeneratedContent(language, fmt.Sprintf("[%s Reading] %s", exam, topic), quizCount)
+	if err != nil {
+		return domain.ReadingMaterial{}, fmt.Errorf("reading ai generation failed: %w", err)
 	}
 	if len(generated) == 0 {
 		return domain.ReadingMaterial{}, errors.New("reading generation failed: empty passage")
 	}
+	if len(q) < quizCount {
+		return domain.ReadingMaterial{}, errors.New("reading generation failed: insufficient questions from ai")
+	}
 	if len(q) > quizCount {
 		q = q[:quizCount]
-	}
-	if len(q) < quizCount {
-		return domain.ReadingMaterial{}, errors.New("reading generation failed: insufficient questions")
 	}
 
 	passageParts := make([]string, 0, len(generated))

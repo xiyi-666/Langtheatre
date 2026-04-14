@@ -9,7 +9,6 @@ export function LoginPage() {
   const [email, setEmail] = useState("demo@linguaquest.app");
   const [password, setPassword] = useState("demo1234");
   const [isRegister, setIsRegister] = useState(false);
-  const [error, setError] = useState("");
   const setUser = useAppStore((s) => s.setUser);
   const setLoading = useAppStore((s) => s.setLoading);
   const loading = useAppStore((s) => s.loading);
@@ -17,7 +16,6 @@ export function LoginPage() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    setError("");
     setLoading(true);
     try {
       const token = isRegister ? await register(email, password) : await login(email, password);
@@ -26,7 +24,7 @@ export function LoginPage() {
       setUser(profile);
       navigate("/courses");
     } catch (e) {
-      setError((e as Error).message);
+      console.error("auth submit failed", e);
     } finally {
       setLoading(false);
     }
@@ -54,7 +52,6 @@ export function LoginPage() {
             />
           </label>
 
-          {error ? <p className="error">{error}</p> : null}
           <button disabled={loading} type="submit">
             {loading ? "处理中..." : isRegister ? "注册并进入" : "登录"}
           </button>

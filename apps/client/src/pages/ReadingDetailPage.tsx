@@ -7,7 +7,6 @@ export function ReadingDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const [item, setItem] = useState<ReadingMaterial | null>(null);
-  const [error, setError] = useState("");
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [submitted, setSubmitted] = useState(false);
   const [audioIndex, setAudioIndex] = useState(0);
@@ -49,10 +48,11 @@ export function ReadingDetailPage() {
         setAudioIndex(0);
         setMergedAudioUrl("");
       } catch (e) {
-        setError((e as Error).message);
+        console.error("reading detail load failed", e);
+        navigate("/reading");
       }
     })();
-  }, [id]);
+  }, [id, navigate]);
 
   useEffect(() => {
     let revoked = "";
@@ -91,9 +91,6 @@ export function ReadingDetailPage() {
     };
   }, [audioQueue]);
 
-  if (error) {
-    return <main className="page"><section className="card"><p className="error">{error}</p></section></main>;
-  }
   if (!item) {
     return <main className="page"><section className="card"><p>加载中...</p></section></main>;
   }

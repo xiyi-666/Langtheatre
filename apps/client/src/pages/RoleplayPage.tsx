@@ -11,7 +11,6 @@ export function RoleplayPage() {
   const user = useAppStore((s) => s.user);
   const setRoleplay = useAppStore((s) => s.setRoleplay);
   const [text, setText] = useState("");
-  const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showZhSubtitle, setShowZhSubtitle] = useState(true);
   const navigate = useNavigate();
@@ -68,13 +67,12 @@ export function RoleplayPage() {
   }, [roleplay]);
 
   async function handleStart() {
-    setError("");
     try {
       const userRole = (user?.nickname || user?.email?.split("@")[0] || "Learner").trim();
       const session = await startRoleplay(theaterId, userRole);
       setRoleplay(session);
     } catch (e) {
-      setError((e as Error).message);
+      console.error("start roleplay failed", e);
     }
   }
 
@@ -86,6 +84,8 @@ export function RoleplayPage() {
       const updated = await submitRoleplayReply(roleplay.id, text);
       setRoleplay(updated);
       setText("");
+    } catch (e) {
+      console.error("submit roleplay reply failed", e);
     } finally {
       setSubmitting(false);
     }
@@ -93,8 +93,12 @@ export function RoleplayPage() {
 
   async function handleEnd() {
     if (!roleplay) return;
-    const completed = await endRoleplay(roleplay.id);
-    setRoleplay(completed);
+    try {
+      const completed = await endRoleplay(roleplay.id);
+      setRoleplay(completed);
+    } catch (e) {
+      console.error("end roleplay failed", e);
+    }
   }
 
   return (
@@ -110,7 +114,6 @@ export function RoleplayPage() {
           </button>
           <button onClick={() => navigate("/library")}>返回剧场库</button>
         </div>
-        {error ? <p className="error">{error}</p> : null}
         {roleplay ? (
           <div className="roleplay-grid">
             <aside className="floating-panel">

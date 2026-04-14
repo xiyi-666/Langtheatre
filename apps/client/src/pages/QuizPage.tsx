@@ -12,7 +12,6 @@ export function QuizPage() {
   const [language, setLanguage] = useState<"CANTONESE" | "ENGLISH">("CANTONESE");
   const [activeIndex, setActiveIndex] = useState(0);
   const [seconds, setSeconds] = useState(0);
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [pageTitle, setPageTitle] = useState("听力理解测试");
@@ -43,7 +42,10 @@ export function QuizPage() {
           );
         }
       } catch (e) {
-        if (!cancelled) setLoadError((e as Error).message);
+        if (!cancelled) {
+          console.error("load quiz failed", e);
+          setLoadError("加载题目失败，请返回后重试。");
+        }
       } finally {
         if (!cancelled) setInitialLoad(false);
       }
@@ -64,14 +66,13 @@ export function QuizPage() {
   }, [initialLoad]);
 
   async function handleSubmit() {
-    setError("");
     setLoading(true);
     try {
       const result = await submitAnswers(id, answers);
       setResult(result);
       navigate("/result");
     } catch (e) {
-      setError((e as Error).message);
+      console.error("submit answers failed", e);
     } finally {
       setLoading(false);
     }
@@ -184,7 +185,6 @@ export function QuizPage() {
             </motion.section>
           </div>
         ) : null}
-        {error ? <p className="error">{error}</p> : null}
         <button
           onClick={handleSubmit}
           disabled={loading || !!loadError || initialLoad || questions.length === 0}

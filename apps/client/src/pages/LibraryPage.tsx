@@ -6,7 +6,6 @@ import { deleteTheater, myTheaters, shareTheater, toggleFavorite } from "../api"
 import { useAppStore } from "../store";
 
 export function LibraryPage() {
-  const [error, setError] = useState("");
   const [languageFilter, setLanguageFilter] = useState<"ALL" | "CANTONESE" | "ENGLISH">("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "READY" | "GENERATING" | "FAILED">("ALL");
   const [difficultyFilter, setDifficultyFilter] = useState<"ALL" | "4-5.5" | "6-7" | "7.5+">("ALL");
@@ -19,12 +18,11 @@ export function LibraryPage() {
   const navigate = useNavigate();
 
   const reload = useCallback(async () => {
-    setError("");
     try {
       const data = await myTheaters();
       setTheaters(data);
     } catch (e) {
-      setError((e as Error).message);
+      console.error("load theaters failed", e);
     }
   }, [setTheaters]);
 
@@ -143,7 +141,6 @@ export function LibraryPage() {
           <button onClick={() => navigate("/courses")}>课程中心</button>
           <button className="btn-ghost" onClick={() => navigate("/profile")}>个人中心</button>
         </div>
-        {error ? <p className="error">{error}</p> : null}
         <ul className="dialogue-list">
           {filteredTheaters.map((item) => (
             <motion.li
@@ -169,8 +166,12 @@ export function LibraryPage() {
                 <button
                   className="btn-ghost"
                   onClick={async () => {
-                    await toggleFavorite(item.id, !item.isFavorite);
-                    await reload();
+                    try {
+                      await toggleFavorite(item.id, !item.isFavorite);
+                      await reload();
+                    } catch (e) {
+                      console.error("toggle favorite failed", e);
+                    }
                   }}
                 >
                   <Heart size={16} className={item.isFavorite ? "star-active" : ""} /> {item.isFavorite ? "取消收藏" : "收藏"}
@@ -178,8 +179,12 @@ export function LibraryPage() {
                 <button
                   className="btn-ghost"
                   onClick={async () => {
-                    const code = await shareTheater(item.id);
-                    window.alert(`分享码: ${code}`);
+                    try {
+                      const code = await shareTheater(item.id);
+                      window.alert(`分享码: ${code}`);
+                    } catch (e) {
+                      console.error("share theater failed", e);
+                    }
                   }}
                 >
                   <Share2 size={16} /> 分享
@@ -189,8 +194,12 @@ export function LibraryPage() {
                   onClick={async () => {
                     const confirmed = window.confirm(`确认删除剧场「${item.topic}」吗？删除后无法恢复。`);
                     if (!confirmed) return;
-                    await deleteTheater(item.id);
-                    await reload();
+                    try {
+                      await deleteTheater(item.id);
+                      await reload();
+                    } catch (e) {
+                      console.error("delete theater failed", e);
+                    }
                   }}
                 >
                   <Trash2 size={16} /> 删除

@@ -11,7 +11,6 @@ export function ProfilePage() {
   const [avatarUrl, setAvatarUrl] = useState("");
   const [bio, setBio] = useState("");
   const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
   const [avatarLoadError, setAvatarLoadError] = useState(false);
 
   const safeAvatarUrl = useMemo(() => {
@@ -34,7 +33,6 @@ export function ProfilePage() {
 
   useEffect(() => {
     void (async () => {
-      setError("");
       try {
         const profile = await me();
         setUser(profile);
@@ -42,7 +40,7 @@ export function ProfilePage() {
         setAvatarUrl(profile.avatarUrl ?? "");
         setBio(profile.bio ?? "");
       } catch (e) {
-        setError((e as Error).message);
+        console.error("load profile failed", e);
       }
     })();
   }, [setUser]);
@@ -50,13 +48,12 @@ export function ProfilePage() {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setMessage("");
-    setError("");
     try {
       const updated = await updateProfile({ nickname, avatarUrl, bio });
       setUser(updated);
       setMessage("资料已更新");
     } catch (e) {
-      setError((e as Error).message);
+      console.error("update profile failed", e);
     }
   }
 
@@ -80,7 +77,6 @@ export function ProfilePage() {
           </label>
           <button type="submit">保存资料</button>
           {message ? <p>{message}</p> : null}
-          {error ? <p className="error">{error}</p> : null}
           {avatarUrl.trim() && !safeAvatarUrl ? <p className="error">头像链接无效，仅支持 http/https 图片链接。</p> : null}
           {avatarLoadError && safeAvatarUrl ? <p className="error">头像加载失败，请确认图片链接可公开访问。</p> : null}
         </form>

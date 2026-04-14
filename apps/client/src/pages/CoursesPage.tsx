@@ -93,7 +93,6 @@ const stageThresholds = [0, 120, 280, 480, 720, 980, 1280, 1680];
 
 export function CoursesPage() {
   const [language, setLanguage] = useState<"CANTONESE" | "ENGLISH">("CANTONESE");
-  const [error, setError] = useState("");
   const list = useAppStore((s) => s.courses);
   const theaters = useAppStore((s) => s.theaters);
   const user = useAppStore((s) => s.user);
@@ -142,12 +141,11 @@ export function CoursesPage() {
 
   useEffect(() => {
     void (async () => {
-      setError("");
       try {
         const data = await courses(language);
         setCourses(data);
       } catch (e) {
-        setError((e as Error).message);
+        console.error("load courses failed", e);
       }
     })();
   }, [language, setCourses]);
@@ -244,7 +242,6 @@ export function CoursesPage() {
             );
           })}
         </div>
-        {error ? <p className="error">{error}</p> : null}
         <ul className="dialogue-list">
           {list.map((item) => (
             <motion.li

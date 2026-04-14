@@ -24,7 +24,6 @@ export function ReadingPage() {
   const [category, setCategory] = useState<SourceCategory | "ALL">("ALL");
   const [topic, setTopic] = useState(topicSeeds.IELTS[0]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [passage, setPassage] = useState("");
   const [questions, setQuestions] = useState<string[]>([]);
   const [sources, setSources] = useState<ContentSource[]>([]);
@@ -51,7 +50,6 @@ export function ReadingPage() {
 
   async function handleGenerateReading() {
     setLoading(true);
-    setError("");
     try {
       const generated = await generateReading({
         exam,
@@ -67,7 +65,7 @@ export function ReadingPage() {
       setMaterials(latest);
       navigate(`/reading/${generated.id}`);
     } catch (e) {
-      setError((e as Error).message);
+      console.error("reading generate failed", e);
     } finally {
       setLoading(false);
     }
@@ -129,8 +127,6 @@ export function ReadingPage() {
             </article>
           ))}
         </div>
-
-        {error ? <p className="error">{error}</p> : null}
 
         {passage ? (
           <article className="stage-banner" style={{ marginTop: 8 }}>

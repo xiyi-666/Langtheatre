@@ -45,7 +45,6 @@ export function GeneratePage() {
   const [difficulty, setDifficulty] = useState(5.5);
   const [mode, setMode] = useState<"LISTENING" | "ROLEPLAY" | "APPRECIATION">("LISTENING");
   const [progress, setProgress] = useState(0);
-  const [error, setError] = useState("");
   const loading = useAppStore((s) => s.loading);
   const setLoading = useAppStore((s) => s.setLoading);
   const setTheater = useAppStore((s) => s.setTheater);
@@ -68,7 +67,6 @@ export function GeneratePage() {
 
   async function handleGenerate(event: FormEvent) {
     event.preventDefault();
-    setError("");
     setLoading(true);
     try {
       const theater = await generateTheater({ language, topic, difficulty, mode });
@@ -76,7 +74,7 @@ export function GeneratePage() {
       setTheater(theater);
       navigate(`/theater/${theater.id}`);
     } catch (e) {
-      setError((e as Error).message);
+      console.error("generate theater failed", e);
     } finally {
       setLoading(false);
     }
@@ -159,8 +157,6 @@ export function GeneratePage() {
               </select>
             </label>
           </div>
-
-          {error ? <p className="error">{error}</p> : null}
 
           <div className="row" style={{ marginTop: 14 }}>
             <button type="submit" disabled={loading}>
