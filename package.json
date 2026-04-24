@@ -9,6 +9,10 @@
   "scripts": {
     "client:dev": "npm run dev --workspace apps/client",
     "client:build": "npm run build --workspace apps/client",
+    "tauri:dev": "npm run tauri:dev --workspace apps/client",
+    "tauri:build": "npm run tauri:build --workspace apps/client",
+    "tauri:android:dev": "npm run tauri:android:dev --workspace apps/client",
+    "tauri:android:build": "npm run tauri:android:build --workspace apps/client",
     "client:test": "npm run test --workspace apps/client",
     "server:dev": "go run ./cmd/server",
     "server:test": "go test ./... -cover",
