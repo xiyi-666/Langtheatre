@@ -2,6 +2,14 @@ import type { ContentSource, Course, PracticeResult, ReadingMaterial, RoleplaySe
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8177/graphql";
 
+export function getApiBaseUrl(): string {
+  try {
+    return new URL(API_URL, window.location.origin).origin;
+  } catch {
+    return window.location.origin;
+  }
+}
+
 type GraphQLResponse<T> = {
   data?: T;
   errors?: { message: string }[];
@@ -136,6 +144,21 @@ export async function getTheater(id: string): Promise<Theater> {
   return data.theater;
 }
 
+export async function getSharedTheater(shareCode: string): Promise<Theater> {
+  const data = await request<{ sharedTheater: Theater }>(
+    `query SharedTheater($shareCode: String!) {
+      sharedTheater(shareCode: $shareCode) {
+        id language topic difficulty mode status isFavorite shareCode sceneDescription
+        characters { name role color }
+        dialogues { speaker text zhSubtitle audioUrl timestamp }
+        quizQuestions { question options }
+      }
+    }`,
+    { shareCode }
+  );
+  return data.sharedTheater;
+}
+
 export async function submitAnswers(theaterId: string, answers: string[]): Promise<PracticeResult> {
   const data = await request<{ submitAnswers: PracticeResult }>(
     `mutation Submit($theaterId: ID!, $answers: [String!]!) {
@@ -265,6 +288,9 @@ export async function generateReading(input: {
   const query = `mutation GenerateReading($exam: String!, $topic: String!, $level: String, $sourceIds: [String!]) {
       generateReading(exam: $exam, topic: $topic, level: $level, sourceIds: $sourceIds) {
         id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
+        vocabularyItems { word pos meanings }
+        associationSentences
+        grammarInsights { sentence difficultyPoints studySuggestions }
         questions { question options answerKey }
       }
     }`;
@@ -277,6 +303,9 @@ export async function readingMaterials(exam?: string): Promise<ReadingMaterial[]
   const query = `query ReadingMaterials($exam: String) {
       readingMaterials(exam: $exam) {
         id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
+        vocabularyItems { word pos meanings }
+        associationSentences
+        grammarInsights { sentence difficultyPoints studySuggestions }
         questions { question options answerKey }
       }
     }`;
@@ -289,9 +318,25 @@ export async function readingMaterial(id: string): Promise<ReadingMaterial> {
   const query = `query ReadingMaterial($id: ID!) {
       readingMaterial(id: $id) {
         id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
+        vocabularyItems { word pos meanings }
+        associationSentences
+        grammarInsights { sentence difficultyPoints studySuggestions }
         questions { question options answerKey }
       }
     }`;
   const data = await requestWithAnswerKeyFallback<{ readingMaterial: ReadingMaterial }>(query, { id });
   return data.readingMaterial;
+}
+
+export async function submitReadingAnswers(materialId: string, answers: string[]): Promise<PracticeResult> {
+  await ensureAccessToken();
+  const data = await request<{ submitReadingAnswers: PracticeResult }>(
+    `mutation SubmitReadingAnswers($materialId: ID!, $answers: [String!]!) {
+      submitReadingAnswers(materialId: $materialId, answers: $answers) {
+        score xpEarned feedback correctCount totalCount
+      }
+    }`,
+    { materialId, answers }
+  );
+  return data.submitReadingAnswers;
 }

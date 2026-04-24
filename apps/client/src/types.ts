@@ -101,4 +101,15 @@ export interface ReadingMaterial {
   audioUrl?: string;
   audioUrls?: string[];
   audioStatus?: "PENDING" | "READY" | "FAILED";
+  vocabularyItems?: {
+    word: string;
+    pos: string;
+    meanings: string[];
+  }[];
+  associationSentences?: string[];
+  grammarInsights?: {
+    sentence: string;
+    difficultyPoints: string[];
+    studySuggestions: string[];
+  }[];
 }

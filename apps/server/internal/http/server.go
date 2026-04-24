@@ -3,8 +3,11 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/graphql-go/graphql"
 	"github.com/linguaquest/server/internal/auth"
@@ -88,6 +91,64 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 		})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(result)
+	})
+	mux.HandleFunc("/media-proxy", func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w, r)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "only GET is supported", http.StatusMethodNotAllowed)
+			return
+		}
+
+		rawURL := strings.TrimSpace(r.URL.Query().Get("url"))
+		if rawURL == "" {
+			http.Error(w, "url is required", http.StatusBadRequest)
+			return
+		}
+		target, err := url.Parse(rawURL)
+		if err != nil || target == nil || target.Host == "" {
+			http.Error(w, "invalid url", http.StatusBadRequest)
+			return
+		}
+		if target.Scheme != "http" && target.Scheme != "https" {
+			http.Error(w, "unsupported url scheme", http.StatusBadRequest)
+			return
+		}
+
+		client := &http.Client{Timeout: 25 * time.Second}
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target.String(), nil)
+		if err != nil {
+			http.Error(w, "failed to build upstream request", http.StatusBadGateway)
+			return
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			http.Error(w, "failed to fetch upstream media", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			http.Error(w, "upstream media unavailable", http.StatusBadGateway)
+			return
+		}
+
+		contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		w.Header().Set("Content-Type", contentType)
+		if contentLength := strings.TrimSpace(resp.Header.Get("Content-Length")); contentLength != "" {
+			w.Header().Set("Content-Length", contentLength)
+		}
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		if _, err = io.Copy(w, resp.Body); err != nil {
+			http.Error(w, "failed to stream media", http.StatusBadGateway)
+			return
+		}
 	})
 	return mux
 }

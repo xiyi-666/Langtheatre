@@ -3,6 +3,13 @@ dist/
 coverage/
 playwright-report/
 test-results/
+test/
+tests/
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+**/*_test.go
 .DS_Store
 
 # Environment files
@@ -34,6 +41,9 @@ go.work.sum
 # Local tool metadata
 .cursor/
 .spec-workflow/
+
+# Product requirement drafts (local only)
+demand/
 
 # Do not publish local GitHub automation/config
 .github/agents/

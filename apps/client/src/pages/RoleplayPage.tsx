@@ -10,6 +10,7 @@ export function RoleplayPage() {
   const roleplay = useAppStore((s) => s.roleplay);
   const user = useAppStore((s) => s.user);
   const setRoleplay = useAppStore((s) => s.setRoleplay);
+  const refreshUserXP = useAppStore((s) => s.refreshUserXP);
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showZhSubtitle, setShowZhSubtitle] = useState(true);
@@ -96,6 +97,7 @@ export function RoleplayPage() {
     try {
       const completed = await endRoleplay(roleplay.id);
       setRoleplay(completed);
+      await refreshUserXP();
     } catch (e) {
       console.error("end roleplay failed", e);
     }

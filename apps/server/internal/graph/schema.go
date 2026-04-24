@@ -17,11 +17,11 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 	dialogueType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Dialogue",
 		Fields: graphql.Fields{
-			"speaker":   &graphql.Field{Type: graphql.String},
-			"text":      &graphql.Field{Type: graphql.String},
+			"speaker":    &graphql.Field{Type: graphql.String},
+			"text":       &graphql.Field{Type: graphql.String},
 			"zhSubtitle": &graphql.Field{Type: graphql.String},
-			"audioUrl":  &graphql.Field{Type: graphql.String},
-			"timestamp": &graphql.Field{Type: graphql.Float},
+			"audioUrl":   &graphql.Field{Type: graphql.String},
+			"timestamp":  &graphql.Field{Type: graphql.Float},
 		},
 	})
 
@@ -102,14 +102,14 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 	userType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "User",
 		Fields: graphql.Fields{
-			"id":      &graphql.Field{Type: graphql.String},
-			"email":   &graphql.Field{Type: graphql.String},
+			"id":    &graphql.Field{Type: graphql.String},
+			"email": &graphql.Field{Type: graphql.String},
 			"nickname": &graphql.Field{
 				Type: graphql.String,
 			},
 			"avatarUrl": &graphql.Field{Type: graphql.String},
 			"bio":       &graphql.Field{Type: graphql.String},
-			"totalXP": &graphql.Field{Type: graphql.Int},
+			"totalXP":   &graphql.Field{Type: graphql.Int},
 		},
 	})
 
@@ -123,11 +123,11 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 	practiceResultType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "PracticeResult",
 		Fields: graphql.Fields{
-			"score":         &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"xpEarned":      &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"feedback":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"correctCount":  &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"totalCount":    &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"score":        &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"xpEarned":     &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"feedback":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"correctCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"totalCount":   &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
 		},
 	})
 
@@ -163,6 +163,23 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 	readingMaterialType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "ReadingMaterial",
 		Fields: graphql.Fields{
+			"vocabularyItems": &graphql.Field{Type: graphql.NewList(graphql.NewObject(graphql.ObjectConfig{
+				Name: "VocabularyItem",
+				Fields: graphql.Fields{
+					"word":     &graphql.Field{Type: graphql.String},
+					"pos":      &graphql.Field{Type: graphql.String},
+					"meanings": &graphql.Field{Type: graphql.NewList(graphql.String)},
+				},
+			}))},
+			"associationSentences": &graphql.Field{Type: graphql.NewList(graphql.String)},
+			"grammarInsights": &graphql.Field{Type: graphql.NewList(graphql.NewObject(graphql.ObjectConfig{
+				Name: "GrammarInsight",
+				Fields: graphql.Fields{
+					"sentence":         &graphql.Field{Type: graphql.String},
+					"difficultyPoints": &graphql.Field{Type: graphql.NewList(graphql.String)},
+					"studySuggestions": &graphql.Field{Type: graphql.NewList(graphql.String)},
+				},
+			}))},
 			"id":             &graphql.Field{Type: graphql.String},
 			"exam":           &graphql.Field{Type: graphql.String},
 			"language":       &graphql.Field{Type: graphql.String},
@@ -252,6 +269,15 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					id := p.Args["id"].(string)
 					return svc.Theater(id)
+				},
+			},
+			"sharedTheater": &graphql.Field{
+				Type: theaterType,
+				Args: graphql.FieldConfigArgument{
+					"shareCode": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return svc.SharedTheater(p.Args["shareCode"].(string))
 				},
 			},
 			"myTheaters": &graphql.Field{
@@ -479,6 +505,25 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 					return svc.SubmitAnswers(userID, p.Args["theaterId"].(string), answers)
 				},
 			},
+			"submitReadingAnswers": &graphql.Field{
+				Type: practiceResultType,
+				Args: graphql.FieldConfigArgument{
+					"materialId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)},
+					"answers":    &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.NewList(graphql.String))},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
+					anyAnswers := p.Args["answers"].([]interface{})
+					answers := make([]string, 0, len(anyAnswers))
+					for _, item := range anyAnswers {
+						answers = append(answers, item.(string))
+					}
+					return svc.SubmitReadingAnswers(userID, p.Args["materialId"].(string), answers)
+				},
+			},
 			"toggleFavorite": &graphql.Field{
 				Type: graphql.Boolean,
 				Args: graphql.FieldConfigArgument{
@@ -509,22 +554,22 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 					return svc.ShareTheater(userID, p.Args["theaterId"].(string))
 				},
 			},
-				"deleteTheater": &graphql.Field{
-					Type: graphql.Boolean,
-					Args: graphql.FieldConfigArgument{
-						"theaterId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)},
-					},
-					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-						userID, _ := p.Context.Value(UserIDKey).(string)
-						if userID == "" {
-							return false, errors.New("unauthorized")
-						}
-						if err := svc.DeleteTheater(userID, p.Args["theaterId"].(string)); err != nil {
-							return false, err
-						}
-						return true, nil
-					},
+			"deleteTheater": &graphql.Field{
+				Type: graphql.Boolean,
+				Args: graphql.FieldConfigArgument{
+					"theaterId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)},
 				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return false, errors.New("unauthorized")
+					}
+					if err := svc.DeleteTheater(userID, p.Args["theaterId"].(string)); err != nil {
+						return false, err
+					}
+					return true, nil
+				},
+			},
 			"startRoleplay": &graphql.Field{
 				Type: roleplayType,
 				Args: graphql.FieldConfigArgument{

@@ -35,6 +35,7 @@ ALTER TABLE theaters ADD COLUMN IF NOT EXISTS characters JSONB NOT NULL DEFAULT 
 ALTER TABLE theaters ADD COLUMN IF NOT EXISTS quiz_questions JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_theater_user_language ON theaters(user_id, language);
+CREATE INDEX IF NOT EXISTS idx_theater_share_code ON theaters(share_code);
 
 CREATE TABLE IF NOT EXISTS practice_records (
   id BIGSERIAL PRIMARY KEY,
@@ -76,6 +77,42 @@ CREATE TABLE IF NOT EXISTS roleplay_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_roleplay_user ON roleplay_sessions(user_id, status);
+
+CREATE TABLE IF NOT EXISTS reading_materials (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id),
+  exam TEXT NOT NULL,
+  language TEXT NOT NULL,
+  level TEXT NOT NULL,
+  topic TEXT NOT NULL,
+  title TEXT NOT NULL,
+  passage TEXT NOT NULL,
+  vocabulary JSONB NOT NULL DEFAULT '[]'::jsonb,
+  questions JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  generation_note TEXT NOT NULL DEFAULT '',
+  audio_url TEXT NOT NULL DEFAULT '',
+  audio_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+  audio_status TEXT NOT NULL DEFAULT 'PENDING',
+  vocabulary_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+  association_sentences JSONB NOT NULL DEFAULT '[]'::jsonb,
+  grammar_insights JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reading_materials_user_exam ON reading_materials(user_id, exam, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS reading_practice_records (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id),
+  material_id UUID NOT NULL REFERENCES reading_materials(id),
+  score INT NOT NULL,
+  answers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  xp_earned INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reading_practice_user_material ON reading_practice_records(user_id, material_id, created_at DESC);
 
 INSERT INTO courses(language, category, title, description, min_level, max_level, is_active)
 SELECT 'CANTONESE', 'daily', '茶餐厅点单', '学习香港茶餐厅常见点单表达', 4.0, 6.0, true

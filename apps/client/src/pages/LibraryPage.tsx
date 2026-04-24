@@ -1,7 +1,7 @@
 import { TouchEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Heart, Share2, Theater, Trash2, TrendingUp } from "lucide-react";
+import { Check, Copy, Heart, Share2, Theater, Trash2, TrendingUp } from "lucide-react";
 import { deleteTheater, myTheaters, shareTheater, toggleFavorite } from "../api";
 import { useAppStore } from "../store";
 
@@ -9,8 +9,11 @@ export function LibraryPage() {
   const [languageFilter, setLanguageFilter] = useState<"ALL" | "CANTONESE" | "ENGLISH">("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "READY" | "GENERATING" | "FAILED">("ALL");
   const [difficultyFilter, setDifficultyFilter] = useState<"ALL" | "4-5.5" | "6-7" | "7.5+">("ALL");
+  const [favoriteFilter, setFavoriteFilter] = useState<"ALL" | "ONLY">("ALL");
   const theaters = useAppStore((s) => s.theaters);
   const setTheaters = useAppStore((s) => s.setTheaters);
+  const [sharingID, setSharingID] = useState("");
+  const [shareHint, setShareHint] = useState("");
   const [pullDistance, setPullDistance] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshHint, setRefreshHint] = useState("");
@@ -33,6 +36,7 @@ export function LibraryPage() {
   const filteredTheaters = theaters.filter((item) => {
     if (languageFilter !== "ALL" && item.language !== languageFilter) return false;
     if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
+    if (favoriteFilter === "ONLY" && !item.isFavorite) return false;
     if (difficultyFilter === "4-5.5" && (item.difficulty < 4 || item.difficulty > 5.5)) return false;
     if (difficultyFilter === "6-7" && (item.difficulty < 6 || item.difficulty > 7)) return false;
     if (difficultyFilter === "7.5+" && item.difficulty < 7.5) return false;
@@ -49,6 +53,17 @@ export function LibraryPage() {
     if (mode === "APPRECIATION") return "进入欣赏";
     if (mode === "ROLEPLAY") return "进入剧场";
     return "继续练习";
+  }
+
+  async function ensureShareLink(item: (typeof theaters)[number]): Promise<{ code: string; url: string }> {
+    const code = item.shareCode && item.shareCode.trim() !== "" ? item.shareCode : await shareTheater(item.id);
+    const url = `${window.location.origin}/theater/shared/${encodeURIComponent(code)}`;
+    return { code, url };
+  }
+
+  function flashShareHint(text: string) {
+    setShareHint(text);
+    window.setTimeout(() => setShareHint(""), 1600);
   }
 
   function onTouchStart(event: TouchEvent<HTMLElement>) {
@@ -120,7 +135,15 @@ export function LibraryPage() {
               <option value="FAILED">失败</option>
             </select>
           </label>
+          <label>
+            收藏
+            <select value={favoriteFilter} onChange={(e) => setFavoriteFilter(e.target.value as typeof favoriteFilter)}>
+              <option value="ALL">全部</option>
+              <option value="ONLY">仅收藏</option>
+            </select>
+          </label>
         </div>
+        {shareHint ? <p className="share-hint">{shareHint}</p> : null}
 
         <div className="metric-grid" style={{ marginTop: 10 }}>
           <article className="metric-card">
@@ -142,6 +165,11 @@ export function LibraryPage() {
           <button className="btn-ghost" onClick={() => navigate("/profile")}>个人中心</button>
         </div>
         <ul className="dialogue-list">
+          {filteredTheaters.length === 0 ? (
+            <li className="theater-item">
+              <p style={{ margin: 0 }}>当前筛选条件下暂无剧场，可切换筛选或先生成新剧场。</p>
+            </li>
+          ) : null}
           {filteredTheaters.map((item) => (
             <motion.li
               key={item.id}
@@ -160,7 +188,8 @@ export function LibraryPage() {
               <p>
                 {item.language === "CANTONESE" ? "粤语" : "英语"} | {item.mode} | 难度 {item.difficulty}
               </p>
-              <p><TrendingUp size={14} /> {item.language === "CANTONESE" ? "推荐路径：日常交流 -> 职场 -> 雅思" : "Recommended flow: daily -> workplace -> IELTS"}</p>
+              {item.shareCode ? <p className="share-code-line">分享码：{item.shareCode}</p> : null}
+              <p><TrendingUp size={14} /> {item.language === "CANTONESE" ? "推荐路径：日常交流 -> 职场 -> 专业" : "Recommended flow: daily -> workplace -> IELTS"}</p>
               <div className="row">
                 <button onClick={() => navigate(`/theater/${item.id}`)}>{getPracticeLabel(item.mode)}</button>
                 <button
@@ -180,14 +209,53 @@ export function LibraryPage() {
                   className="btn-ghost"
                   onClick={async () => {
                     try {
-                      const code = await shareTheater(item.id);
-                      window.alert(`分享码: ${code}`);
+                      setSharingID(item.id);
+                      const payload = await ensureShareLink(item);
+                      await reload();
+                      if (navigator.share) {
+                        await navigator.share({
+                          title: `LinguaQuest 剧场：${item.topic}`,
+                          text: `分享剧场「${item.topic}」，可通过分享码 ${payload.code} 打开。`,
+                          url: payload.url
+                        });
+                        flashShareHint("已调用系统分享面板");
+                      } else if (navigator.clipboard?.writeText) {
+                        await navigator.clipboard.writeText(payload.url);
+                        flashShareHint(`分享链接已复制（${payload.code}）`);
+                      } else {
+                        window.prompt("请复制分享链接", payload.url);
+                        flashShareHint(`已生成分享链接（${payload.code}）`);
+                      }
                     } catch (e) {
                       console.error("share theater failed", e);
+                      flashShareHint("分享失败，请稍后重试");
+                    } finally {
+                      setSharingID("");
                     }
                   }}
                 >
-                  <Share2 size={16} /> 分享
+                  <Share2 size={16} /> {sharingID === item.id ? "处理中..." : "分享"}
+                </button>
+                <button
+                  className="btn-ghost"
+                  onClick={async () => {
+                    try {
+                      const payload = await ensureShareLink(item);
+                      await reload();
+                      if (navigator.clipboard?.writeText) {
+                        await navigator.clipboard.writeText(payload.url);
+                        flashShareHint(`链接已复制（${payload.code}）`);
+                      } else {
+                        window.prompt("请复制分享链接", payload.url);
+                        flashShareHint(`已生成可复制链接（${payload.code}）`);
+                      }
+                    } catch (e) {
+                      console.error("copy share link failed", e);
+                      flashShareHint("复制失败，请稍后重试");
+                    }
+                  }}
+                >
+                  {item.shareCode ? <Check size={16} /> : <Copy size={16} />} 复制链接
                 </button>
                 <button
                   className="btn-ghost"

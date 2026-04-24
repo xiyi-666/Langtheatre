@@ -22,13 +22,18 @@ type Store interface {
 	UpdateUserProfile(userID string, nickname string, avatarURL string, bio string) (domain.User, error)
 	SaveTheater(theater domain.Theater) (domain.Theater, error)
 	GetTheater(id string) (domain.Theater, error)
+	GetTheaterByShareCode(shareCode string) (domain.Theater, error)
 	ListTheatersByUser(userID string, language string, status string, favorite *bool) ([]domain.Theater, error)
 	SetTheaterFavorite(userID string, theaterID string, favorite bool) error
 	SetTheaterShareCode(userID string, theaterID string, shareCode string) error
 	DeleteTheater(userID string, theaterID string) error
 	AddUserXP(userID string, xp int) error
 	SavePracticeRecord(userID string, theaterID string, score int, answers []string, xpEarned int) error
+	SaveReadingPracticeRecord(userID string, materialID string, score int, answers []string, xpEarned int) error
 	ListCourses(language string) ([]domain.Course, error)
+	SaveReadingMaterial(material domain.ReadingMaterial) (domain.ReadingMaterial, error)
+	GetReadingMaterial(id string, userID string) (domain.ReadingMaterial, error)
+	ListReadingMaterialsByUser(userID string, exam string) ([]domain.ReadingMaterial, error)
 	CreateRoleplaySession(session domain.RoleplaySession) (domain.RoleplaySession, error)
 	GetRoleplaySession(sessionID string, userID string) (domain.RoleplaySession, error)
 	UpdateRoleplaySession(session domain.RoleplaySession) (domain.RoleplaySession, error)
@@ -41,6 +46,10 @@ type SessionStore interface {
 
 type TheaterGenerator interface {
 	Generate(ctx context.Context, language string, topic string, difficulty float64, mode string) ([]domain.Dialogue, []domain.QuizQuestion, error)
+}
+
+type ReadingAnalyzer interface {
+	AnalyzeReading(ctx context.Context, exam string, topic string, passage string, vocabulary []string) (domain.ReadingAnalysis, error)
 }
 
 type SpeechSynthesizer interface {
@@ -151,6 +160,7 @@ func (s *Service) GenerateTheater(userID string, language string, topic string, 
 	if difficulty >= 7.0 {
 		requiredQuiz = 3
 	}
+	preparedTopic := prepareTheaterTopic(language, topic)
 
 	var dialogues []domain.Dialogue
 	var quiz []domain.QuizQuestion
@@ -159,23 +169,25 @@ func (s *Service) GenerateTheater(userID string, language string, topic string, 
 		log.Printf("generator is nil, use fallback content language=%s topic=%s", language, topic)
 		dialogues, quiz = fallbackGeneratedContent(language, topic, requiredQuiz)
 	} else {
-		generated, q, err := s.generator.Generate(context.Background(), language, topic, difficulty, mode)
+		generated, q, err := s.generator.Generate(context.Background(), language, preparedTopic, difficulty, mode)
 		if err != nil {
-			log.Printf("model generate failed, use fallback content err=%v", err)
-			dialogues, quiz = fallbackGeneratedContent(language, topic, requiredQuiz)
+			log.Printf("model generate failed err=%v", err)
+			return domain.Theater{}, fmt.Errorf("ai generation failed: %w", err)
 		} else {
-			if len(generated) == 0 || len(q) < requiredQuiz {
-				log.Printf("model returned incomplete content, use fallback content dialogues=%d quiz=%d requiredQuiz=%d", len(generated), len(q), requiredQuiz)
+			if len(generated) == 0 || dialogueLooksTemplated(generated) {
+				log.Printf("model returned empty or templated content, use fallback content dialogues=%d quiz=%d", len(generated), len(q))
 				dialogues, quiz = fallbackGeneratedContent(language, topic, requiredQuiz)
 			} else {
 				dialogues = generated
-				quiz = q[:requiredQuiz]
+				quiz = completeQuizSet(language, topic, q, requiredQuiz)
 			}
 		}
 	}
 	if s.tts != nil {
+		voicePair := selectDialogueVoicePair(topic)
 		for i := range dialogues {
-			audioURL, err := s.tts.Synthesize(context.Background(), dialogues[i].Text, language, "")
+			voiceStyle := voicePair[i%2]
+			audioURL, err := s.tts.Synthesize(context.Background(), dialogues[i].Text, language, voiceStyle)
 			if err != nil {
 				log.Printf("tts failed index=%d err=%v", i, err)
 				continue
@@ -204,8 +216,123 @@ func (s *Service) GenerateTheater(userID string, language string, topic string, 
 	return s.store.SaveTheater(theater)
 }
 
+func prepareTheaterTopic(language string, topic string) string {
+	clean := strings.TrimSpace(topic)
+	if clean == "" {
+		return clean
+	}
+	if !strings.EqualFold(language, "CANTONESE") {
+		return clean
+	}
+	converted := simplifiedToTraditionalHK(clean)
+	return converted + "；请先把这个主题落成一个香港生活中的具体情境，再生成真实对话。"
+}
+
+func selectDialogueVoicePair(topic string) [2]string {
+	pairs := [][2]string{
+		{"甜美女生", "播音男生"},
+		{"御姐音色", "沉稳大叔"},
+		{"温柔女生", "播音男生"},
+	}
+	clean := strings.TrimSpace(topic)
+	if clean == "" {
+		return pairs[0]
+	}
+	sum := 0
+	for _, r := range clean {
+		sum += int(r)
+	}
+	return pairs[sum%len(pairs)]
+}
+
+func completeQuizSet(language string, topic string, generated []domain.QuizQuestion, requiredQuiz int) []domain.QuizQuestion {
+	if len(generated) >= requiredQuiz {
+		return generated[:requiredQuiz]
+	}
+	result := make([]domain.QuizQuestion, 0, requiredQuiz)
+	result = append(result, generated...)
+	for _, extra := range fallbackQuizOnly(language, topic) {
+		if len(result) >= requiredQuiz {
+			break
+		}
+		duplicate := false
+		for _, existing := range result {
+			if strings.TrimSpace(existing.Question) == strings.TrimSpace(extra.Question) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			result = append(result, extra)
+		}
+	}
+	if len(result) > requiredQuiz {
+		return result[:requiredQuiz]
+	}
+	return result
+}
+
+func dialogueLooksTemplated(dialogues []domain.Dialogue) bool {
+	if len(dialogues) == 0 {
+		return true
+	}
+	hits := 0
+	for _, dialogue := range dialogues {
+		text := strings.ToLower(strings.TrimSpace(dialogue.Text))
+		if text == "" {
+			continue
+		}
+		if strings.Contains(text, "today we are discussing") ||
+			strings.Contains(text, "welcome to today's mini-theater") ||
+			strings.Contains(text, "今日主题") ||
+			strings.Contains(text, "欢迎来到今天") ||
+			strings.Contains(text, "歡迎來到今天") ||
+			strings.Contains(text, "我哋会倾") {
+			hits++
+		}
+	}
+	return hits >= 1
+}
+
+func simplifiedToTraditionalHK(input string) string {
+	replacer := strings.NewReplacer(
+		"这", "這",
+		"个", "個",
+		"们", "們",
+		"说", "說",
+		"话", "話",
+		"点", "點",
+		"车", "車",
+		"门", "門",
+		"后", "後",
+		"台", "檯",
+		"里", "裡",
+		"听", "聽",
+		"习", "習",
+		"学", "學",
+		"场", "場",
+		"气", "氣",
+		"时", "時",
+		"为", "為",
+		"来", "來",
+		"电", "電",
+		"问", "問",
+		"应", "應",
+		"对", "對",
+	)
+	return replacer.Replace(strings.TrimSpace(input))
+}
+
 func (s *Service) Theater(id string) (domain.Theater, error) {
 	return s.store.GetTheater(id)
+}
+
+func (s *Service) SharedTheater(shareCode string) (domain.Theater, error) {
+	code := strings.ToUpper(strings.TrimSpace(shareCode))
+	if code == "" {
+		return domain.Theater{}, errors.New("share code is required")
+	}
+	return s.store.GetTheaterByShareCode(code)
 }
 
 func (s *Service) MyTheaters(userID string, language string, status string, favorite *bool) ([]domain.Theater, error) {
@@ -217,7 +344,18 @@ func (s *Service) ToggleFavorite(userID string, theaterID string, favorite bool)
 }
 
 func (s *Service) ShareTheater(userID string, theaterID string) (string, error) {
-	shareCode := uuid.NewString()[:8]
+	theater, err := s.store.GetTheater(theaterID)
+	if err != nil {
+		return "", err
+	}
+	if theater.UserID != userID {
+		return "", errors.New("theater not found")
+	}
+	existing := strings.TrimSpace(theater.ShareCode)
+	if existing != "" {
+		return existing, nil
+	}
+	shareCode := strings.ToUpper(uuid.NewString()[:8])
 	if err := s.store.SetTheaterShareCode(userID, theaterID, shareCode); err != nil {
 		return "", err
 	}
@@ -249,17 +387,9 @@ func (s *Service) SubmitAnswers(userID string, theaterID string, answers []strin
 		}
 	}
 	score := (correct * 100) / total
-	xp := score / 2
-	if xp < 1 && score > 0 {
-		xp = 1
-	}
+	xp := calculatePracticeXP(score)
 	_ = s.store.AddUserXP(userID, xp)
-	feedback := fmt.Sprintf("答对 %d / %d 题。", correct, total)
-	if score >= 80 {
-		feedback = fmt.Sprintf("答对 %d / %d 题，表现很棒，建议挑战更高难度。", correct, total)
-	} else if score < 40 {
-		feedback = fmt.Sprintf("答对 %d / %d 题，建议再听一遍对话后重试。", correct, total)
-	}
+	feedback := buildPracticeFeedback(correct, total, score)
 	_ = s.store.SavePracticeRecord(userID, theaterID, score, answers, xp)
 	return domain.PracticeResult{
 		Score:        score,
@@ -268,6 +398,61 @@ func (s *Service) SubmitAnswers(userID string, theaterID string, answers []strin
 		CorrectCount: correct,
 		TotalCount:   total,
 	}, nil
+}
+
+func (s *Service) SubmitReadingAnswers(userID string, materialID string, answers []string) (domain.PracticeResult, error) {
+	material, err := s.store.GetReadingMaterial(materialID, userID)
+	if err != nil {
+		return domain.PracticeResult{}, err
+	}
+	questions := material.Questions
+	total := len(questions)
+	if total == 0 {
+		return domain.PracticeResult{}, errors.New("该阅读材料没有题目，请重新生成")
+	}
+
+	correct := 0
+	for i := range questions {
+		userAns := ""
+		if i < len(answers) {
+			userAns = answers[i]
+		}
+		if answerMatches(userAns, questions[i].AnswerKey, material.Language) {
+			correct++
+		}
+	}
+
+	score := (correct * 100) / total
+	xp := calculatePracticeXP(score)
+	_ = s.store.AddUserXP(userID, xp)
+	_ = s.store.SaveReadingPracticeRecord(userID, materialID, score, answers, xp)
+
+	return domain.PracticeResult{
+		Score:        score,
+		XPEarned:     xp,
+		Feedback:     buildPracticeFeedback(correct, total, score),
+		CorrectCount: correct,
+		TotalCount:   total,
+	}, nil
+}
+
+func calculatePracticeXP(score int) int {
+	xp := score / 2
+	if xp < 1 && score > 0 {
+		return 1
+	}
+	return xp
+}
+
+func buildPracticeFeedback(correct int, total int, score int) string {
+	feedback := fmt.Sprintf("答对 %d / %d 题。", correct, total)
+	if score >= 80 {
+		return fmt.Sprintf("答对 %d / %d 题，表现很棒，建议挑战更高难度。", correct, total)
+	}
+	if score < 40 {
+		return fmt.Sprintf("答对 %d / %d 题，建议再听一遍对话后重试。", correct, total)
+	}
+	return feedback
 }
 
 func (s *Service) ListCourses(language string) ([]domain.Course, error) {
@@ -334,13 +519,16 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 	quizCount := 5
 	generated, q, err := s.generator.Generate(context.Background(), language, fmt.Sprintf("[%s Reading] %s", exam, topic), difficulty, "APPRECIATION")
 	if err != nil {
-		return domain.ReadingMaterial{}, fmt.Errorf("reading ai generation failed: %w", err)
+		log.Printf("reading ai generation failed, use fallback passage err=%v", err)
+		generated, q = fallbackReadingGeneratedContent(exam, topic, quizCount)
 	}
 	if len(generated) == 0 {
-		return domain.ReadingMaterial{}, errors.New("reading generation failed: empty passage")
+		log.Printf("reading generation returned empty passage, use fallback passage")
+		generated, q = fallbackReadingGeneratedContent(exam, topic, quizCount)
 	}
 	if len(q) < quizCount {
-		return domain.ReadingMaterial{}, errors.New("reading generation failed: insufficient questions from ai")
+		log.Printf("reading generation returned insufficient questions, use fallback quiz got=%d required=%d", len(q), quizCount)
+		_, q = fallbackReadingGeneratedContent(exam, topic, quizCount)
 	}
 	if len(q) > quizCount {
 		q = q[:quizCount]
@@ -371,40 +559,344 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 		}
 	}
 
-	material := domain.ReadingMaterial{
-		ID:             uuid.NewString(),
-		UserID:         userID,
-		Exam:           exam,
-		Language:       language,
-		Level:          level,
-		Topic:          topic,
-		Title:          fmt.Sprintf("%s Reading Drill: %s", exam, topic),
-		Passage:        passage,
-		Vocabulary:     vocabulary,
-		Questions:      q,
-		SourceIDs:      sourceIDs,
-		GenerationNote: "Generated via AI chain with source-category constraints.",
-		AudioStatus:    "PENDING",
-		CreatedAt:      time.Now(),
+	analysis := domain.ReadingAnalysis{}
+	if analyzer, ok := s.generator.(ReadingAnalyzer); ok {
+		aiResult, analysisErr := analyzer.AnalyzeReading(context.Background(), exam, topic, passage, vocabulary)
+		if analysisErr != nil {
+			log.Printf("reading semantic analysis failed, fallback to lightweight defaults err=%v", analysisErr)
+		} else {
+			analysis = normalizeReadingAnalysis(aiResult, vocabulary, topic)
+		}
+	}
+	if len(analysis.VocabularyItems) == 0 {
+		analysis = normalizeReadingAnalysis(domain.ReadingAnalysis{}, vocabulary, topic)
 	}
 
-	s.readingMu.Lock()
-	s.readingMaterials[material.ID] = material
-	s.readingMu.Unlock()
+	material := domain.ReadingMaterial{
+		ID:                   uuid.NewString(),
+		UserID:               userID,
+		Exam:                 exam,
+		Language:             language,
+		Level:                level,
+		Topic:                topic,
+		Title:                fmt.Sprintf("%s Reading Drill: %s", exam, topic),
+		Passage:              passage,
+		Vocabulary:           vocabulary,
+		Questions:            q,
+		SourceIDs:            sourceIDs,
+		GenerationNote:       "Generated via AI chain with source-category constraints.",
+		AudioStatus:          "PENDING",
+		VocabularyItems:      analysis.VocabularyItems,
+		AssociationSentences: analysis.AssociationSentences,
+		GrammarInsights:      analysis.GrammarInsights,
+		CreatedAt:            time.Now(),
+	}
 
-	go s.generateReadingAudio(material.ID, material.Passage, material.Language)
+	saved, err := s.store.SaveReadingMaterial(material)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	s.cacheReadingMaterial(saved)
 
-	return material, nil
+	go s.generateReadingAudio(saved.ID, saved.Passage, saved.Language)
+
+	return saved, nil
+}
+
+func fallbackReadingGeneratedContent(exam string, topic string, quizCount int) ([]domain.Dialogue, []domain.QuizQuestion) {
+	paragraphs := []string{
+		fmt.Sprintf("In recent years, educators have paid closer attention to how %s influences student learning outcomes, because reading tasks are no longer judged only by speed, but also by depth of understanding and evidence-based reasoning.", topic),
+		"A strong reading routine usually combines previewing, question prediction, and focused scanning, so learners can quickly identify key details while still keeping the main argument in mind.",
+		"Researchers also note that vocabulary growth is most effective when words are repeatedly encountered in meaningful contexts, rather than memorized in isolation, which explains why thematic reading units often outperform random drills.",
+		"At the same time, digital tools can support progress tracking, yet they can become distracting when learners switch tasks too frequently, reducing sustained attention and weakening long-term retention.",
+		"For exam preparation, high-performing students tend to annotate paragraph functions, such as background, evidence, contrast, and conclusion, enabling them to locate answers with greater precision under time pressure.",
+		"Teachers therefore recommend a balanced plan that includes timed practice, error analysis, and periodic review, because each stage targets a different cognitive skill needed for accurate comprehension.",
+		"Another practical strategy is to compare similar passages from different sources, which helps readers detect shifts in tone, purpose, and author stance, all of which are commonly tested in advanced reading sections.",
+		"Ultimately, consistent reflection after each exercise turns reading from a passive activity into an active learning cycle, where students identify weaknesses, adjust methods, and steadily improve performance.",
+	}
+
+	dialogues := make([]domain.Dialogue, 0, len(paragraphs))
+	for idx, p := range paragraphs {
+		dialogues = append(dialogues, domain.Dialogue{
+			Speaker:    "Passage",
+			Text:       p,
+			ZhSubtitle: "段落主旨：围绕阅读能力提升策略与考试表现改进展开。",
+			Timestamp:  float64(idx) * 2.1,
+		})
+	}
+
+	questions := []domain.QuizQuestion{
+		{Question: "What is the main focus of the passage?", Options: []string{"Improving reading performance through structured strategies", "Replacing reading with digital media", "Eliminating vocabulary learning", "Reducing exam standards"}, AnswerKey: "Improving reading performance through structured strategies"},
+		{Question: "Why are thematic reading units considered effective?", Options: []string{"They avoid repeated exposure", "They provide context for vocabulary use", "They remove the need for review", "They only test grammar"}, AnswerKey: "They provide context for vocabulary use"},
+		{Question: "What risk of digital tools is mentioned?", Options: []string{"They always increase retention", "They reduce teacher workload to zero", "They may distract learners from sustained attention", "They prevent learners from taking notes"}, AnswerKey: "They may distract learners from sustained attention"},
+		{Question: "What do high-performing students do during exam reading?", Options: []string{"Memorize entire passages", "Ignore paragraph roles", "Annotate functions of paragraphs", "Skip difficult sections"}, AnswerKey: "Annotate functions of paragraphs"},
+		{Question: "What is the long-term benefit of post-reading reflection?", Options: []string{"It turns reading into an active improvement cycle", "It removes the need for practice", "It guarantees full marks immediately", "It shortens all passages"}, AnswerKey: "It turns reading into an active improvement cycle"},
+	}
+
+	if len(questions) > quizCount {
+		questions = questions[:quizCount]
+	}
+	return dialogues, questions
+}
+
+func normalizeReadingAnalysis(in domain.ReadingAnalysis, baseVocabulary []string, topic string) domain.ReadingAnalysis {
+	vocab := make([]domain.VocabularyItem, 0, 15)
+	seen := map[string]struct{}{}
+	for _, item := range in.VocabularyItems {
+		word := strings.TrimSpace(item.Word)
+		if word == "" {
+			continue
+		}
+		key := strings.ToLower(word)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		meanings := make([]string, 0, len(item.Meanings))
+		for _, meaning := range item.Meanings {
+			m := strings.TrimSpace(meaning)
+			if m != "" && !containsLowQualityTemplate(m) {
+				meanings = append(meanings, m)
+			}
+		}
+		if len(meanings) == 0 {
+			meanings = fallbackMeaningsByWord(word, topic)
+		}
+		pos := strings.TrimSpace(item.POS)
+		if pos == "" {
+			pos = fallbackPOSByWord(word)
+		}
+		vocab = append(vocab, domain.VocabularyItem{Word: word, POS: pos, Meanings: meanings})
+		if len(vocab) >= 15 {
+			break
+		}
+	}
+
+	for _, word := range baseVocabulary {
+		w := strings.TrimSpace(word)
+		if w == "" {
+			continue
+		}
+		key := strings.ToLower(w)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		vocab = append(vocab, domain.VocabularyItem{
+			Word:     w,
+			POS:      fallbackPOSByWord(w),
+			Meanings: fallbackMeaningsByWord(w, topic),
+		})
+		if len(vocab) >= 15 {
+			break
+		}
+	}
+
+	association := make([]string, 0, 3)
+	associationSeen := map[string]struct{}{}
+	for _, sentence := range in.AssociationSentences {
+		s := strings.TrimSpace(sentence)
+		if s == "" || containsLowQualityTemplate(s) {
+			continue
+		}
+		key := strings.ToLower(s)
+		if _, exists := associationSeen[key]; exists {
+			continue
+		}
+		associationSeen[key] = struct{}{}
+		association = append(association, s)
+		if len(association) >= 3 {
+			break
+		}
+	}
+	if len(association) < 3 {
+		for _, candidate := range buildAssociationFallbackCandidates(topic, baseVocabulary) {
+			key := strings.ToLower(candidate)
+			if _, exists := associationSeen[key]; exists {
+				continue
+			}
+			associationSeen[key] = struct{}{}
+			association = append(association, candidate)
+			if len(association) >= 3 {
+				break
+			}
+		}
+	}
+
+	grammar := make([]domain.GrammarInsight, 0, len(in.GrammarInsights))
+	for _, gi := range in.GrammarInsights {
+		s := strings.TrimSpace(gi.Sentence)
+		if s == "" {
+			continue
+		}
+		diff := make([]string, 0, len(gi.DifficultyPoints))
+		for _, d := range gi.DifficultyPoints {
+			d = strings.TrimSpace(d)
+			if d != "" {
+				diff = append(diff, d)
+			}
+		}
+		suggestion := make([]string, 0, len(gi.StudySuggestions))
+		for _, t := range gi.StudySuggestions {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				suggestion = append(suggestion, t)
+			}
+		}
+		if len(diff) == 0 {
+			diff = []string{"句子层级较复杂，建议按主句与从句拆分。"}
+		}
+		if len(suggestion) == 0 {
+			suggestion = []string{"先定位主语和谓语，再补充修饰信息。"}
+		}
+		grammar = append(grammar, domain.GrammarInsight{Sentence: s, DifficultyPoints: diff, StudySuggestions: suggestion})
+	}
+
+	return domain.ReadingAnalysis{
+		VocabularyItems:      vocab,
+		AssociationSentences: association,
+		GrammarInsights:      grammar,
+	}
+}
+
+func fallbackPOSByWord(word string) string {
+	w := strings.ToLower(strings.TrimSpace(word))
+	if w == "reading" {
+		return "n. 名词"
+	}
+	switch {
+	case strings.HasSuffix(w, "ly"):
+		return "adv. 副词"
+	case strings.HasSuffix(w, "tion") || strings.HasSuffix(w, "sion") || strings.HasSuffix(w, "ment") || strings.HasSuffix(w, "ity"):
+		return "n. 名词"
+	case strings.HasSuffix(w, "ous") || strings.HasSuffix(w, "ive") || strings.HasSuffix(w, "able") || strings.HasSuffix(w, "al"):
+		return "adj. 形容词"
+	case strings.HasSuffix(w, "ing") || strings.HasSuffix(w, "ed") || strings.HasSuffix(w, "ize") || strings.HasSuffix(w, "ate"):
+		return "v. 动词"
+	default:
+		return "n./v. 常见词"
+	}
+}
+
+func buildAssociationFallbackCandidates(topic string, vocabulary []string) []string {
+	topicText := strings.TrimSpace(topic)
+	if topicText == "" {
+		topicText = "the passage topic"
+	}
+	first := "key vocabulary"
+	second := "context clues"
+	third := "main claim"
+	if len(vocabulary) > 0 && strings.TrimSpace(vocabulary[0]) != "" {
+		first = strings.TrimSpace(vocabulary[0])
+	}
+	if len(vocabulary) > 1 && strings.TrimSpace(vocabulary[1]) != "" {
+		second = strings.TrimSpace(vocabulary[1])
+	}
+	if len(vocabulary) > 2 && strings.TrimSpace(vocabulary[2]) != "" {
+		third = strings.TrimSpace(vocabulary[2])
+	}
+	return []string{
+		"When reading about " + topicText + ", connect " + first + " with " + second + " to infer the author's focus.",
+		"Use " + third + " as a signal word, then verify the supporting detail in the next clause.",
+		"After each paragraph, summarize one cause-effect link in your own words to reinforce retention.",
+	}
+}
+
+func fallbackMeaningsByWord(word string, topic string) []string {
+	w := strings.ToLower(strings.TrimSpace(word))
+	if meanings, ok := readingMeaningDict[w]; ok {
+		return meanings
+	}
+	displayWord := strings.TrimSpace(word)
+	if displayWord == "" {
+		displayWord = "the term"
+	}
+	topicHint := ""
+	if strings.TrimSpace(topic) != "" {
+		topicHint = "（结合“" + strings.TrimSpace(topic) + "”语境）"
+	}
+	pos := fallbackPOSByWord(w)
+	if strings.HasPrefix(pos, "adj") {
+		return []string{
+			"adj. " + displayWord + " 常用于描述性质或状态" + topicHint,
+			"adj. 用法提示：关注 " + displayWord + " 在句中修饰的是对象、过程还是结果。",
+		}
+	}
+	if strings.HasPrefix(pos, "adv") {
+		return []string{
+			"adv. " + displayWord + " 常表示方式、程度或频率" + topicHint,
+			"adv. 用法提示：观察 " + displayWord + " 修饰的动词或整句逻辑。",
+		}
+	}
+	if strings.HasPrefix(pos, "v") {
+		return []string{
+			"v. " + displayWord + " 在文中多表示动作、过程或变化" + topicHint,
+			"v. 用法提示：结合主语与宾语判断 " + displayWord + " 的具体语义。",
+		}
+	}
+	return []string{
+		"n. " + displayWord + " 在文中通常指代某个具体概念或对象" + topicHint,
+		"n. 用法提示：根据上下文判断 " + displayWord + " 更偏向现象、方法还是结果。",
+	}
+}
+
+var readingMeaningDict = map[string][]string{
+	"context":        {"n. 语境；上下文", "n. 背景；来龙去脉"},
+	"analysis":       {"n. 分析；解析", "n. 分解说明；研究结果"},
+	"strategy":       {"n. 策略；行动方案", "n.（长期）布局思路"},
+	"evidence":       {"n. 证据；依据", "n. 迹象；证明材料"},
+	"principle":      {"n. 原则；准则", "n. 原理；基本规律"},
+	"approach":       {"n. 方法；路径", "v. 接近；着手处理"},
+	"outcome":        {"n. 结果；结局", "n. 产出；成效"},
+	"impact":         {"n. 影响；冲击", "v. 对…产生作用"},
+	"policy":         {"n. 政策；方针", "n. 保险单（特定语境）"},
+	"resource":       {"n. 资源；物力财力", "n. 对策；应对手段"},
+	"community":      {"n. 社区；社群", "n. 共同体；群体认同"},
+	"sustainable":    {"adj. 可持续的", "adj. 可长期维持的"},
+	"innovation":     {"n. 创新；革新", "n. 新方法；新制度"},
+	"efficiency":     {"n. 效率；效能", "n. 功效（设备/流程）"},
+	"collaboration":  {"n. 协作；合作", "n. 联合创作；协同"},
+	"interpretation": {"n. 解释；阐释", "n. 演绎；表演诠释"},
+	"practice":       {"n. 实践；练习", "v. 练习；实行"},
+	"framework":      {"n. 框架；结构", "n. 体系；基本思路"},
+	"pattern":        {"n. 模式；规律", "n. 图案；样板"},
+	"insight":        {"n. 洞察；深刻理解", "n. 见解；领悟"},
+	"issue":          {"n. 问题；议题", "n.（报刊）期号；发行"},
+	"factor":         {"n. 因素；要素", "n. 因子（数学/科学）"},
+	"challenge":      {"n. 挑战；难题", "v. 质疑；向…挑战"},
+	"solution":       {"n. 解决方案", "n. 溶液（化学）"},
+	"reflect":        {"v. 反映；体现", "v. 反思；认真思考"},
+	"address":        {"v. 处理；应对", "n. 地址", "v. 向…讲话"},
+	"learning":       {"n. 学习过程；学问", "adj. 学习相关的"},
+	"reading":        {"n. 阅读；阅读能力", "n. 阅读材料；读物（语境）", "n.（考试）阅读题型"},
+	"classroom":      {"n. 教室", "n. 课堂教学场景"},
+	"technology":     {"n. 技术；工艺", "n. 科技手段"},
+	"attention":      {"n. 注意力", "n. 关注；重视"},
+	"comprehension":  {"n. 理解；领会", "n. 阅读理解能力"},
+	"recent":         {"adj. 最近的；新近的", "adj. 近代的；近期发生的"},
+	"educator":       {"n. 教育工作者", "n. 教育家；教师（语境）"},
+	"educators":      {"n. 教育工作者（复数）", "n. 教育者群体"},
+	"closer":         {"adj. 更近的；更紧密的", "adv. 更接近地（比较级）"},
+	"transportation": {"n. 交通运输", "n. 运输系统；交通方式"},
+	"climate":        {"n. 气候", "n. 氛围；环境趋势（引申）"},
+	"influence":      {"n. 影响；作用", "v. 影响；对…产生作用"},
+	"influences":     {"v. 影响（第三人称单数）", "n. 影响力（复数语境）"},
+	"years":          {"n. 年（复数）", "n. 年代；时期（引申）"},
+	"urban":          {"adj. 城市的", "adj. 都市化相关的"},
+	"students":       {"n. 学生（复数）", "n. 学习者群体"},
+	"student":        {"n. 学生", "n. 学习者；研修者"},
+	"paid":           {"v. 支付（pay 的过去式/过去分词）", "adj. 有偿的；已付费的"},
+	"outcomes":       {"n. 结果（复数）", "n. 学习产出（教育语境）"},
 }
 
 func (s *Service) generateReadingAudio(materialID string, text string, language string) {
 	if s.tts == nil || strings.TrimSpace(text) == "" {
-		s.readingMu.Lock()
-		m := s.readingMaterials[materialID]
-		m.AudioStatus = "FAILED"
-		m.GenerationNote = strings.TrimSpace(m.GenerationNote + " | audio generation unavailable")
-		s.readingMaterials[materialID] = m
-		s.readingMu.Unlock()
+		if err := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
+			m.AudioStatus = "FAILED"
+			m.GenerationNote = strings.TrimSpace(m.GenerationNote + " | audio generation unavailable")
+		}); err != nil {
+			log.Printf("reading audio fallback update failed material_id=%s err=%v", materialID, err)
+		}
 		return
 	}
 
@@ -413,33 +905,31 @@ func (s *Service) generateReadingAudio(materialID string, text string, language 
 	for _, chunk := range chunks {
 		audioURL, err := s.tts.Synthesize(context.Background(), chunk, language, "")
 		if err != nil || strings.TrimSpace(audioURL) == "" {
-			s.readingMu.Lock()
-			m, ok := s.readingMaterials[materialID]
-			if ok {
+			updateErr := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
 				m.AudioStatus = "FAILED"
 				if err != nil {
 					m.GenerationNote = strings.TrimSpace(m.GenerationNote + " | audio error: " + err.Error())
+				} else {
+					m.GenerationNote = strings.TrimSpace(m.GenerationNote + " | audio error: empty audio url")
 				}
-				s.readingMaterials[materialID] = m
+			})
+			if updateErr != nil {
+				log.Printf("reading audio failure state persist failed material_id=%s err=%v", materialID, updateErr)
 			}
-			s.readingMu.Unlock()
 			return
 		}
 		audioURLs = append(audioURLs, strings.TrimSpace(audioURL))
 	}
 
-	s.readingMu.Lock()
-	defer s.readingMu.Unlock()
-	m, ok := s.readingMaterials[materialID]
-	if !ok {
-		return
+	if err := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
+		m.AudioStatus = "READY"
+		m.AudioURLs = audioURLs
+		if len(audioURLs) > 0 {
+			m.AudioURL = audioURLs[0]
+		}
+	}); err != nil {
+		log.Printf("reading audio ready state persist failed material_id=%s err=%v", materialID, err)
 	}
-	m.AudioStatus = "READY"
-	m.AudioURLs = audioURLs
-	if len(audioURLs) > 0 {
-		m.AudioURL = audioURLs[0]
-	}
-	s.readingMaterials[materialID] = m
 }
 
 func splitTextChunks(text string, maxLen int) []string {
@@ -492,29 +982,114 @@ func splitTextChunks(text string, maxLen int) []string {
 
 func (s *Service) ReadingMaterials(userID string, exam string) ([]domain.ReadingMaterial, error) {
 	exam = strings.TrimSpace(strings.ToUpper(exam))
-	s.readingMu.RLock()
-	defer s.readingMu.RUnlock()
-	result := make([]domain.ReadingMaterial, 0)
-	for _, item := range s.readingMaterials {
-		if item.UserID != userID {
-			continue
-		}
-		if exam != "" && item.Exam != exam {
-			continue
-		}
-		result = append(result, item)
+	result, err := s.store.ListReadingMaterialsByUser(userID, exam)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range result {
+		s.cacheReadingMaterial(item)
 	}
 	return result, nil
 }
 
 func (s *Service) ReadingMaterial(userID string, materialID string) (domain.ReadingMaterial, error) {
-	s.readingMu.RLock()
-	defer s.readingMu.RUnlock()
-	item, ok := s.readingMaterials[materialID]
-	if !ok || item.UserID != userID {
-		return domain.ReadingMaterial{}, errors.New("reading material not found")
+	item, err := s.store.GetReadingMaterial(materialID, userID)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	s.cacheReadingMaterial(item)
+
+	if needsReadingAnalysis(item) {
+		analysis := domain.ReadingAnalysis{}
+		if analyzer, supports := s.generator.(ReadingAnalyzer); supports {
+			aiResult, err := analyzer.AnalyzeReading(context.Background(), item.Exam, item.Topic, item.Passage, item.Vocabulary)
+			if err != nil {
+				log.Printf("reading detail semantic backfill failed, fallback to dictionary mode err=%v", err)
+			} else {
+				analysis = aiResult
+			}
+		}
+		normalized := normalizeReadingAnalysis(analysis, item.Vocabulary, item.Topic)
+		item.VocabularyItems = normalized.VocabularyItems
+		item.AssociationSentences = normalized.AssociationSentences
+		item.GrammarInsights = normalized.GrammarInsights
+		saved, saveErr := s.store.SaveReadingMaterial(item)
+		if saveErr != nil {
+			return domain.ReadingMaterial{}, saveErr
+		}
+		s.cacheReadingMaterial(saved)
+		item = saved
 	}
 	return item, nil
+}
+
+func (s *Service) cacheReadingMaterial(material domain.ReadingMaterial) {
+	s.readingMu.Lock()
+	defer s.readingMu.Unlock()
+	s.readingMaterials[material.ID] = material
+}
+
+func (s *Service) updateReadingMaterial(materialID string, userID string, mutate func(*domain.ReadingMaterial)) error {
+	material, err := s.store.GetReadingMaterial(materialID, userID)
+	if err != nil {
+		return err
+	}
+	mutate(&material)
+	saved, err := s.store.SaveReadingMaterial(material)
+	if err != nil {
+		return err
+	}
+	s.cacheReadingMaterial(saved)
+	return nil
+}
+
+func needsReadingAnalysis(item domain.ReadingMaterial) bool {
+	if len(item.VocabularyItems) < 15 {
+		return true
+	}
+	if len(item.AssociationSentences) < 3 {
+		return true
+	}
+	if len(item.GrammarInsights) == 0 {
+		return true
+	}
+	for _, v := range item.VocabularyItems {
+		for _, m := range v.Meanings {
+			if containsLowQualityTemplate(m) {
+				return true
+			}
+		}
+	}
+	for _, s := range item.AssociationSentences {
+		if containsLowQualityTemplate(s) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsLowQualityTemplate(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return true
+	}
+	low := strings.ToLower(trimmed)
+	templates := []string{
+		"常见义：该词通常表示对象、概念或现象",
+		"常见义：该词在阅读语境中表示核心概念或关键对象",
+		"常见义：该词在阅读中通常表示核心概念或关键对象",
+		"引申义：可表示与主题相关的抽象意义",
+		"引申义：可表示相关方法、影响或结果",
+		"引申义：可进一步表示相关的方法、影响或结果",
+		"readers can connect key vocabulary to",
+		"and retell one complete idea accurately",
+	}
+	for _, t := range templates {
+		if strings.Contains(low, strings.ToLower(t)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) StartRoleplay(userID string, theaterID string, userRole string) (domain.RoleplaySession, error) {
@@ -552,11 +1127,11 @@ func (s *Service) StartRoleplay(userID string, theaterID string, userRole string
 		}
 	}
 	session.Transcript = append(session.Transcript, domain.Dialogue{
-		Speaker:   "AI-Role",
-		Text:      opening,
+		Speaker:    "AI-Role",
+		Text:       opening,
 		ZhSubtitle: openingZh,
-		AudioURL:  "",
-		Timestamp: 0,
+		AudioURL:   "",
+		Timestamp:  0,
 	})
 	return s.store.CreateRoleplaySession(session)
 }
@@ -598,11 +1173,11 @@ func (s *Service) SubmitRoleplayReply(userID string, sessionID string, text stri
 	}
 	coach := buildTurnFeedbackText(theater.Language, eval)
 	session.Transcript = append(session.Transcript, domain.Dialogue{
-		Speaker:   "AI-Role",
-		Text:      coach,
+		Speaker:    "AI-Role",
+		Text:       coach,
 		ZhSubtitle: eval.AssistantZhSub,
-		AudioURL:  "",
-		Timestamp: float64(session.TurnIndex) + 0.3,
+		AudioURL:   "",
+		Timestamp:  float64(session.TurnIndex) + 0.3,
 	})
 	session.UpdatedAt = time.Now()
 	return s.store.UpdateRoleplaySession(session)
@@ -682,28 +1257,32 @@ func fallbackGeneratedContent(language string, topic string, requiredQuiz int) (
 	}
 	dialogues := make([]domain.Dialogue, 0, 8)
 	if lang == "ENGLISH" {
+		scenario := strings.TrimSpace(topic)
+		if scenario == "" {
+			scenario = "a delayed morning commute"
+		}
 		lines := []string{
-			fmt.Sprintf("Today we are discussing: %s.", topic),
-			"Could you share one concrete situation from your daily life?",
-			"Sure, I usually face this when I commute in the morning.",
-			"What challenge appears most frequently in that situation?",
-			"Time pressure and unclear communication are the biggest issues.",
-			"How do you usually solve them in a practical way?",
-			"I prioritize key information first, then confirm details step by step.",
-			"Great. Let's summarize the key lesson in one sentence.",
+			fmt.Sprintf("Morning, I just got a message that our usual route is delayed, and it affects %s.", scenario),
+			"Got it. What time do you need to arrive, and what's your backup option right now?",
+			"I need to be there by 8:40, and the fastest backup seems to be bus 23 plus a short walk.",
+			"Can you estimate the transfer time, so we can decide whether to call ahead?",
+			"If traffic is normal, the transfer takes about 12 minutes; otherwise it could be 20.",
+			"Then let's send a quick update first and confirm whether a five-minute delay is acceptable.",
+			"Done. They said a short delay is okay if we share the revised arrival time now.",
+			"Perfect. Keep this pattern: clarify constraints, compare options, then confirm next action.",
 		}
 		for i, text := range lines {
 			dialogues = append(dialogues, domain.Dialogue{
-				Speaker:    map[bool]string{i%2 == 0: "Coach", i%2 != 0: "Learner"}[true],
+				Speaker:    map[bool]string{i%2 == 0: "Coordinator", i%2 != 0: "Learner"}[true],
 				Text:       text,
-				ZhSubtitle: "本句用于训练阅读与听力理解。",
+				ZhSubtitle: "场景化沟通练习句，强调真实决策流程。",
 				Timestamp:  float64(i) * 2.0,
 			})
 		}
 		quiz := []domain.QuizQuestion{
-			{Question: "What is the main topic of this dialogue?", Options: []string{"Morning exercise", topic, "Job interview", "Online shopping"}, AnswerKey: topic},
-			{Question: "What challenge is mentioned most frequently?", Options: []string{"Budget limits", "Time pressure and unclear communication", "Weather changes", "Technical failure"}, AnswerKey: "Time pressure and unclear communication"},
-			{Question: "What strategy does the learner use?", Options: []string{"Ignore details", "Ask someone else", "Prioritize key information then confirm details", "Change the topic"}, AnswerKey: "Prioritize key information then confirm details"},
+			{Question: "What is the learner's target arrival time?", Options: []string{"8:10", "8:25", "8:40", "9:00"}, AnswerKey: "8:40"},
+			{Question: "Which backup route is mentioned?", Options: []string{"Train line A only", "Bus 23 plus a short walk", "Taxi with no transfer", "Bike sharing only"}, AnswerKey: "Bus 23 plus a short walk"},
+			{Question: "What action do they take before finalizing the route?", Options: []string{"Cancel the appointment", "Wait without notifying anyone", "Send an update and confirm delay acceptance", "Switch to a completely different destination"}, AnswerKey: "Send an update and confirm delay acceptance"},
 		}
 		for len(quiz) < requiredQuiz {
 			quiz = append(quiz, domain.QuizQuestion{
@@ -720,15 +1299,19 @@ func fallbackGeneratedContent(language string, topic string, requiredQuiz int) (
 		return dialogues, quiz[:min(requiredQuiz, len(quiz))]
 	}
 
+	scene := strings.TrimSpace(topic)
+	if scene == "" {
+		scene = "朝早通勤安排"
+	}
 	lines := []string{
-		fmt.Sprintf("今日主题系：%s。", topic),
-		"你可唔可以讲一个生活入面常见嘅具体情境？",
-		"可以，我朝早通勤嗰阵最容易遇到呢个问题。",
-		"你最常遇到嘅困难系咩？",
-		"时间紧迫，同埋信息沟通唔够清晰。",
-		"你通常点样处理先最有效？",
-		"我会先讲重点，再逐步确认细节。",
-		"好，总结一句你今日学到嘅关键策略。",
+		fmt.Sprintf("喂，我啱啱收到通知，原本条线延误，会影响到%s。", scene),
+		"明白，你最迟几点要到？而家有冇后备路线？",
+		"我要八点四十前到，后备可以转 23 号巴士再行一段路。",
+		"转车大概要几耐？我哋要唔要先同对方报备？",
+		"顺利就十二分钟，塞车可能去到二十分钟。",
+		"咁我建议先发讯息说明，再确认对方可唔可以接受五分钟内延迟。",
+		"我已经发咗，对方话只要即时报预计到达时间就得。",
+		"好，这个流程记住：先问限制，再比方案，最后确认下一步。",
 	}
 	for i, text := range lines {
 		speaker := "教练"
@@ -738,9 +1321,9 @@ func fallbackGeneratedContent(language string, topic string, requiredQuiz int) (
 		dialogues = append(dialogues, domain.Dialogue{Speaker: speaker, Text: text, ZhSubtitle: text, Timestamp: float64(i) * 2.0})
 	}
 	quiz := []domain.QuizQuestion{
-		{Question: "本段对话的核心主题是什么？", Options: []string{"旅行安排", topic, "面试技巧", "运动计划"}, AnswerKey: topic},
-		{Question: "对话中提到的主要困难是什么？", Options: []string{"预算不足", "时间紧迫和沟通不清", "天气变化", "设备故障"}, AnswerKey: "时间紧迫和沟通不清"},
-		{Question: "学员采用了哪种处理策略？", Options: []string{"先回避问题", "先讲重点再确认细节", "让别人决定", "直接结束对话"}, AnswerKey: "先讲重点再确认细节"},
+		{Question: "说话人最迟要几点前到达？", Options: []string{"八点二十", "八点四十", "九点整", "九点十五"}, AnswerKey: "八点四十"},
+		{Question: "后备路线是什么？", Options: []string{"直接坐地铁到底", "转 23 号巴士再步行", "改坐的士不转车", "取消行程"}, AnswerKey: "转 23 号巴士再步行"},
+		{Question: "他们在确定路线前先做了什么？", Options: []string{"先取消约会", "先和对方报备并确认延迟可接受", "先等十分钟不处理", "先换去其他地点"}, AnswerKey: "先和对方报备并确认延迟可接受"},
 	}
 	for len(quiz) < requiredQuiz {
 		quiz = append(quiz, domain.QuizQuestion{

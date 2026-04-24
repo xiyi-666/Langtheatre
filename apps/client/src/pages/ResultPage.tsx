@@ -63,6 +63,7 @@ export function ResultPage() {
       <section className="card stage-shell">
         <h2>恭喜完成本轮练习</h2>
         <p>学习者：{user?.email ?? "未登录"}</p>
+        <p>当前总经验（统一口径）：{user?.totalXP ?? 0}</p>
         <div className="result-shell">
           <motion.div className="floating-panel" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
             <svg viewBox="0 0 180 180" className="score-ring" role="img" aria-label="score ring">
@@ -124,6 +125,7 @@ export function ResultPage() {
                 <Lightbulb size={14} /> AI 建议
               </strong>
               <p>{result?.feedback ?? "你对场景上下文理解较稳定，建议继续进行角色扮演模式。"}</p>
+              <p>说明：总经验统一以个人中心数据为准，页面学习指标仅用于过程反馈。</p>
             </article>
 
             {showMore ? (

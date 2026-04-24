@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,14 +16,16 @@ type MemoryStore struct {
 	users    map[string]domain.User
 	byEmail  map[string]string
 	theater  map[string]domain.Theater
+	readings map[string]domain.ReadingMaterial
 	sessions map[string]domain.RoleplaySession
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		users:   map[string]domain.User{},
-		byEmail: map[string]string{},
-		theater: map[string]domain.Theater{},
+		users:    map[string]domain.User{},
+		byEmail:  map[string]string{},
+		theater:  map[string]domain.Theater{},
+		readings: map[string]domain.ReadingMaterial{},
 		sessions: map[string]domain.RoleplaySession{},
 	}
 }
@@ -97,6 +100,18 @@ func (s *MemoryStore) GetTheater(id string) (domain.Theater, error) {
 		return domain.Theater{}, errors.New("theater not found")
 	}
 	return theater, nil
+}
+
+func (s *MemoryStore) GetTheaterByShareCode(shareCode string) (domain.Theater, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	needle := strings.ToUpper(strings.TrimSpace(shareCode))
+	for _, theater := range s.theater {
+		if strings.ToUpper(strings.TrimSpace(theater.ShareCode)) == needle {
+			return theater, nil
+		}
+	}
+	return domain.Theater{}, errors.New("theater not found")
 }
 
 func (s *MemoryStore) ListTheatersByUser(userID string, language string, status string, favorite *bool) ([]domain.Theater, error) {
@@ -178,6 +193,11 @@ func (s *MemoryStore) SavePracticeRecord(_ string, _ string, _ int, answers []st
 	return err
 }
 
+func (s *MemoryStore) SaveReadingPracticeRecord(_ string, _ string, _ int, answers []string, _ int) error {
+	_, err := json.Marshal(answers)
+	return err
+}
+
 func (s *MemoryStore) ListCourses(language string) ([]domain.Course, error) {
 	seed := []domain.Course{
 		{ID: "c1", Language: "CANTONESE", Category: "daily", Title: "茶餐厅点单", Description: "日常场景对话", MinLevel: 4.0, MaxLevel: 6.0, IsActive: true},
@@ -188,6 +208,39 @@ func (s *MemoryStore) ListCourses(language string) ([]domain.Course, error) {
 		if language == "" || item.Language == language {
 			result = append(result, item)
 		}
+	}
+	return result, nil
+}
+
+func (s *MemoryStore) SaveReadingMaterial(material domain.ReadingMaterial) (domain.ReadingMaterial, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.readings[material.ID] = material
+	return material, nil
+}
+
+func (s *MemoryStore) GetReadingMaterial(id string, userID string) (domain.ReadingMaterial, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	material, ok := s.readings[id]
+	if !ok || (userID != "" && material.UserID != userID) {
+		return domain.ReadingMaterial{}, errors.New("reading material not found")
+	}
+	return material, nil
+}
+
+func (s *MemoryStore) ListReadingMaterialsByUser(userID string, exam string) ([]domain.ReadingMaterial, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.ReadingMaterial, 0)
+	for _, material := range s.readings {
+		if material.UserID != userID {
+			continue
+		}
+		if exam != "" && material.Exam != exam {
+			continue
+		}
+		result = append(result, material)
 	}
 	return result, nil
 }

@@ -98,7 +98,28 @@ type ReadingMaterial struct {
 	AudioURL       string
 	AudioURLs      []string
 	AudioStatus    string
+	VocabularyItems []VocabularyItem
+	AssociationSentences []string
+	GrammarInsights []GrammarInsight
 	CreatedAt      time.Time
+}
+
+type VocabularyItem struct {
+	Word     string   `json:"word"`
+	POS      string   `json:"pos"`
+	Meanings []string `json:"meanings"`
+}
+
+type GrammarInsight struct {
+	Sentence         string   `json:"sentence"`
+	DifficultyPoints []string `json:"difficultyPoints"`
+	StudySuggestions []string `json:"studySuggestions"`
+}
+
+type ReadingAnalysis struct {
+	VocabularyItems     []VocabularyItem `json:"vocabularyItems"`
+	AssociationSentences []string        `json:"associationSentences"`
+	GrammarInsights     []GrammarInsight `json:"grammarInsights"`
 }
 
 type RoleplaySession struct {

@@ -17,6 +17,7 @@ export function QuizPage() {
   const [pageTitle, setPageTitle] = useState("听力理解测试");
   const [initialLoad, setInitialLoad] = useState(true);
   const setResult = useAppStore((s) => s.setResult);
+  const refreshUserXP = useAppStore((s) => s.refreshUserXP);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -70,6 +71,7 @@ export function QuizPage() {
     try {
       const result = await submitAnswers(id, answers);
       setResult(result);
+      await refreshUserXP();
       navigate("/result");
     } catch (e) {
       console.error("submit answers failed", e);

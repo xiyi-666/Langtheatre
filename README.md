@@ -10,6 +10,18 @@ LinguaQuest 是一个使用 Tauri 2 + React + TypeScript + Go 构建的跨平台
 - `docs`: 技术与运维文档
 - `tests/e2e`: 前端关键路径 E2E
 
+## 仓库上传约定
+
+以下目录/文件为本地开发或流程产物，默认不上传到 GitHub：
+
+- `node_modules/`
+- `test/`、`tests/` 与测试文件（如 `*.test.ts`、`*.spec.ts`、`*_test.go`）
+- `.cursor/`
+- `.spec-workflow/`
+- `demand/`
+
+如需临时上传，请先评估是否包含隐私信息或本地中间产物。
+
 ## 快速开始
 
 1. 安装 Node.js 20+、Go 1.22+、Rust stable。

@@ -66,7 +66,7 @@ export function LoginPage() {
 
         <aside className="floating-panel auth-side">
           <h3><Route size={16} /> 学习路径</h3>
-          <p>粤语：生活交流 -&gt; 职场表达 -&gt; 雅思话题</p>
+          <p>粤语：生活交流 -&gt; 职场表达 -&gt; 时事话题</p>
           <p>英语：日常场景 -&gt; 职场交流 -&gt; 雅思口语</p>
           <div className="mini-progress" aria-hidden>
             <span style={{ width: "64%" }} />

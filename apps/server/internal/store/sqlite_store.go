@@ -68,6 +68,7 @@ func applySQLiteSchema(db *sql.DB) error {
             created_at TEXT NOT NULL
         )`,
 		`CREATE INDEX IF NOT EXISTS idx_theaters_user ON theaters(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_theaters_share_code ON theaters(share_code)`,
 		`CREATE TABLE IF NOT EXISTS practice_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL,
@@ -90,6 +91,38 @@ func applySQLiteSchema(db *sql.DB) error {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )`,
+		`CREATE TABLE IF NOT EXISTS reading_materials (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            exam TEXT NOT NULL,
+            language TEXT NOT NULL,
+            level TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            title TEXT NOT NULL,
+            passage TEXT NOT NULL,
+            vocabulary TEXT NOT NULL DEFAULT '[]',
+            questions TEXT NOT NULL DEFAULT '[]',
+            source_ids TEXT NOT NULL DEFAULT '[]',
+            generation_note TEXT NOT NULL DEFAULT '',
+            audio_url TEXT NOT NULL DEFAULT '',
+            audio_urls TEXT NOT NULL DEFAULT '[]',
+            audio_status TEXT NOT NULL DEFAULT 'PENDING',
+            vocabulary_items TEXT NOT NULL DEFAULT '[]',
+            association_sentences TEXT NOT NULL DEFAULT '[]',
+            grammar_insights TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL
+        )`,
+		`CREATE TABLE IF NOT EXISTS reading_practice_records (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id TEXT NOT NULL,
+			material_id TEXT NOT NULL,
+			score INTEGER,
+			answers TEXT,
+			xp_earned INTEGER,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_reading_materials_user_exam ON reading_materials(user_id, exam, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_reading_practice_user_material ON reading_practice_records(user_id, material_id, created_at)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -209,6 +242,11 @@ func (s *SQLiteStore) GetTheater(id string) (domain.Theater, error) {
 	return scanTheater(row)
 }
 
+func (s *SQLiteStore) GetTheaterByShareCode(shareCode string) (domain.Theater, error) {
+	row := s.db.QueryRow(`SELECT id, user_id, language, topic, difficulty, mode, status, is_favorite, share_code, scene_description, characters, dialogues, quiz_questions, created_at FROM theaters WHERE UPPER(share_code) = UPPER(?) AND share_code <> ''`, shareCode)
+	return scanTheater(row)
+}
+
 func (s *SQLiteStore) ListTheatersByUser(userID string, language string, status string, favorite *bool) ([]domain.Theater, error) {
 	query := `SELECT id, user_id, language, topic, difficulty, mode, status, is_favorite, share_code, scene_description, characters, dialogues, quiz_questions, created_at FROM theaters WHERE user_id = ?`
 	args := []any{userID}
@@ -304,6 +342,16 @@ func (s *SQLiteStore) SavePracticeRecord(userID string, theaterID string, score 
 	return err
 }
 
+func (s *SQLiteStore) SaveReadingPracticeRecord(userID string, materialID string, score int, answers []string, xpEarned int) error {
+	answersJSON, err := json.Marshal(answers)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO reading_practice_records (user_id, material_id, score, answers, xp_earned, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		userID, materialID, score, string(answersJSON), xpEarned, time.Now().UTC().Format(sqliteTimeLayout))
+	return err
+}
+
 func (s *SQLiteStore) ListCourses(language string) ([]domain.Course, error) {
 	seed := []domain.Course{
 		{ID: "c1", Language: "CANTONESE", Category: "daily", Title: "茶餐厅点单", Description: "日常场景对话", MinLevel: 4.0, MaxLevel: 6.0, IsActive: true},
@@ -316,6 +364,125 @@ func (s *SQLiteStore) ListCourses(language string) ([]domain.Course, error) {
 		}
 	}
 	return result, nil
+}
+
+func (s *SQLiteStore) SaveReadingMaterial(material domain.ReadingMaterial) (domain.ReadingMaterial, error) {
+	if material.ID == "" {
+		material.ID = uuid.NewString()
+	}
+	if material.CreatedAt.IsZero() {
+		material.CreatedAt = time.Now().UTC()
+	}
+	vocabularyJSON, err := json.Marshal(material.Vocabulary)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	questionsJSON, err := json.Marshal(material.Questions)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	sourceIDsJSON, err := json.Marshal(material.SourceIDs)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	audioURLsJSON, err := json.Marshal(material.AudioURLs)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	vocabularyItemsJSON, err := json.Marshal(material.VocabularyItems)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	associationJSON, err := json.Marshal(material.AssociationSentences)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	grammarJSON, err := json.Marshal(material.GrammarInsights)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	_, err = s.db.Exec(
+		`INSERT INTO reading_materials (
+            id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+            generation_note, audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            user_id=excluded.user_id,
+            exam=excluded.exam,
+            language=excluded.language,
+            level=excluded.level,
+            topic=excluded.topic,
+            title=excluded.title,
+            passage=excluded.passage,
+            vocabulary=excluded.vocabulary,
+            questions=excluded.questions,
+            source_ids=excluded.source_ids,
+            generation_note=excluded.generation_note,
+            audio_url=excluded.audio_url,
+            audio_urls=excluded.audio_urls,
+            audio_status=excluded.audio_status,
+            vocabulary_items=excluded.vocabulary_items,
+            association_sentences=excluded.association_sentences,
+            grammar_insights=excluded.grammar_insights,
+            created_at=excluded.created_at`,
+		material.ID,
+		material.UserID,
+		material.Exam,
+		material.Language,
+		material.Level,
+		material.Topic,
+		material.Title,
+		material.Passage,
+		string(vocabularyJSON),
+		string(questionsJSON),
+		string(sourceIDsJSON),
+		material.GenerationNote,
+		material.AudioURL,
+		string(audioURLsJSON),
+		material.AudioStatus,
+		string(vocabularyItemsJSON),
+		string(associationJSON),
+		string(grammarJSON),
+		material.CreatedAt.Format(sqliteTimeLayout),
+	)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	return material, nil
+}
+
+func (s *SQLiteStore) GetReadingMaterial(id string, userID string) (domain.ReadingMaterial, error) {
+	row := s.db.QueryRow(
+		`SELECT id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids, generation_note,
+            audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
+         FROM reading_materials WHERE id = ? AND (? = '' OR user_id = ?)`,
+		id, userID, userID,
+	)
+	return scanReadingMaterial(row)
+}
+
+func (s *SQLiteStore) ListReadingMaterialsByUser(userID string, exam string) ([]domain.ReadingMaterial, error) {
+	rows, err := s.db.Query(
+		`SELECT id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids, generation_note,
+            audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
+         FROM reading_materials
+         WHERE user_id = ? AND (? = '' OR exam = ?)
+         ORDER BY datetime(created_at) DESC`,
+		userID, exam, exam,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]domain.ReadingMaterial, 0)
+	for rows.Next() {
+		item, scanErr := scanReadingMaterial(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
 }
 
 func (s *SQLiteStore) CreateRoleplaySession(session domain.RoleplaySession) (domain.RoleplaySession, error) {
@@ -406,6 +573,32 @@ func scanRoleplay(scanner interface{ Scan(dest ...any) error }) (domain.Roleplay
 	session.CreatedAt = parseSQLiteTime(createdAt)
 	session.UpdatedAt = parseSQLiteTime(updatedAt)
 	return session, nil
+}
+
+func scanReadingMaterial(scanner interface{ Scan(dest ...any) error }) (domain.ReadingMaterial, error) {
+	var item domain.ReadingMaterial
+	var vocabularyJSON, questionsJSON, sourceIDsJSON string
+	var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON string
+	var createdAt string
+	if err := scanner.Scan(
+		&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic, &item.Title, &item.Passage,
+		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &item.GenerationNote, &item.AudioURL, &audioURLsJSON,
+		&item.AudioStatus, &vocabularyItemsJSON, &associationJSON, &grammarJSON, &createdAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ReadingMaterial{}, errors.New("reading material not found")
+		}
+		return domain.ReadingMaterial{}, err
+	}
+	_ = json.Unmarshal([]byte(vocabularyJSON), &item.Vocabulary)
+	_ = json.Unmarshal([]byte(questionsJSON), &item.Questions)
+	_ = json.Unmarshal([]byte(sourceIDsJSON), &item.SourceIDs)
+	_ = json.Unmarshal([]byte(audioURLsJSON), &item.AudioURLs)
+	_ = json.Unmarshal([]byte(vocabularyItemsJSON), &item.VocabularyItems)
+	_ = json.Unmarshal([]byte(associationJSON), &item.AssociationSentences)
+	_ = json.Unmarshal([]byte(grammarJSON), &item.GrammarInsights)
+	item.CreatedAt = parseSQLiteTime(createdAt)
+	return item, nil
 }
 
 func parseSQLiteTime(value string) time.Time {

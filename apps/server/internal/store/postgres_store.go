@@ -177,6 +177,43 @@ func (s *PostgresStore) GetTheater(id string) (domain.Theater, error) {
 	return theater, nil
 }
 
+func (s *PostgresStore) GetTheaterByShareCode(shareCode string) (domain.Theater, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	theater := domain.Theater{}
+	var charactersRaw []byte
+	var dialoguesRaw []byte
+	var quizRaw []byte
+	err := s.pool.QueryRow(
+		ctx,
+		`SELECT id::text, user_id::text, language, topic, difficulty, mode, status, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), COALESCE(characters, '[]'::jsonb), dialogues, COALESCE(quiz_questions, '[]'::jsonb), created_at
+		 FROM theaters WHERE UPPER(share_code) = UPPER($1) AND share_code <> ''`,
+		shareCode,
+	).Scan(&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode, &theater.Status, &theater.IsFavorite, &theater.ShareCode, &theater.SceneDescription, &charactersRaw, &dialoguesRaw, &quizRaw, &theater.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Theater{}, errors.New("theater not found")
+	}
+	if err != nil {
+		return domain.Theater{}, err
+	}
+	if len(charactersRaw) > 0 {
+		if err = json.Unmarshal(charactersRaw, &theater.Characters); err != nil {
+			return domain.Theater{}, err
+		}
+	}
+	if len(dialoguesRaw) > 0 {
+		if err = json.Unmarshal(dialoguesRaw, &theater.Dialogues); err != nil {
+			return domain.Theater{}, err
+		}
+	}
+	if len(quizRaw) > 0 {
+		if err = json.Unmarshal(quizRaw, &theater.QuizQuestions); err != nil {
+			return domain.Theater{}, err
+		}
+	}
+	return theater, nil
+}
+
 func (s *PostgresStore) ListTheatersByUser(userID string, language string, status string, favorite *bool) ([]domain.Theater, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -309,6 +346,22 @@ func (s *PostgresStore) SavePracticeRecord(userID string, theaterID string, scor
 	return err
 }
 
+func (s *PostgresStore) SaveReadingPracticeRecord(userID string, materialID string, score int, answers []string, xpEarned int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	answersJSON, err := json.Marshal(answers)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(
+		ctx,
+		`INSERT INTO reading_practice_records (user_id, material_id, score, answers, xp_earned)
+		 VALUES ($1::uuid, $2::uuid, $3, $4::jsonb, $5)`,
+		userID, materialID, score, string(answersJSON), xpEarned,
+	)
+	return err
+}
+
 func (s *PostgresStore) ListCourses(language string) ([]domain.Course, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -330,6 +383,166 @@ func (s *PostgresStore) ListCourses(language string) ([]domain.Course, error) {
 		if scanErr := rows.Scan(&item.ID, &item.Language, &item.Category, &item.Title, &item.Description, &item.MinLevel, &item.MaxLevel, &item.IsActive); scanErr != nil {
 			return nil, scanErr
 		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (domain.ReadingMaterial, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	vocabularyJSON, err := json.Marshal(material.Vocabulary)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	questionsJSON, err := json.Marshal(material.Questions)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	sourceIDsJSON, err := json.Marshal(material.SourceIDs)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	audioURLsJSON, err := json.Marshal(material.AudioURLs)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	vocabularyItemsJSON, err := json.Marshal(material.VocabularyItems)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	associationJSON, err := json.Marshal(material.AssociationSentences)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	grammarJSON, err := json.Marshal(material.GrammarInsights)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	err = s.pool.QueryRow(
+		ctx,
+		`INSERT INTO reading_materials (
+            id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+            generation_note, audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
+        ) VALUES (
+            $1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb,
+            $12, $13, $14::jsonb, $15, $16::jsonb, $17::jsonb, $18::jsonb, $19
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            user_id = EXCLUDED.user_id,
+            exam = EXCLUDED.exam,
+            language = EXCLUDED.language,
+            level = EXCLUDED.level,
+            topic = EXCLUDED.topic,
+            title = EXCLUDED.title,
+            passage = EXCLUDED.passage,
+            vocabulary = EXCLUDED.vocabulary,
+            questions = EXCLUDED.questions,
+            source_ids = EXCLUDED.source_ids,
+            generation_note = EXCLUDED.generation_note,
+            audio_url = EXCLUDED.audio_url,
+            audio_urls = EXCLUDED.audio_urls,
+            audio_status = EXCLUDED.audio_status,
+            vocabulary_items = EXCLUDED.vocabulary_items,
+            association_sentences = EXCLUDED.association_sentences,
+            grammar_insights = EXCLUDED.grammar_insights,
+            created_at = EXCLUDED.created_at
+        RETURNING id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+            COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status,
+            COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at`,
+		material.ID, material.UserID, material.Exam, material.Language, material.Level, material.Topic, material.Title, material.Passage,
+		string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL,
+		string(audioURLsJSON), material.AudioStatus, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), material.CreatedAt,
+	).Scan(
+		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Title, &material.Passage,
+		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus,
+		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &material.CreatedAt,
+	)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	_ = json.Unmarshal(vocabularyJSON, &material.Vocabulary)
+	_ = json.Unmarshal(questionsJSON, &material.Questions)
+	_ = json.Unmarshal(sourceIDsJSON, &material.SourceIDs)
+	_ = json.Unmarshal(audioURLsJSON, &material.AudioURLs)
+	_ = json.Unmarshal(vocabularyItemsJSON, &material.VocabularyItems)
+	_ = json.Unmarshal(associationJSON, &material.AssociationSentences)
+	_ = json.Unmarshal(grammarJSON, &material.GrammarInsights)
+	return material, nil
+}
+
+func (s *PostgresStore) GetReadingMaterial(id string, userID string) (domain.ReadingMaterial, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var material domain.ReadingMaterial
+	var vocabularyJSON, questionsJSON, sourceIDsJSON []byte
+	var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON []byte
+	err := s.pool.QueryRow(
+		ctx,
+		`SELECT id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+            COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status,
+            COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
+         FROM reading_materials
+         WHERE id = $1::uuid AND ($2 = '' OR user_id = NULLIF($2, '')::uuid)`,
+		id, userID,
+	).Scan(
+		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Title, &material.Passage,
+		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus,
+		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &material.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ReadingMaterial{}, errors.New("reading material not found")
+	}
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	_ = json.Unmarshal(vocabularyJSON, &material.Vocabulary)
+	_ = json.Unmarshal(questionsJSON, &material.Questions)
+	_ = json.Unmarshal(sourceIDsJSON, &material.SourceIDs)
+	_ = json.Unmarshal(audioURLsJSON, &material.AudioURLs)
+	_ = json.Unmarshal(vocabularyItemsJSON, &material.VocabularyItems)
+	_ = json.Unmarshal(associationJSON, &material.AssociationSentences)
+	_ = json.Unmarshal(grammarJSON, &material.GrammarInsights)
+	return material, nil
+}
+
+func (s *PostgresStore) ListReadingMaterialsByUser(userID string, exam string) ([]domain.ReadingMaterial, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := s.pool.Query(
+		ctx,
+		`SELECT id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+            COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status,
+            COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
+         FROM reading_materials
+         WHERE user_id = $1::uuid AND ($2 = '' OR exam = $2)
+         ORDER BY created_at DESC`,
+		userID, exam,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]domain.ReadingMaterial, 0)
+	for rows.Next() {
+		var item domain.ReadingMaterial
+		var vocabularyJSON, questionsJSON, sourceIDsJSON []byte
+		var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON []byte
+		if scanErr := rows.Scan(
+			&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic, &item.Title, &item.Passage,
+			&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &item.GenerationNote, &item.AudioURL, &audioURLsJSON, &item.AudioStatus,
+			&vocabularyItemsJSON, &associationJSON, &grammarJSON, &item.CreatedAt,
+		); scanErr != nil {
+			return nil, scanErr
+		}
+		_ = json.Unmarshal(vocabularyJSON, &item.Vocabulary)
+		_ = json.Unmarshal(questionsJSON, &item.Questions)
+		_ = json.Unmarshal(sourceIDsJSON, &item.SourceIDs)
+		_ = json.Unmarshal(audioURLsJSON, &item.AudioURLs)
+		_ = json.Unmarshal(vocabularyItemsJSON, &item.VocabularyItems)
+		_ = json.Unmarshal(associationJSON, &item.AssociationSentences)
+		_ = json.Unmarshal(grammarJSON, &item.GrammarInsights)
 		result = append(result, item)
 	}
 	return result, rows.Err()

@@ -68,27 +68,6 @@ const stageModules = {
   ]
 } as const;
 
-const routeStages = {
-  CANTONESE: [
-    { title: "阶段 01", detail: "生存沟通：问路 / 点餐 / 购物" },
-    { title: "阶段 02", detail: "生活协作：预约 / 求助 / 事务办理" },
-    { title: "阶段 03", detail: "社交表达：寒暄 / 邀约 / 观点交换" },
-    { title: "阶段 04", detail: "职场基础：会议跟进 / 邮件口语化" },
-    { title: "阶段 05", detail: "职场进阶：汇报 / 协调 / 反馈" },
-    { title: "阶段 06", detail: "公开表达：陈述 / 论证 / 回应追问" },
-    { title: "阶段 07", detail: "高阶话题：社会议题 / 立场辩证" }
-  ],
-  ENGLISH: [
-    { title: "Stage 01", detail: "Daily survival: directions / food / shopping" },
-    { title: "Stage 02", detail: "Daily tasks: booking / requests / service calls" },
-    { title: "Stage 03", detail: "Social flow: small talk / invitations / opinions" },
-    { title: "Stage 04", detail: "Workplace basics: meetings / status updates" },
-    { title: "Stage 05", detail: "Workplace growth: negotiation / feedback" },
-    { title: "Stage 06", detail: "Exam-oriented speaking: fluency & coherence" },
-    { title: "Stage 07", detail: "IELTS topics: abstract discussion & argument" }
-  ]
-} as const;
-
 const stageThresholds = [0, 120, 280, 480, 720, 980, 1280, 1680];
 
 export function CoursesPage() {
@@ -111,8 +90,9 @@ export function CoursesPage() {
     const courseXP = completedCourses * 70;
     const practiceXP = practiceCount * 15;
     const accuracyXP = Math.round(accuracy * 400);
-    const baseXP = user?.totalXP ?? 0;
-    const stageXP = baseXP + courseXP + practiceXP + accuracyXP;
+    const totalXP = user?.totalXP ?? 0;
+    const learningIndex = courseXP + practiceXP + accuracyXP;
+    const stageXP = totalXP;
 
     let stageIndex = stageThresholds.length - 1;
     for (let i = 0; i < stageThresholds.length - 1; i += 1) {
@@ -126,16 +106,28 @@ export function CoursesPage() {
     const nextTarget = stageThresholds[Math.min(stageIndex + 1, stageThresholds.length - 1)];
     const denominator = Math.max(1, nextTarget - currentStart);
     const currentPercent = Math.min(100, Math.max(0, Math.round(((stageXP - currentStart) / denominator) * 100)));
+    const totalProgressPercent = Math.min(100, Math.max(0, Math.round((totalXP / stageThresholds[stageThresholds.length - 1]) * 100)));
+    const nextLevelRemaining = Math.max(0, nextTarget - stageXP);
+    const courseCompletionPercent = list.length > 0 ? Math.min(100, Math.round((completedCourses / list.length) * 100)) : 0;
+    const practiceProgressPercent = Math.min(100, practiceCount * 10);
+    const learningIndexPercent = Math.min(100, Math.round((learningIndex / 1200) * 100));
 
     return {
       completedCourses,
       practiceCount,
       accuracy,
+      learningIndex,
+      totalXP,
       stageXP,
       stageIndex,
       currentPercent,
       currentStart,
-      nextTarget
+      nextTarget,
+      nextLevelRemaining,
+      totalProgressPercent,
+      courseCompletionPercent,
+      practiceProgressPercent,
+      learningIndexPercent
     };
   }, [language, list, theaters, roleplay, latestResult, user]);
 
@@ -154,15 +146,36 @@ export function CoursesPage() {
     <main className="page">
       <section className="card">
         <div className="route-header">
-          <div>
+          <div className="course-hero">
             <h2>课程中心</h2>
-            <p>
+            <div className="course-route-pill">
               <Route size={14} /> {language === "CANTONESE" ? "粤语：生活交流 → 职场表达 → 进阶话题" : "英语：日常场景 → 职场交流 → 雅思口语"}
-            </p>
-            <small>
-              当前等级：Lv.{learningProgress.stageIndex + 1} · 总经验 {learningProgress.stageXP}
-              {learningProgress.stageIndex < routeStages[language].length ? ` · 距离下一阶段 ${Math.max(0, learningProgress.nextTarget - learningProgress.stageXP)} XP` : ""}
-            </small>
+            </div>
+
+            <div className="course-xp-panel">
+              <div className="course-xp-headline">
+                <strong>Lv.{learningProgress.stageIndex + 1}</strong>
+                <small>总经验 {learningProgress.totalXP}</small>
+              </div>
+              <div className="course-progress-duo" aria-hidden>
+                <div>
+                  <span>当前等级进度</span>
+                  <div className="mini-progress">
+                    <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.currentPercent}%` }} transition={{ duration: 0.7, ease: "easeOut" }} />
+                  </div>
+                </div>
+                <div>
+                  <span>总经验里程</span>
+                  <div className="mini-progress">
+                    <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.totalProgressPercent}%` }} transition={{ duration: 0.9, ease: "easeOut" }} />
+                  </div>
+                </div>
+              </div>
+              <div className="course-xp-foot">
+                <small>当前阶段：{learningProgress.currentPercent}%</small>
+                <small>{learningProgress.stageIndex < stageModules[language].length ? `距下一阶段 ${learningProgress.nextLevelRemaining} XP` : "已达最高阶段"}</small>
+              </div>
+            </div>
           </div>
           <div className="route-tabs">
             <button className={language === "CANTONESE" ? "route-tab active" : "route-tab"} onClick={() => setLanguage("CANTONESE")}>粤语</button>
@@ -171,47 +184,17 @@ export function CoursesPage() {
         </div>
 
         <div className="route-grid" style={{ marginBottom: 12 }}>
-          {routeStages[language].map((stage, index) => {
-            const unlocked = index <= learningProgress.stageIndex;
-            const progress = index < learningProgress.stageIndex ? 100 : index === learningProgress.stageIndex ? learningProgress.currentPercent : 0;
-            return (
-              <article key={stage.title} className="route-point" style={unlocked ? undefined : { opacity: 0.55 }}>
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <strong>{stage.title}</strong>
-                  <small>{progress}%</small>
-                </div>
-                <small>{stage.detail}</small>
-                <div className="mini-progress" aria-hidden>
-                  <span style={{ width: `${progress}%` }} />
-                </div>
-              </article>
-            );
-          })}
-        </div>
-
-        <article className="stage-banner" style={{ marginBottom: 12 }}>
-          <strong>经验计算说明</strong>
-          <p style={{ margin: "6px 0 0" }}>经验分 = 课程完成数 × 70 + 练习数 × 15 + 正确率加成（最高 400）+ 用户基础经验</p>
-          <p style={{ margin: "6px 0 0" }}>
-            当前统计：课程完成 {learningProgress.completedCourses} / 练习次数 {learningProgress.practiceCount} / 正确率 {(learningProgress.accuracy * 100).toFixed(0)}%
-          </p>
-        </article>
-
-        <div className="row">
-          <button onClick={() => navigate("/generate")}>去生成剧场</button>
-          <button className="btn-ghost" onClick={() => navigate("/reading")}>阅读训练</button>
-          <button className="btn-ghost" onClick={() => navigate("/library")}>我的剧场库</button>
-        </div>
-
-        <h3 style={{ margin: "14px 0 8px" }}>{language === "CANTONESE" ? "阶段小节" : "Stage Modules"}</h3>
-        <div className="route-grid" style={{ marginBottom: 12 }}>
           {stageModules[language].map((stage, stageIndex) => {
             const unlocked = stageIndex <= learningProgress.stageIndex;
+            const progress = stageIndex < learningProgress.stageIndex ? 100 : stageIndex === learningProgress.stageIndex ? learningProgress.currentPercent : 0;
             return (
               <article key={stage.stage} className="route-point" style={unlocked ? undefined : { opacity: 0.55 }}>
                 <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
                   <strong>{stage.stage}</strong>
-                  <small>{unlocked ? "已解锁" : "未解锁"}</small>
+                  <small>{unlocked ? `${progress}%` : "未解锁"}</small>
+                </div>
+                <div className="mini-progress" aria-hidden>
+                  <span style={{ width: `${progress}%` }} />
                 </div>
                 <div className="tag-row">
                   {stage.modules.map((module) => (
@@ -231,9 +214,7 @@ export function CoursesPage() {
                     type="button"
                     className="btn-ghost"
                     disabled={!unlocked}
-                    onClick={() =>
-                      navigate(`/generate?language=${language}&topic=${encodeURIComponent(stage.modules[0])}`)
-                    }
+                    onClick={() => navigate(`/generate?language=${language}&stage=${stageIndex}&topic=${encodeURIComponent(stage.modules[0])}`)}
                   >
                     进入本阶段学习
                   </button>
@@ -242,6 +223,48 @@ export function CoursesPage() {
             );
           })}
         </div>
+
+        <article className="stage-banner course-metrics-banner" style={{ marginBottom: 12 }}>
+          <strong>学习指标说明</strong>
+          <p style={{ margin: "6px 0 0" }}>学习指标用于阶段推荐，不替代总经验；总经验统一以个人中心为准。</p>
+          <div className="course-metrics-grid">
+            <div className="course-metric-card">
+              <small>课程完成</small>
+              <strong>{learningProgress.completedCourses}</strong>
+              <div className="mini-progress" aria-hidden>
+                <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.courseCompletionPercent}%` }} transition={{ duration: 0.6, ease: "easeOut" }} />
+              </div>
+            </div>
+            <div className="course-metric-card">
+              <small>练习次数</small>
+              <strong>{learningProgress.practiceCount}</strong>
+              <div className="mini-progress" aria-hidden>
+                <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.practiceProgressPercent}%` }} transition={{ duration: 0.7, ease: "easeOut" }} />
+              </div>
+            </div>
+            <div className="course-metric-card">
+              <small>正确率</small>
+              <strong>{(learningProgress.accuracy * 100).toFixed(0)}%</strong>
+              <div className="mini-progress" aria-hidden>
+                <motion.span initial={{ width: 0 }} animate={{ width: `${Math.round(learningProgress.accuracy * 100)}%` }} transition={{ duration: 0.8, ease: "easeOut" }} />
+              </div>
+            </div>
+            <div className="course-metric-card emphasis">
+              <small>学习指标</small>
+              <strong>{learningProgress.learningIndex}</strong>
+              <div className="mini-progress" aria-hidden>
+                <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.learningIndexPercent}%` }} transition={{ duration: 0.9, ease: "easeOut" }} />
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <div className="row">
+          <button onClick={() => navigate("/generate")}>去生成剧场</button>
+          <button className="btn-ghost" onClick={() => navigate("/reading")}>阅读训练</button>
+          <button className="btn-ghost" onClick={() => navigate("/library")}>我的剧场库</button>
+        </div>
+
         <ul className="dialogue-list">
           {list.map((item) => (
             <motion.li

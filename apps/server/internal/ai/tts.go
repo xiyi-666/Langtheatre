@@ -50,10 +50,8 @@ func (t *APITTS) Synthesize(ctx context.Context, text string, language string, v
 	if t.APIURL == "" {
 		return "", errors.New("tts api url not configured")
 	}
-	if voice == "" {
-		voice = t.Voice
-	}
-	instruction := buildInstruction(text, language)
+	apiVoice, voiceStyle := resolveVoiceSelection(voice, t.Voice)
+	instruction := buildInstruction(text, language, voiceStyle)
 	payload := map[string]any{
 		"text":              text,
 		"instruct":          instruction,
@@ -63,8 +61,8 @@ func (t *APITTS) Synthesize(ctx context.Context, text string, language string, v
 	if t.PromptAudioPath != "" {
 		payload["prompt_audio_path"] = t.PromptAudioPath
 	}
-	if strings.TrimSpace(voice) != "" {
-		payload["voice"] = strings.TrimSpace(voice)
+	if strings.TrimSpace(apiVoice) != "" {
+		payload["voice"] = strings.TrimSpace(apiVoice)
 	}
 	raw, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {
@@ -105,14 +103,14 @@ func (t *APITTS) Synthesize(ctx context.Context, text string, language string, v
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 	if strings.Contains(contentType, "application/json") || strings.Contains(contentType, "text/json") || strings.Contains(contentType, "+json") {
 		var parsed struct {
-			AudioURL     string `json:"audioUrl"`
-			URL          string `json:"url"`
-			AudioURLAlt  string `json:"audio_url"`
+			AudioURL     string   `json:"audioUrl"`
+			URL          string   `json:"url"`
+			AudioURLAlt  string   `json:"audio_url"`
 			AudioURLs    []string `json:"audio_urls"`
 			AudioPaths   []string `json:"audio_paths"`
-			RelativePath string `json:"relative_path"`
-			Path         string `json:"path"`
-			FilePath     string `json:"file_path"`
+			RelativePath string   `json:"relative_path"`
+			Path         string   `json:"path"`
+			FilePath     string   `json:"file_path"`
 		}
 		if err = json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 			return "", err
@@ -225,11 +223,60 @@ func mapLocalTTSPath(apiURL string, localPath string) string {
 
 var englishLetter = regexp.MustCompile(`[A-Za-z]`)
 
-func buildInstruction(text string, language string) string {
-	base := "温柔地说"
+func buildInstruction(text string, language string, voiceStyle string) string {
+	style := normalizeVoiceStyle(voiceStyle)
+	if style == "" {
+		style = "温柔女生"
+	}
+	base := voiceStyleInstruction(style) + "，语速自然，像真实生活场景中的对话，不要播报腔。"
 	lang := strings.ToUpper(strings.TrimSpace(language))
 	if lang == "CANTONESE" && !englishLetter.MatchString(text) {
 		return "请用广东话说，" + base
 	}
 	return base
+}
+
+func resolveVoiceSelection(requestedVoice string, defaultVoice string) (string, string) {
+	voice := strings.TrimSpace(requestedVoice)
+	if voice == "" {
+		return strings.TrimSpace(defaultVoice), normalizeVoiceStyle(defaultVoice)
+	}
+	style := normalizeVoiceStyle(voice)
+	if style != "" {
+		return strings.TrimSpace(defaultVoice), style
+	}
+	return voice, normalizeVoiceStyle(voice)
+}
+
+func normalizeVoiceStyle(input string) string {
+	v := strings.ToLower(strings.TrimSpace(input))
+	switch {
+	case v == "甜美女生" || strings.Contains(v, "sweet") || strings.Contains(v, "soft-female"):
+		return "甜美女生"
+	case v == "播音男生" || strings.Contains(v, "broadcast") || strings.Contains(v, "male-announcer"):
+		return "播音男生"
+	case v == "沉稳大叔" || strings.Contains(v, "mature-male") || strings.Contains(v, "uncle"):
+		return "沉稳大叔"
+	case v == "御姐音色" || strings.Contains(v, "mature-female") || strings.Contains(v, "queen-female"):
+		return "御姐音色"
+	case v == "温柔女生" || strings.Contains(v, "female") || strings.Contains(v, "gentle"):
+		return "温柔女生"
+	default:
+		return ""
+	}
+}
+
+func voiceStyleInstruction(style string) string {
+	switch style {
+	case "甜美女生":
+		return "请用甜美女生音色说"
+	case "播音男生":
+		return "请用播音男生音色说"
+	case "沉稳大叔":
+		return "请用沉稳大叔音色说"
+	case "御姐音色":
+		return "请用御姐音色说"
+	default:
+		return "请用温柔女生音色说"
+	}
 }

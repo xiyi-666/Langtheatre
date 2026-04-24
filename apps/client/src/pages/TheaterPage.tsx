@@ -14,12 +14,13 @@ import {
   Star,
   TimerReset
 } from "lucide-react";
-import { getTheater, toggleFavorite } from "../api";
+import { getSharedTheater, getTheater, toggleFavorite } from "../api";
 import { playClip, speakText } from "../audio";
 import { useAppStore } from "../store";
 
 export function TheaterPage() {
-  const { id = "" } = useParams();
+  const { id = "", shareCode = "" } = useParams();
+  const isSharedView = shareCode.trim() !== "";
   const [activeIndex, setActiveIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [autoPlay, setAutoPlay] = useState(false);
@@ -40,16 +41,18 @@ export function TheaterPage() {
   const setTheater = useAppStore((s) => s.setTheater);
 
   useEffect(() => {
-    if (!theater || theater.id !== id) {
+    const shouldLoadByID = id.trim() !== "";
+    const shouldLoadByShareCode = !shouldLoadByID && shareCode.trim() !== "";
+    if (!theater || (shouldLoadByID && theater.id !== id) || shouldLoadByShareCode) {
       void (async () => {
-        const data = await getTheater(id);
+        const data = shouldLoadByID ? await getTheater(id) : await getSharedTheater(shareCode);
         setTheater(data);
         setFavorite(Boolean(data.isFavorite));
       })();
     } else {
       setFavorite(Boolean(theater.isFavorite));
     }
-  }, [id, setTheater, theater]);
+  }, [id, setTheater, shareCode, theater]);
 
   useEffect(() => {
     return () => {
@@ -203,9 +206,13 @@ export function TheaterPage() {
   async function handleToggleFavorite() {
     if (!theater) return;
     const next = !favorite;
-    await toggleFavorite(theater.id, next);
-    setFavorite(next);
-    setTheater({ ...theater, isFavorite: next });
+    try {
+      await toggleFavorite(theater.id, next);
+      setFavorite(next);
+      setTheater({ ...theater, isFavorite: next });
+    } catch {
+      showHint("共享剧场仅支持浏览，收藏请在你的剧场库中操作");
+    }
   }
 
   function handleDialogueTouchStart(event: TouchEvent<HTMLLIElement>) {
@@ -276,7 +283,7 @@ export function TheaterPage() {
               <h2>{theater.topic}</h2>
               <p>难度 {theater.difficulty} | 模式 {theater.mode}</p>
             </div>
-            <button className="btn-ghost" onClick={() => navigate("/library")}>返回剧场库</button>
+            {!isSharedView ? <button className="btn-ghost" onClick={() => navigate("/library")}>返回剧场库</button> : null}
           </header>
 
           <section className="stage-banner">
@@ -370,9 +377,11 @@ export function TheaterPage() {
             <button aria-label="播放下一句" onClick={() => setActiveIndex((value) => Math.min(value + 1, dialogueCount - 1))}>
               <SkipForward size={16} /> 下一句
             </button>
-            <button aria-label={primaryAction.aria} onClick={primaryAction.onClick}>
-              <BookOpenText size={16} /> {primaryAction.label}
-            </button>
+            {!isSharedView ? (
+              <button aria-label={primaryAction.aria} onClick={primaryAction.onClick}>
+                <BookOpenText size={16} /> {primaryAction.label}
+              </button>
+            ) : null}
           </div>
 
           <div className="row" style={{ marginTop: 10 }}>
@@ -438,8 +447,14 @@ export function TheaterPage() {
             </div>
           ))}
           {vocabDetail ? <div className="vocab-popover" role="status">{vocabDetail}</div> : null}
-          <button type="button" className={favorite ? "control-chip active" : "control-chip"} onClick={handleToggleFavorite}>
-            <Heart size={14} /> {favorite ? "已收藏" : "收藏剧场"}
+          <button
+            type="button"
+            className={favorite ? "control-chip active" : "control-chip"}
+            onClick={handleToggleFavorite}
+            disabled={isSharedView}
+            title={isSharedView ? "共享剧场仅支持浏览" : undefined}
+          >
+            <Heart size={14} /> {isSharedView ? "共享内容（只读）" : favorite ? "已收藏" : "收藏剧场"}
           </button>
           <p style={{ marginTop: 12 }}>
             <Star size={14} /> 点击任一对话气泡即可切换句子并复听。
