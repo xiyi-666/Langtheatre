@@ -23,6 +23,8 @@ jobs:
   build-desktop:
     name: build-${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
+    env:
+      VITE_API_URL: http://61.244.24.7:8177/graphql
     strategy:
       fail-fast: false
       matrix:
@@ -84,6 +86,8 @@ jobs:
   build-android:
     name: build-android
     runs-on: ubuntu-latest
+    env:
+      VITE_API_URL: http://61.244.24.7:8177/graphql
     steps:
       - name: Checkout
         uses: actions/checkout@v4
