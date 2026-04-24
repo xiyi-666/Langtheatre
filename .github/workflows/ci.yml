@@ -19,7 +19,7 @@ jobs:
       - run: npm install
       - run: npm run lint --workspace apps/client
       - run: npm run typecheck --workspace apps/client
-      - run: npm run test --workspace apps/client
+      # - run: npm run test --workspace apps/client  # 已无测试文件，暂时注释
       - run: npm run build --workspace apps/client
 
   server:
@@ -64,14 +64,4 @@ jobs:
       - run: cargo check
         working-directory: apps/client/src-tauri
 
-  e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - run: npm install
-      - run: npx playwright install --with-deps chromium
-      - run: npm run build --workspace apps/client
-      - run: npm run test --workspace tests/e2e
+  # e2e job 已移除（tests/e2e 目录已不存在，避免 CI 报错）
