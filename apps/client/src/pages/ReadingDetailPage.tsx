@@ -45,7 +45,6 @@ export function ReadingDetailPage() {
   const [referenceParagraphIndex, setReferenceParagraphIndex] = useState(0);
   const [audioIndex, setAudioIndex] = useState(0);
   const [mergedAudioUrl, setMergedAudioUrl] = useState("");
-  const [audioMerging, setAudioMerging] = useState(false);
   const [audioMergeState, setAudioMergeState] = useState<AudioMergeState>("idle");
   const [audioMergeMessage, setAudioMergeMessage] = useState("");
   const [loadingProgress, setLoadingProgress] = useState(12);
@@ -270,13 +269,11 @@ export function ReadingDetailPage() {
         return;
       }
       if (!canAttemptAudioMerge(audioQueue)) {
-        setAudioMerging(false);
         setMergedAudioUrl("");
         setAudioMergeState("fallback");
         setAudioMergeMessage("音频链接无效，已回退连续播放");
         return;
       }
-      setAudioMerging(true);
       setAudioMergeState("merging");
       setAudioMergeMessage("正在合并分段音频...");
       try {
@@ -297,7 +294,6 @@ export function ReadingDetailPage() {
         }
       } finally {
         if (!cancelled) {
-          setAudioMerging(false);
         }
       }
     }

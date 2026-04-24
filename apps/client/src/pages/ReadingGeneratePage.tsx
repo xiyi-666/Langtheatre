@@ -73,7 +73,6 @@ export function ReadingGeneratePage() {
   }, [safeExam, category]);
 
   const visibleSources = sources;
-  const stageLabel = `${safeExam} Stage ${String(activeStage + 1).padStart(2, "0")}`;
   const currentSeeds = useMemo(() => stageSeeds[activeStage], [activeStage, stageSeeds]);
 
   useEffect(() => {

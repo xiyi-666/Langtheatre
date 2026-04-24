@@ -25,12 +25,6 @@ export function ProfilePage() {
     }
   }, [avatarUrl]);
 
-  const resolvedAvatarUrl = useMemo(() => {
-    const value = avatarUrl.trim();
-    if (!value) return "";
-    if (/^https?:\/\//i.test(value)) return value;
-    return "";
-  }, [avatarUrl]);
 
   useEffect(() => {
     void (async () => {
