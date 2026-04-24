@@ -293,8 +293,7 @@ export function ReadingDetailPage() {
           setAudioMergeMessage(formatAudioMergeError(error));
         }
       } finally {
-        if (!cancelled) {
-        }
+        // no-op
       }
     }
 
