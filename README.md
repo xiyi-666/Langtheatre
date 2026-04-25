@@ -70,8 +70,21 @@ LinguaQuest 是一个使用 Tauri 2 + React + TypeScript + Go 构建的跨平台
 
 - `DOCKERHUB_USERNAME`：Docker Hub 用户名
 - `DOCKERHUB_TOKEN`：Docker Hub Access Token
-- `VITE_API_URL_PROD`：前端生产 API 地址（示例：`http://61.244.24.7:8080/graphql` 或 `https://api.yourdomain.com/graphql`）
+- `VITE_API_URL_PROD`：前端生产 API 地址（示例：`http://61.244.24.7:8177/graphql` 或 `https://api.yourdomain.com/graphql`）
 - `VITE_SENTRY_DSN`：可选，前端 Sentry DSN
+- `DEPLOY_USER`：服务器 SSH 用户名
+- `DEPLOY_SSH_KEY`：服务器 SSH 私钥（对应 `61.244.24.7`）
+- `JWT_SECRET`：生产环境 JWT 密钥
+- `SUPABASE_DB_URL`：生产 PostgreSQL 连接串
+- `OPENAI_API_KEY`：可选，生产模型 API Key
+- `OPENAI_MODEL`：可选，默认 `gpt-4o-mini`
+- `OPENAI_BASE_URL`：可选，默认 `https://api.openai.com`
+- `TTS_API_URL`：可选，生产 TTS 服务地址
+- `TTS_API_KEY`：可选，生产 TTS 服务密钥
+- `TTS_VOICE`：可选，默认 `female-1`
+- `TTS_USE_UPLOAD_PROMPT`：可选，默认 `false`
+- `TTS_PROMPT_AUDIO_PATH`：可选，TTS prompt 音频路径
+- `TTS_RETURN_JSON`：可选，默认 `true`
 - `TTS_TIMEOUT_SECONDS`：可选，生产 TTS 超时时间（秒，默认 `45`）
 - `TTS_MAX_RETRIES`：可选，生产 TTS 重试次数（默认 `1`）
 
@@ -82,3 +95,11 @@ LinguaQuest 是一个使用 Tauri 2 + React + TypeScript + Go 构建的跨平台
 - `tauri-macos-latest`：macOS 桌面安装包
 - `android-apk`：Android APK 产物
 - Docker 镜像：`<DOCKERHUB_USERNAME>/linguaquest-server` 与 `<DOCKERHUB_USERNAME>/linguaquest-client`
+
+## 一键部署到 61.244.24.7
+
+- 工作流：`.github/workflows/deploy.yml`
+- 行为：构建并推送 Docker 镜像，然后通过 SSH 登录 `61.244.24.7`，执行 `docker compose pull && docker compose up -d`
+- 部署完成后会检查：
+  - `http://61.244.24.7/`
+  - `http://61.244.24.7:8177/healthz`

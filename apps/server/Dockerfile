@@ -8,5 +8,6 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o linguaquest-api ./cmd/serv
 FROM alpine:3.20
 WORKDIR /srv
 COPY --from=builder /app/linguaquest-api /srv/linguaquest-api
-EXPOSE 8080
+COPY --from=builder /app/migrations /srv/migrations
+EXPOSE 8177
 CMD ["/srv/linguaquest-api"]

@@ -2,44 +2,168 @@ name: deploy
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  TTS_TIMEOUT_SECONDS: ${{ secrets.TTS_TIMEOUT_SECONDS || '45' }}
-  TTS_MAX_RETRIES: ${{ secrets.TTS_MAX_RETRIES || '1' }}
+  DEPLOY_HOST: 61.244.24.7
+  DEPLOY_PATH: /opt/linguaquest
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths:
+      - apps/client/**
+      - apps/server/**
+      - infra/docker-compose.deploy.yml
+      - .github/workflows/deploy.yml
+      - .github/workflows/dockerhub.yml
 
 jobs:
-  build-server:
+  build-and-push-images:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/server
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
-          go-version: "1.25"
-          cache-dependency-path: apps/server/go.sum
-      - run: go mod tidy
-      - run: go build -o linguaquest-api ./cmd/server
-      - uses: actions/upload-artifact@v4
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata (server)
+        id: meta-server
+        uses: docker/metadata-action@v5
         with:
-          name: linguaquest-api
-          path: apps/server/linguaquest-api
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-server
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      - name: Build and push server image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/server
+          file: ./apps/server/Dockerfile
+          push: true
+          tags: ${{ steps.meta-server.outputs.tags }}
+          labels: ${{ steps.meta-server.outputs.labels }}
+
+      - name: Docker metadata (client)
+        id: meta-client
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-client
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      - name: Build and push client image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/client
+          file: ./apps/client/Dockerfile
+          push: true
+          build-args: |
+            VITE_API_URL=${{ secrets.VITE_API_URL_PROD }}
+            VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
+          tags: ${{ steps.meta-client.outputs.tags }}
+          labels: ${{ steps.meta-client.outputs.labels }}
+
+  deploy-server:
+    runs-on: ubuntu-latest
+    needs: [build-and-push-images]
+    permissions:
+      contents: read
+    env:
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
+      OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+      TTS_API_URL: ${{ secrets.TTS_API_URL }}
+      TTS_API_KEY: ${{ secrets.TTS_API_KEY }}
+      TTS_VOICE: ${{ secrets.TTS_VOICE }}
+      TTS_USE_UPLOAD_PROMPT: ${{ secrets.TTS_USE_UPLOAD_PROMPT }}
+      TTS_PROMPT_AUDIO_PATH: ${{ secrets.TTS_PROMPT_AUDIO_PATH }}
+      TTS_RETURN_JSON: ${{ secrets.TTS_RETURN_JSON }}
+      TTS_TIMEOUT_SECONDS: ${{ secrets.TTS_TIMEOUT_SECONDS }}
+      TTS_MAX_RETRIES: ${{ secrets.TTS_MAX_RETRIES }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy deploy compose file
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: infra/docker-compose.deploy.yml
+          target: ${{ env.DEPLOY_PATH }}
+          strip_components: 1
+
+      - name: Run remote deploy
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+          JWT_SECRET: ${{ env.JWT_SECRET }}
+          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL }}
+          OPENAI_API_KEY: ${{ env.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ env.OPENAI_MODEL }}
+          OPENAI_BASE_URL: ${{ env.OPENAI_BASE_URL }}
+          TTS_API_URL: ${{ env.TTS_API_URL }}
+          TTS_API_KEY: ${{ env.TTS_API_KEY }}
+          TTS_VOICE: ${{ env.TTS_VOICE }}
+          TTS_USE_UPLOAD_PROMPT: ${{ env.TTS_USE_UPLOAD_PROMPT }}
+          TTS_PROMPT_AUDIO_PATH: ${{ env.TTS_PROMPT_AUDIO_PATH }}
+          TTS_RETURN_JSON: ${{ env.TTS_RETURN_JSON }}
+          TTS_TIMEOUT_SECONDS: ${{ env.TTS_TIMEOUT_SECONDS }}
+          TTS_MAX_RETRIES: ${{ env.TTS_MAX_RETRIES }}
+          SENTRY_DSN: ${{ env.SENTRY_DSN }}
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,DEPLOY_PATH,JWT_SECRET,SUPABASE_DB_URL,OPENAI_API_KEY,OPENAI_MODEL,OPENAI_BASE_URL,TTS_API_URL,TTS_API_KEY,TTS_VOICE,TTS_USE_UPLOAD_PROMPT,TTS_PROMPT_AUDIO_PATH,TTS_RETURN_JSON,TTS_TIMEOUT_SECONDS,TTS_MAX_RETRIES,SENTRY_DSN
+          script: |
+            set -e
+            mkdir -p "$DEPLOY_PATH"
+            cd "$DEPLOY_PATH"
+            mv docker-compose.deploy.yml docker-compose.yml
+            cat > .env <<EOF
+            DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
+            JWT_SECRET=${JWT_SECRET}
+            SUPABASE_DB_URL=${SUPABASE_DB_URL}
+            OPENAI_API_KEY=${OPENAI_API_KEY}
+            OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+            OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com}
+            TTS_API_URL=${TTS_API_URL}
+            TTS_API_KEY=${TTS_API_KEY}
+            TTS_VOICE=${TTS_VOICE:-female-1}
+            TTS_USE_UPLOAD_PROMPT=${TTS_USE_UPLOAD_PROMPT:-false}
+            TTS_PROMPT_AUDIO_PATH=${TTS_PROMPT_AUDIO_PATH}
+            TTS_RETURN_JSON=${TTS_RETURN_JSON:-true}
+            TTS_TIMEOUT_SECONDS=${TTS_TIMEOUT_SECONDS:-45}
+            TTS_MAX_RETRIES=${TTS_MAX_RETRIES:-1}
+            SENTRY_DSN=${SENTRY_DSN}
+            EOF
+            echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+            docker compose pull
+            docker compose up -d --remove-orphans
 
   smoke-test:
     runs-on: ubuntu-latest
-    needs: [build-server]
-    env:
-      HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+    needs: [deploy-server]
     steps:
-      - name: Skip when healthcheck URL is not configured
-        if: ${{ env.HEALTHCHECK_URL == '' }}
-        run: echo "HEALTHCHECK_URL is empty. Skip smoke test."
-
-      - name: Check health endpoint
-        if: ${{ env.HEALTHCHECK_URL != '' }}
+      - name: Check web and API health
         run: |
-          curl -fsSL "$HEALTHCHECK_URL" | tee health.json
+          curl -fsSL "http://${{ env.DEPLOY_HOST }}/" > /dev/null
+          curl -fsSL "http://${{ env.DEPLOY_HOST }}:8177/healthz" | tee health.json

@@ -66,5 +66,8 @@ jobs:
           context: ./apps/client
           file: ./apps/client/Dockerfile
           push: true
+          build-args: |
+            VITE_API_URL=${{ secrets.VITE_API_URL_PROD }}
+            VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
           tags: ${{ steps.meta-client.outputs.tags }}
           labels: ${{ steps.meta-client.outputs.labels }}
