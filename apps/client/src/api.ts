@@ -1,6 +1,6 @@
 import type { ContentSource, Course, PracticeResult, ReadingMaterial, RoleplaySession, Theater, User } from "./types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8177/graphql";
+const API_URL = import.meta.env.VITE_API_URL ?? "/graphql";
 
 export function getApiBaseUrl(): string {
   try {

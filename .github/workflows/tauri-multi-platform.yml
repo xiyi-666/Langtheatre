@@ -73,7 +73,13 @@ jobs:
         working-directory: apps/client
         run: npx tauri icon src-tauri/icons/app-icon.svg
 
-      - name: Build Tauri desktop app
+      - name: Build Tauri desktop app (Windows NSIS only)
+        if: matrix.platform == 'windows'
+        working-directory: apps/client
+        run: npx tauri build --bundles nsis
+
+      - name: Build Tauri desktop app (Non-Windows)
+        if: matrix.platform != 'windows'
         run: npm run tauri:build
 
       - name: Upload desktop bundles

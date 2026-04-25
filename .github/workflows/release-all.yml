@@ -62,7 +62,14 @@ jobs:
           test -f apps/client/src-tauri/icons/icon.ico || (echo "Missing generated Windows icon: apps/client/src-tauri/icons/icon.ico" && exit 1)
           test -f apps/client/src-tauri/icons/icon.icns || (echo "Missing generated macOS icon: apps/client/src-tauri/icons/icon.icns" && exit 1)
 
-      - run: npm run tauri:build --workspace apps/client
+      - name: Build Tauri desktop app (Windows NSIS only)
+        if: matrix.os == 'windows-latest'
+        working-directory: apps/client
+        run: npx tauri build --bundles nsis
+
+      - name: Build Tauri desktop app (Non-Windows)
+        if: matrix.os != 'windows-latest'
+        run: npm run tauri:build --workspace apps/client
       - uses: actions/upload-artifact@v4
         with:
           name: tauri-${{ matrix.os }}
