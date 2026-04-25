@@ -72,8 +72,6 @@ LinguaQuest 是一个使用 Tauri 2 + React + TypeScript + Go 构建的跨平台
 - `DOCKERHUB_TOKEN`：Docker Hub Access Token
 - `VITE_API_URL_PROD`：前端生产 API 地址（示例：`http://61.244.24.7:8177/graphql` 或 `https://api.yourdomain.com/graphql`）
 - `VITE_SENTRY_DSN`：可选，前端 Sentry DSN
-- `DEPLOY_USER`：服务器 SSH 用户名
-- `DEPLOY_SSH_KEY`：服务器 SSH 私钥（对应 `61.244.24.7`）
 - `JWT_SECRET`：生产环境 JWT 密钥
 - `SUPABASE_DB_URL`：生产 PostgreSQL 连接串
 - `OPENAI_API_KEY`：可选，生产模型 API Key
@@ -96,10 +94,14 @@ LinguaQuest 是一个使用 Tauri 2 + React + TypeScript + Go 构建的跨平台
 - `android-apk`：Android APK 产物
 - Docker 镜像：`<DOCKERHUB_USERNAME>/linguaquest-server` 与 `<DOCKERHUB_USERNAME>/linguaquest-client`
 
-## 一键部署到 61.244.24.7
+## 服务器手动拉镜像部署
 
 - 工作流：`.github/workflows/deploy.yml`
-- 行为：构建并推送 Docker 镜像，然后通过 SSH 登录 `61.244.24.7`，执行 `docker compose pull && docker compose up -d`
-- 部署完成后会检查：
+- 行为：构建并推送 Docker 镜像，同时验证 `infra/docker-compose.deploy.yml` 可用，并上传 `deploy-bundle` artifact
+- 服务器侧（`61.244.24.7`）由你手动执行：
+  - `docker login`
+  - `docker compose -f docker-compose.deploy.yml pull`
+  - `docker compose -f docker-compose.deploy.yml up -d`
+- 访问地址：
   - `http://61.244.24.7/`
   - `http://61.244.24.7:8177/healthz`
