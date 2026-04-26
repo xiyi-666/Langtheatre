@@ -111,8 +111,8 @@ func (t *APITTS) Synthesize(ctx context.Context, text string, language string, v
 			RelativePath   string   `json:"relative_path"`
 			Path           string   `json:"path"`
 			FilePath       string   `json:"file_path"`
-			AudioBase64    string   `json:"audio_base64"`
-			AudioBase64Alt string   `json:"audioBase64"`
+			AudioBase64    any      `json:"audio_base64"`
+			AudioBase64Alt any      `json:"audioBase64"`
 			ContentType    string   `json:"content_type"`
 			MimeType       string   `json:"mime_type"`
 		}
@@ -155,9 +155,9 @@ func (t *APITTS) Synthesize(ctx context.Context, text string, language string, v
 				return mapped, nil
 			}
 		}
-		inlineAudio := strings.TrimSpace(parsed.AudioBase64)
+		inlineAudio := firstNonEmptyAudioBase64(parsed.AudioBase64)
 		if inlineAudio == "" {
-			inlineAudio = strings.TrimSpace(parsed.AudioBase64Alt)
+			inlineAudio = firstNonEmptyAudioBase64(parsed.AudioBase64Alt)
 		}
 		if inlineAudio != "" {
 			if strings.HasPrefix(inlineAudio, "data:audio/") {
@@ -186,6 +186,30 @@ func (t *APITTS) Synthesize(ctx context.Context, text string, language string, v
 		return "data:" + contentType + ";base64," + encoded, nil
 	}
 	return "", errors.New("tts api returned unsupported content type")
+}
+
+func firstNonEmptyAudioBase64(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []string:
+		for _, item := range v {
+			candidate := strings.TrimSpace(item)
+			if candidate != "" {
+				return candidate
+			}
+		}
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				candidate := strings.TrimSpace(s)
+				if candidate != "" {
+					return candidate
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func isTimeoutErr(err error) bool {
