@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: read
     env:
-      VITE_API_URL: ${{ secrets.VITE_API_URL_PROD }}
+      VITE_API_URL: /graphql
       VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
     steps:
       - uses: actions/checkout@v4

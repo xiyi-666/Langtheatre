@@ -24,7 +24,7 @@ jobs:
     name: build-${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     env:
-      VITE_API_URL: http://61.244.24.7:8177/graphql
+      VITE_API_URL: ${{ secrets.VITE_API_URL_PROD }}
     strategy:
       fail-fast: false
       matrix:
@@ -93,7 +93,7 @@ jobs:
     name: build-android
     runs-on: ubuntu-latest
     env:
-      VITE_API_URL: http://61.244.24.7:8177/graphql
+      VITE_API_URL: ${{ secrets.VITE_API_URL_PROD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
