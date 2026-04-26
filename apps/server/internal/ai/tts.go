@@ -103,14 +103,18 @@ func (t *APITTS) Synthesize(ctx context.Context, text string, language string, v
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 	if strings.Contains(contentType, "application/json") || strings.Contains(contentType, "text/json") || strings.Contains(contentType, "+json") {
 		var parsed struct {
-			AudioURL     string   `json:"audioUrl"`
-			URL          string   `json:"url"`
-			AudioURLAlt  string   `json:"audio_url"`
-			AudioURLs    []string `json:"audio_urls"`
-			AudioPaths   []string `json:"audio_paths"`
-			RelativePath string   `json:"relative_path"`
-			Path         string   `json:"path"`
-			FilePath     string   `json:"file_path"`
+			AudioURL       string   `json:"audioUrl"`
+			URL            string   `json:"url"`
+			AudioURLAlt    string   `json:"audio_url"`
+			AudioURLs      []string `json:"audio_urls"`
+			AudioPaths     []string `json:"audio_paths"`
+			RelativePath   string   `json:"relative_path"`
+			Path           string   `json:"path"`
+			FilePath       string   `json:"file_path"`
+			AudioBase64    string   `json:"audio_base64"`
+			AudioBase64Alt string   `json:"audioBase64"`
+			ContentType    string   `json:"content_type"`
+			MimeType       string   `json:"mime_type"`
 		}
 		if err = json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 			return "", err
@@ -150,6 +154,23 @@ func (t *APITTS) Synthesize(ctx context.Context, text string, language string, v
 			if mapped != "" {
 				return mapped, nil
 			}
+		}
+		inlineAudio := strings.TrimSpace(parsed.AudioBase64)
+		if inlineAudio == "" {
+			inlineAudio = strings.TrimSpace(parsed.AudioBase64Alt)
+		}
+		if inlineAudio != "" {
+			if strings.HasPrefix(inlineAudio, "data:audio/") {
+				return inlineAudio, nil
+			}
+			mime := strings.TrimSpace(parsed.ContentType)
+			if mime == "" {
+				mime = strings.TrimSpace(parsed.MimeType)
+			}
+			if mime == "" || !strings.HasPrefix(strings.ToLower(mime), "audio/") {
+				mime = "audio/wav"
+			}
+			return "data:" + mime + ";base64," + inlineAudio, nil
 		}
 		return "", errors.New("tts api missing audio url field")
 	}
@@ -249,34 +270,13 @@ func resolveVoiceSelection(requestedVoice string, defaultVoice string) (string, 
 }
 
 func normalizeVoiceStyle(input string) string {
-	v := strings.ToLower(strings.TrimSpace(input))
-	switch {
-	case v == "甜美女生" || strings.Contains(v, "sweet") || strings.Contains(v, "soft-female"):
-		return "甜美女生"
-	case v == "播音男生" || strings.Contains(v, "broadcast") || strings.Contains(v, "male-announcer"):
-		return "播音男生"
-	case v == "沉稳大叔" || strings.Contains(v, "mature-male") || strings.Contains(v, "uncle"):
-		return "沉稳大叔"
-	case v == "御姐音色" || strings.Contains(v, "mature-female") || strings.Contains(v, "queen-female"):
-		return "御姐音色"
-	case v == "温柔女生" || strings.Contains(v, "female") || strings.Contains(v, "gentle"):
-		return "温柔女生"
-	default:
-		return ""
-	}
+	return normalizeVoiceStyleFromCatalog(input)
 }
 
 func voiceStyleInstruction(style string) string {
-	switch style {
-	case "甜美女生":
-		return "请用甜美女生音色说"
-	case "播音男生":
-		return "请用播音男生音色说"
-	case "沉稳大叔":
-		return "请用沉稳大叔音色说"
-	case "御姐音色":
-		return "请用御姐音色说"
-	default:
-		return "请用温柔女生音色说"
+	instruction := voiceStyleInstructionFromCatalog(style)
+	if instruction != "" {
+		return instruction
 	}
+	return "请用温柔女生音色说"
 }

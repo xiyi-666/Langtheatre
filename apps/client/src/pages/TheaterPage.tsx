@@ -15,7 +15,7 @@ import {
   TimerReset
 } from "lucide-react";
 import { getSharedTheater, getTheater, toggleFavorite } from "../api";
-import { playClip, speakText } from "../audio";
+import { playClip } from "../audio";
 import { useAppStore } from "../store";
 
 export function TheaterPage() {
@@ -150,22 +150,20 @@ export function TheaterPage() {
   }
 
   const playDialogue = useCallback(
-    async (index: number) => {
+    async (index: number): Promise<boolean> => {
       const target = theater?.dialogues[index];
-      if (!target) return;
+      if (!target) return false;
       setLoading(true);
       try {
-        if (target.audioUrl) {
-          try {
-            await playClip(target.audioUrl, playbackRate);
-          } catch {
-            await speakText(target.text, playbackRate);
-          }
-        } else {
-          await speakText(target.text, playbackRate);
+        if (!target.audioUrl || target.audioUrl.trim() === "") {
+          showHint("音频生成中");
+          return false;
         }
+        await playClip(target.audioUrl, playbackRate);
+        return true;
       } catch {
-        showHint("音频不可用，请稍后重试");
+        showHint("音频生成中");
+        return false;
       } finally {
         setLoading(false);
       }
@@ -174,8 +172,8 @@ export function TheaterPage() {
   );
 
   async function handlePlayCurrent() {
-    await playDialogue(activeIndex);
-    if (!loopCurrent) {
+    const played = await playDialogue(activeIndex);
+    if (played && !loopCurrent) {
       setActiveIndex((value) => Math.min(value + 1, dialogueCount - 1));
     }
   }
@@ -191,7 +189,11 @@ export function TheaterPage() {
           return;
         }
         setActiveIndex(index);
-        await playDialogue(index);
+        const played = await playDialogue(index);
+        if (!played) {
+          setAutoPlay(false);
+          return;
+        }
       }
       if (!disposed) {
         setAutoPlay(false);
