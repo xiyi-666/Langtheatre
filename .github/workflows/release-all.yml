@@ -212,6 +212,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Delete existing release (if any)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "$GITHUB_REF_NAME" -y || true
+
       - name: Download web dist
         uses: actions/download-artifact@v4
         with:
