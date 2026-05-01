@@ -205,3 +205,60 @@ jobs:
           push: true
           tags: ${{ steps.meta-client.outputs.tags }}
           labels: ${{ steps.meta-client.outputs.labels }}
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [web, desktop, android]
+    permissions:
+      contents: write
+    steps:
+      - name: Download web dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: release-assets/web-dist
+
+      - name: Download desktop bundles (Windows)
+        uses: actions/download-artifact@v4
+        with:
+          name: tauri-windows-latest
+          path: release-assets/tauri-windows
+
+      - name: Download desktop bundles (macOS)
+        uses: actions/download-artifact@v4
+        with:
+          name: tauri-macos-latest
+          path: release-assets/tauri-macos
+
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: release-assets/android
+
+      - name: Prepare release asset names
+        shell: bash
+        run: |
+          set -e
+          TAG_NAME="${GITHUB_REF_NAME}"
+          APK_PATH=$(find release-assets/android -type f -name "*.apk" | head -n 1)
+          if [ -n "$APK_PATH" ]; then
+            mv "$APK_PATH" "release-assets/LinguaQuest-android-${TAG_NAME}.apk"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "LinguaQuest ${GITHUB_REF_NAME}"
+          body: |
+            Release: ${GITHUB_REF_NAME}
+
+            Assets:
+            - LinguaQuest-android-${GITHUB_REF_NAME}.apk
+            - Windows/macOS bundles (Tauri)
+            - web-dist (static build)
+          files: |
+            release-assets/LinguaQuest-android-${GITHUB_REF_NAME}.apk
+            release-assets/tauri-windows/**
+            release-assets/tauri-macos/**
+            release-assets/web-dist/**
