@@ -6,8 +6,8 @@ import { login, me, register } from "../api";
 import { useAppStore } from "../store";
 
 export function LoginPage() {
-  const [email, setEmail] = useState("demo@linguaquest.app");
-  const [password, setPassword] = useState("demo1234");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isRegister, setIsRegister] = useState(false);
   const setUser = useAppStore((s) => s.setUser);
   const setLoading = useAppStore((s) => s.setLoading);
@@ -39,7 +39,7 @@ export function LoginPage() {
 
           <label>
             <span><Mail size={14} /> 邮箱</span>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="邮箱" />
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="请输入你的邮箱" />
           </label>
 
           <label>
@@ -48,7 +48,7 @@ export function LoginPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="密码"
+              placeholder="请输入你的密码"
             />
           </label>
 

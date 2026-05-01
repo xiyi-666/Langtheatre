@@ -21,6 +21,7 @@ apps/client/src-tauri/target/
 apps/client/src-tauri/gen/
 apps/server/tmp/
 apps/server/bin/
+apps/server/linguaquest.db
 *.log
 *.out
 *.coverprofile

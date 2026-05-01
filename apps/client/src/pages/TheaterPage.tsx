@@ -33,7 +33,7 @@ export function TheaterPage() {
   const [vocabDetail, setVocabDetail] = useState("");
   const touchStartXRef = useRef<number | null>(null);
   const touchStartTimeRef = useRef<number | null>(null);
-  const lastTapTimeRef = useRef<number>(0);
+  const suppressClickRef = useRef(false);
   const longPressTimerRef = useRef<number | null>(null);
   const hintTimerRef = useRef<number | null>(null);
   const navigate = useNavigate();
@@ -232,9 +232,12 @@ export function TheaterPage() {
     const endX = event.changedTouches[0]?.clientX ?? startX;
     const deltaX = endX - startX;
     const deltaTime = Date.now() - startTime;
-    const now = Date.now();
 
     if (Math.abs(deltaX) > 50 && deltaTime < 420) {
+      suppressClickRef.current = true;
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
       if (deltaX < 0) {
         setActiveIndex((value) => Math.min(value + 1, dialogueCount - 1));
         showHint("已切到下一句");
@@ -242,18 +245,16 @@ export function TheaterPage() {
         setActiveIndex((value) => Math.max(value - 1, 0));
         showHint("已切到上一句");
       }
-      lastTapTimeRef.current = 0;
       return;
     }
 
-    if (now - lastTapTimeRef.current < 320) {
-      setActiveIndex(index);
-      void playDialogue(index);
-      showHint("双击重播当前句");
-      lastTapTimeRef.current = 0;
-      return;
-    }
-    lastTapTimeRef.current = now;
+    suppressClickRef.current = true;
+    window.setTimeout(() => {
+      suppressClickRef.current = false;
+    }, 0);
+    setActiveIndex(index);
+    void playDialogue(index);
+    showHint("已播放当前句");
   }
 
   function startVocabLongPress(detail: string) {
@@ -312,14 +313,13 @@ export function TheaterPage() {
                   className={`${positionClass}${activeClass}`}
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  onClick={() => setActiveIndex(index)}
-                  onTouchStart={handleDialogueTouchStart}
-                  onTouchEnd={(event) => handleDialogueTouchEnd(event, index)}
-                  onDoubleClick={() => {
+                  onClick={() => {
+                    if (suppressClickRef.current) return;
                     setActiveIndex(index);
                     void playDialogue(index);
-                    showHint("双击重播当前句");
                   }}
+                  onTouchStart={handleDialogueTouchStart}
+                  onTouchEnd={(event) => handleDialogueTouchEnd(event, index)}
                 >
                   <strong>{dialogue.speaker}</strong>
                   {showSubtitle ? <p style={{ margin: "6px 0" }}>{dialogue.text}</p> : <p style={{ margin: "6px 0" }}>字幕已隐藏</p>}
