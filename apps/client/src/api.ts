@@ -1,6 +1,23 @@
 import type { ContentSource, Course, PracticeResult, ReadingMaterial, RoleplaySession, Theater, User } from "./types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "/graphql";
+function resolveApiUrl(): string {
+  const envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+  if (envUrl) {
+    return envUrl;
+  }
+
+  const hostname = window.location.hostname;
+  const isTauriRuntime = window.location.protocol === "tauri:" || hostname === "tauri.localhost" || hostname.endsWith(".localhost");
+
+  if (isTauriRuntime) {
+    // Android / macOS / Windows 统一走公网后端。
+    return "http://61.244.24.7/graphql";
+  }
+
+  return "/graphql";
+}
+
+const API_URL = resolveApiUrl();
 
 export function getApiBaseUrl(): string {
   try {
