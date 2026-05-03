@@ -10,8 +10,7 @@ function resolveApiUrl(): string {
   const isTauriRuntime = window.location.protocol === "tauri:" || hostname === "tauri.localhost" || hostname.endsWith(".localhost");
 
   if (isTauriRuntime) {
-    // Android / macOS / Windows 统一走公网后端。
-    return "http://61.244.24.7/graphql";
+    throw new Error("VITE_API_URL is required for Tauri runtime. Please set it in build environment.");
   }
 
   return "/graphql";
