@@ -51,6 +51,24 @@ func applySQLiteSchema(db *sql.DB) error {
             total_xp INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         )`,
+		`CREATE TABLE IF NOT EXISTS model_configs (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            provider TEXT NOT NULL DEFAULT 'OPENAI',
+            model TEXT NOT NULL DEFAULT 'gpt-5.4',
+            base_url TEXT NOT NULL DEFAULT 'http://43.172.5.210:3000/v1',
+            api_key TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL
+        )`,
+		`CREATE TABLE IF NOT EXISTS tts_configs (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            provider TEXT NOT NULL DEFAULT 'XIAOMI',
+            model TEXT NOT NULL DEFAULT 'mimo-v2.5-tts',
+            base_url TEXT NOT NULL DEFAULT 'https://token-plan-cn.xiaomimimo.com/v1',
+            api_key TEXT NOT NULL DEFAULT '',
+            voice TEXT NOT NULL DEFAULT 'mimo_default',
+            audio_format TEXT NOT NULL DEFAULT 'wav',
+            updated_at TEXT NOT NULL
+        )`,
 		`CREATE TABLE IF NOT EXISTS theaters (
             id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -168,6 +186,96 @@ func (s *SQLiteStore) UpdateUserProfile(userID string, nickname string, avatarUR
 		return domain.User{}, errors.New("user not found")
 	}
 	return s.GetUserByID(userID)
+}
+
+func (s *SQLiteStore) GetModelConfig() (domain.ModelConfig, error) {
+	row := s.db.QueryRow(`SELECT provider, model, base_url, api_key, updated_at FROM model_configs WHERE id = 1`)
+	var config domain.ModelConfig
+	var updatedAt string
+	if err := row.Scan(&config.Provider, &config.Model, &config.BaseURL, &config.APIKey, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ModelConfig{}, errors.New("model config not found")
+		}
+		return domain.ModelConfig{}, err
+	}
+	parsed, err := time.Parse(sqliteTimeLayout, updatedAt)
+	if err != nil {
+		return domain.ModelConfig{}, err
+	}
+	config.UpdatedAt = parsed
+	return config, nil
+}
+
+func (s *SQLiteStore) SaveModelConfig(config domain.ModelConfig) (domain.ModelConfig, error) {
+	if config.UpdatedAt.IsZero() {
+		config.UpdatedAt = time.Now().UTC()
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO model_configs (id, provider, model, base_url, api_key, updated_at)
+         VALUES (1, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+            provider = excluded.provider,
+            model = excluded.model,
+            base_url = excluded.base_url,
+            api_key = excluded.api_key,
+            updated_at = excluded.updated_at`,
+		config.Provider,
+		config.Model,
+		config.BaseURL,
+		config.APIKey,
+		config.UpdatedAt.Format(sqliteTimeLayout),
+	)
+	if err != nil {
+		return domain.ModelConfig{}, err
+	}
+	return config, nil
+}
+
+func (s *SQLiteStore) GetTTSConfig() (domain.TTSConfig, error) {
+	row := s.db.QueryRow(`SELECT provider, model, base_url, api_key, voice, audio_format, updated_at FROM tts_configs WHERE id = 1`)
+	var config domain.TTSConfig
+	var updatedAt string
+	if err := row.Scan(&config.Provider, &config.Model, &config.BaseURL, &config.APIKey, &config.Voice, &config.AudioFormat, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.TTSConfig{}, errors.New("tts config not found")
+		}
+		return domain.TTSConfig{}, err
+	}
+	parsed, err := time.Parse(sqliteTimeLayout, updatedAt)
+	if err != nil {
+		return domain.TTSConfig{}, err
+	}
+	config.UpdatedAt = parsed
+	return config, nil
+}
+
+func (s *SQLiteStore) SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, error) {
+	if config.UpdatedAt.IsZero() {
+		config.UpdatedAt = time.Now().UTC()
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO tts_configs (id, provider, model, base_url, api_key, voice, audio_format, updated_at)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+            provider = excluded.provider,
+            model = excluded.model,
+            base_url = excluded.base_url,
+            api_key = excluded.api_key,
+            voice = excluded.voice,
+            audio_format = excluded.audio_format,
+            updated_at = excluded.updated_at`,
+		config.Provider,
+		config.Model,
+		config.BaseURL,
+		config.APIKey,
+		config.Voice,
+		config.AudioFormat,
+		config.UpdatedAt.Format(sqliteTimeLayout),
+	)
+	if err != nil {
+		return domain.TTSConfig{}, err
+	}
+	return config, nil
 }
 
 func (s *SQLiteStore) GetUserByEmail(email string) (domain.User, error) {

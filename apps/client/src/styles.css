@@ -119,6 +119,7 @@ body {
 
 input,
 select,
+textarea,
 button {
   font: inherit;
   padding: 11px 13px;
@@ -217,10 +218,17 @@ button:hover,
   margin-bottom: 6px;
 }
 
-.auth-main label input {
+.auth-main label input,
+.auth-main label select,
+.auth-main label textarea {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+}
+
+.auth-main label textarea {
+  resize: vertical;
+  min-height: 110px;
 }
 
 .auth-side {
@@ -318,6 +326,74 @@ button:hover,
   align-items: center;
   gap: 4px;
   white-space: nowrap;
+}
+
+.provider-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.provider-option-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #e6d6c4;
+  background: #fffaf3;
+  color: inherit;
+  text-align: left;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.provider-option-card:hover {
+  border-color: #d7b78f;
+  box-shadow: 0 10px 22px rgba(123, 77, 32, 0.08);
+  transform: translateY(-1px);
+}
+
+.provider-option-card.active {
+  border-color: #c67c2e;
+  box-shadow: 0 0 0 2px rgba(198, 124, 46, 0.16);
+  background: linear-gradient(135deg, #fff9ef, #fff1dd);
+}
+
+.provider-option-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.provider-option-logo {
+  display: block;
+  width: auto;
+  max-width: 88px;
+  height: 24px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.provider-option-fallback {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #ffe3bc, #ffd09a);
+  color: #7a4b22;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.profile-provider-note {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #eadbc7;
+  background: linear-gradient(135deg, #fffaf4, #fff4e6);
 }
 
 .route-header {
@@ -590,6 +666,39 @@ button:hover,
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   padding: 14px;
+}
+
+.profile-section-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.section-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: #fff7f3;
+  color: var(--ink-700);
+  border: 1px dashed #d8b799;
+  box-shadow: none;
+  transform: none;
+}
+
+.section-toggle:hover {
+  transform: none;
+  box-shadow: none;
+  filter: none;
+}
+
+.profile-section-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .course-metrics-banner p {
@@ -1387,6 +1496,7 @@ button:hover,
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 .link-button:focus-visible {
   outline: 3px solid rgba(62, 163, 141, 0.42);
   outline-offset: 2px;
@@ -1622,7 +1732,8 @@ select:focus-visible,
   button,
   .link-button,
   input,
-  select {
+  select,
+  textarea {
     min-height: 48px;
   }
 

@@ -46,7 +46,7 @@ LinguaQuest 基于 Tauri 2 + React + TypeScript + Go 构建，面向英语与粤
 
 ## 📁 仓库结构
 
-- apps/client：Tauri 2 客户端（Windows/macOS/Android）
+- apps/client：Tauri 2 客户端（Windows/macOS/Linux/Android）
 - apps/server：Go GraphQL 服务端
 - infra：本地依赖与部署脚本
 - docs：技术与运维文档
@@ -59,22 +59,37 @@ LinguaQuest 基于 Tauri 2 + React + TypeScript + Go 构建，面向英语与粤
 常用配置（apps/server/.env）：
 
 ```
-PORT=8080
+PORT=8177
 JWT_SECRET=dev-secret-change-me
 REDIS_ADDR=localhost:6379
 SUPABASE_DB_URL=postgresql://postgres:YOUR_PASSWORD_URLENCODED@db.xxx.supabase.co:5432/postgres
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_BASE_URL=https://api.openai.com
-TTS_API_URL=
+OPENAI_MODEL=gpt-5.4
+OPENAI_BASE_URL=http://43.172.5.210:3000/v1
+TTS_PROVIDER=XIAOMI
+TTS_API_URL=https://token-plan-cn.xiaomimimo.com/v1
 TTS_API_KEY=
-TTS_VOICE=female-1
+TTS_VOICE=mimo_default
+TTS_MODEL=mimo-v2.5-tts
+TTS_AUDIO_FORMAT=wav
+```
+
+使用 XiaoMi MiMo TTS 时可切换为：
+
+```
+TTS_PROVIDER=XIAOMI
+TTS_API_URL=https://token-plan-cn.xiaomimimo.com/v1
+TTS_MODEL=mimo-v2.5-tts
+TTS_VOICE=Chloe
+TTS_AUDIO_FORMAT=wav
 ```
 
 前端环境变量示例：
 
 ```
-VITE_API_URL=http://localhost:8080/graphql
+本地开发：VITE_API_URL=http://localhost:8177/graphql
+桌面端 / Android 发布：VITE_API_URL=http://61.244.24.7/graphql
+Docker Web 部署：VITE_API_URL=/graphql
 ```
 
 ## 🚀 快速开始
@@ -115,8 +130,8 @@ npm run client:dev
 5) 健康检查
 
 ```
-GET http://localhost:8080/healthz
-GET http://localhost:8080/readyz
+GET http://localhost:8177/healthz
+GET http://localhost:8177/readyz
 ```
 
 ### 方案 B：桌面端（Tauri 2）

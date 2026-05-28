@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/linguaquest/server/internal/domain"
@@ -111,9 +112,102 @@ func (s *PostgresStore) UpdateUserProfile(userID string, nickname string, avatar
 	return user, nil
 }
 
+func (s *PostgresStore) GetModelConfig() (domain.ModelConfig, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	config := domain.ModelConfig{}
+	err := s.pool.QueryRow(
+		ctx,
+		`SELECT provider, model, base_url, api_key, updated_at
+		 FROM model_configs
+		 WHERE id = 1`,
+	).Scan(&config.Provider, &config.Model, &config.BaseURL, &config.APIKey, &config.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ModelConfig{}, errors.New("model config not found")
+	}
+	if err != nil {
+		return domain.ModelConfig{}, err
+	}
+	return config, nil
+}
+
+func (s *PostgresStore) SaveModelConfig(config domain.ModelConfig) (domain.ModelConfig, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if config.UpdatedAt.IsZero() {
+		config.UpdatedAt = time.Now().UTC()
+	}
+	err := s.pool.QueryRow(
+		ctx,
+		`INSERT INTO model_configs (id, provider, model, base_url, api_key, updated_at)
+		 VALUES (1, $1, $2, $3, $4, $5)
+		 ON CONFLICT(id) DO UPDATE SET
+		    provider = EXCLUDED.provider,
+		    model = EXCLUDED.model,
+		    base_url = EXCLUDED.base_url,
+		    api_key = EXCLUDED.api_key,
+		    updated_at = EXCLUDED.updated_at
+		 RETURNING provider, model, base_url, api_key, updated_at`,
+		config.Provider, config.Model, config.BaseURL, config.APIKey, config.UpdatedAt,
+	).Scan(&config.Provider, &config.Model, &config.BaseURL, &config.APIKey, &config.UpdatedAt)
+	if err != nil {
+		return domain.ModelConfig{}, err
+	}
+	return config, nil
+}
+
+func (s *PostgresStore) GetTTSConfig() (domain.TTSConfig, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	config := domain.TTSConfig{}
+	err := s.pool.QueryRow(
+		ctx,
+		`SELECT provider, model, base_url, api_key, voice, audio_format, updated_at
+		 FROM tts_configs
+		 WHERE id = 1`,
+	).Scan(&config.Provider, &config.Model, &config.BaseURL, &config.APIKey, &config.Voice, &config.AudioFormat, &config.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.TTSConfig{}, errors.New("tts config not found")
+	}
+	if err != nil {
+		return domain.TTSConfig{}, err
+	}
+	return config, nil
+}
+
+func (s *PostgresStore) SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if config.UpdatedAt.IsZero() {
+		config.UpdatedAt = time.Now().UTC()
+	}
+	err := s.pool.QueryRow(
+		ctx,
+		`INSERT INTO tts_configs (id, provider, model, base_url, api_key, voice, audio_format, updated_at)
+		 VALUES (1, $1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT(id) DO UPDATE SET
+		    provider = EXCLUDED.provider,
+		    model = EXCLUDED.model,
+		    base_url = EXCLUDED.base_url,
+		    api_key = EXCLUDED.api_key,
+		    voice = EXCLUDED.voice,
+		    audio_format = EXCLUDED.audio_format,
+		    updated_at = EXCLUDED.updated_at
+		 RETURNING provider, model, base_url, api_key, voice, audio_format, updated_at`,
+		config.Provider, config.Model, config.BaseURL, config.APIKey, config.Voice, config.AudioFormat, config.UpdatedAt,
+	).Scan(&config.Provider, &config.Model, &config.BaseURL, &config.APIKey, &config.Voice, &config.AudioFormat, &config.UpdatedAt)
+	if err != nil {
+		return domain.TTSConfig{}, err
+	}
+	return config, nil
+}
+
 func (s *PostgresStore) SaveTheater(theater domain.Theater) (domain.Theater, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if theater.ID == "" {
+		theater.ID = uuid.NewString()
+	}
 	dialoguesJSON, err := json.Marshal(theater.Dialogues)
 	if err != nil {
 		return domain.Theater{}, err
@@ -129,9 +223,22 @@ func (s *PostgresStore) SaveTheater(theater domain.Theater) (domain.Theater, err
 	err = s.pool.QueryRow(
 		ctx,
 		`INSERT INTO theaters (id, user_id, language, topic, difficulty, mode, status, scene_description, characters, dialogues, quiz_questions, is_favorite, share_code)
-		 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, false, '')
+		 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, $13)
+		 ON CONFLICT (id) DO UPDATE SET
+			user_id = EXCLUDED.user_id,
+			language = EXCLUDED.language,
+			topic = EXCLUDED.topic,
+			difficulty = EXCLUDED.difficulty,
+			mode = EXCLUDED.mode,
+			status = EXCLUDED.status,
+			scene_description = EXCLUDED.scene_description,
+			characters = EXCLUDED.characters,
+			dialogues = EXCLUDED.dialogues,
+			quiz_questions = EXCLUDED.quiz_questions,
+			is_favorite = EXCLUDED.is_favorite,
+			share_code = EXCLUDED.share_code
 		 RETURNING id::text, user_id::text, language, topic, difficulty, mode, status, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), COALESCE(characters, '[]'::jsonb), created_at`,
-		theater.ID, theater.UserID, theater.Language, theater.Topic, theater.Difficulty, theater.Mode, theater.Status, theater.SceneDescription, string(charactersJSON), string(dialoguesJSON), string(quizJSON),
+		theater.ID, theater.UserID, theater.Language, theater.Topic, theater.Difficulty, theater.Mode, theater.Status, theater.SceneDescription, string(charactersJSON), string(dialoguesJSON), string(quizJSON), theater.IsFavorite, theater.ShareCode,
 	).Scan(&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode, &theater.Status, &theater.IsFavorite, &theater.ShareCode, &theater.SceneDescription, &charactersJSON, &theater.CreatedAt)
 	if err != nil {
 		return domain.Theater{}, err

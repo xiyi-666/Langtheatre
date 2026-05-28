@@ -18,6 +18,8 @@ type MemoryStore struct {
 	theater  map[string]domain.Theater
 	readings map[string]domain.ReadingMaterial
 	sessions map[string]domain.RoleplaySession
+	model    domain.ModelConfig
+	tts      domain.TTSConfig
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -63,6 +65,38 @@ func (s *MemoryStore) UpdateUserProfile(userID string, nickname string, avatarUR
 	user.Bio = bio
 	s.users[userID] = user
 	return user, nil
+}
+
+func (s *MemoryStore) GetModelConfig() (domain.ModelConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.model.Model == "" && s.model.BaseURL == "" && s.model.APIKey == "" {
+		return domain.ModelConfig{}, errors.New("model config not found")
+	}
+	return s.model, nil
+}
+
+func (s *MemoryStore) SaveModelConfig(config domain.ModelConfig) (domain.ModelConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.model = config
+	return s.model, nil
+}
+
+func (s *MemoryStore) GetTTSConfig() (domain.TTSConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.tts.Provider == "" && s.tts.BaseURL == "" && s.tts.APIKey == "" {
+		return domain.TTSConfig{}, errors.New("tts config not found")
+	}
+	return s.tts, nil
+}
+
+func (s *MemoryStore) SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tts = config
+	return s.tts, nil
 }
 
 func (s *MemoryStore) GetUserByEmail(email string) (domain.User, error) {

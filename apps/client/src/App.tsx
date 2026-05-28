@@ -13,6 +13,7 @@ import { RoleplayPage } from "./pages/RoleplayPage";
 import { ReadingPage } from "./pages/ReadingPage";
 import { ReadingDetailPage } from "./pages/ReadingDetailPage";
 import { ReadingGeneratePage } from "./pages/ReadingGeneratePage";
+import { useAppStore } from "./store";
 
 function MobileBottomNav() {
   const location = useLocation();
@@ -147,6 +148,14 @@ function MobileBottomNav() {
 }
 
 export function App() {
+  const refreshUserXP = useAppStore((s) => s.refreshUserXP);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!localStorage.getItem("accessToken")) return;
+    void refreshUserXP();
+  }, [refreshUserXP]);
+
   return (
     <>
       <Routes>

@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Clapperboard, Compass, Languages, Sparkles } from "lucide-react";
-import { generateTheater } from "../api";
+import { generateTheater, getTheater } from "../api";
 import { useAppStore } from "../store";
 
 const GENERATION_STATUS_STEPS = [
@@ -28,10 +28,20 @@ const GENERATION_STATUS_STEPS = [
   }
 ] as const;
 
-const GENERATION_PROGRESS_TICK_MS = 320;
-const GENERATION_PROGRESS_STEP = 2;
-const GENERATION_STATUS_TICK_MS = 2200;
-const GENERATION_PROGRESS_CAP = 92;
+const GENERATION_PROGRESS_TICK_MS = 500;
+const GENERATION_PROGRESS_CAP = 94;
+const GENERATION_AVERAGE_DURATION_MS = 70000;
+const GENERATION_STATUS_MILESTONES = [0, 0.18, 0.48, 0.82] as const;
+const THEATER_STATUS_POLL_MS = 1500;
+
+function resolveGenerationStatusIndex(progressRatio: number): number {
+  for (let index = GENERATION_STATUS_MILESTONES.length - 1; index >= 0; index -= 1) {
+    if (progressRatio >= GENERATION_STATUS_MILESTONES[index]) {
+      return index;
+    }
+  }
+  return 0;
+}
 
 const routeMap = {
   CANTONESE: {
@@ -101,6 +111,8 @@ export function GeneratePage() {
   const [mode, setMode] = useState<"LISTENING" | "ROLEPLAY" | "APPRECIATION">("LISTENING");
   const [progress, setProgress] = useState(0);
   const [statusIndex, setStatusIndex] = useState(0);
+  const [pendingTheaterId, setPendingTheaterId] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState("");
   const loading = useAppStore((s) => s.loading);
   const setLoading = useAppStore((s) => s.setLoading);
   const setTheater = useAppStore((s) => s.setTheater);
@@ -119,32 +131,95 @@ export function GeneratePage() {
       setStatusIndex(0);
       return;
     }
+    const startedAt = Date.now();
     const timer = window.setInterval(() => {
-      setProgress((value) => (value >= GENERATION_PROGRESS_CAP ? value : value + GENERATION_PROGRESS_STEP));
+      const elapsedMs = Date.now() - startedAt;
+      const progressRatio = Math.min(elapsedMs / GENERATION_AVERAGE_DURATION_MS, 1);
+      const easedRatio = 1 - Math.pow(1 - progressRatio, 1.15);
+      const nextProgress = Math.min(GENERATION_PROGRESS_CAP, Math.round(easedRatio * GENERATION_PROGRESS_CAP));
+      setProgress((value) => (nextProgress > value ? nextProgress : value));
+      setStatusIndex((value) => Math.max(value, resolveGenerationStatusIndex(progressRatio)));
     }, GENERATION_PROGRESS_TICK_MS);
-
-    const statusTimer = window.setInterval(() => {
-      setStatusIndex((prev) => Math.min(prev + 1, GENERATION_STATUS_STEPS.length - 1));
-    }, GENERATION_STATUS_TICK_MS);
 
     return () => {
       window.clearInterval(timer);
-      window.clearInterval(statusTimer);
     };
   }, [loading]);
 
+  useEffect(() => {
+    if (!pendingTheaterId) {
+      return;
+    }
+    const theaterID = pendingTheaterId;
+    let cancelled = false;
+
+    async function pollGeneratedTheater() {
+      try {
+        while (!cancelled) {
+          const theater = await getTheater(theaterID);
+          if (cancelled) {
+            return;
+          }
+          setTheater(theater);
+          if (theater.status === "READY") {
+            setStatusIndex(GENERATION_STATUS_STEPS.length - 1);
+            setProgress(100);
+            setPendingTheaterId(null);
+            setLoading(false);
+            navigate(`/theater/${theater.id}`);
+            return;
+          }
+          if (theater.status === "FAILED") {
+            setPendingTheaterId(null);
+            setLoading(false);
+            setGenerationError("剧场生成失败，请稍后重试。");
+            return;
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, THEATER_STATUS_POLL_MS));
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        console.error("poll theater status failed", error);
+        setPendingTheaterId(null);
+        setLoading(false);
+        setGenerationError("剧场状态查询失败，请稍后重试。");
+      }
+    }
+
+    void pollGeneratedTheater();
+
+    return () => {
+      cancelled = true;
+      setLoading(false);
+    };
+  }, [navigate, pendingTheaterId, setLoading, setTheater]);
+
   async function handleGenerate(event: FormEvent) {
     event.preventDefault();
+    setGenerationError("");
+    setPendingTheaterId(null);
     setStatusIndex(0);
     setLoading(true);
     try {
       const theater = await generateTheater({ language, topic, difficulty, mode });
-      setProgress(100);
       setTheater(theater);
-      navigate(`/theater/${theater.id}`);
+      if (theater.status === "READY") {
+        setProgress(100);
+        setLoading(false);
+        navigate(`/theater/${theater.id}`);
+        return;
+      }
+      if (theater.status === "FAILED") {
+        setLoading(false);
+        setGenerationError("剧场生成失败，请稍后重试。");
+        return;
+      }
+      setPendingTheaterId(theater.id);
     } catch (e) {
       console.error("generate theater failed", e);
-    } finally {
+      setGenerationError("剧场创建失败，请稍后重试。");
       setLoading(false);
     }
   }
@@ -240,6 +315,7 @@ export function GeneratePage() {
             <button type="button" className="btn-ghost" onClick={() => navigate("/library")}>进入剧场库</button>
             <button type="button" className="btn-ghost" onClick={() => navigate("/courses")}>课程中心</button>
           </div>
+          {generationError ? <p style={{ marginTop: 12, color: "#a6422b" }}>{generationError}</p> : null}
         </form>
 
         <aside className="floating-panel">
@@ -277,7 +353,7 @@ export function GeneratePage() {
             <p key={`hint-${loading ? statusIndex : "idle"}`} className="status-dynamic-hint">
               {loading ? GENERATION_STATUS_STEPS[statusIndex]?.hint : "点击“开始生成剧场”后，将按阶段依次生成并自动推进。"}
             </p>
-            <small className="status-soft-note">生成完成后可在剧场中心查看</small>
+            <small className="status-soft-note">剧场会先异步生成，待语音完成后自动进入详情页</small>
           </div>
         </aside>
       </motion.section>

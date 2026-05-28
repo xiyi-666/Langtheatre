@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { BookOpenText, ScrollText } from "lucide-react";
 import { readingMaterials } from "../api";
 import { useAppStore } from "../store";
+import { calculateStageProgress, getStageRequirement } from "../xp";
 
 type ExamType = "IELTS" | "CET";
 
@@ -39,6 +40,8 @@ export function ReadingPage() {
   }, [exam]);
 
   const stages = useMemo(() => readingStages[exam], [exam]);
+  const totalXP = user?.totalXP ?? 0;
+  const stageProgress = useMemo(() => calculateStageProgress(totalXP, stages.length), [stages.length, totalXP]);
 
   return (
     <main className="page">
@@ -59,20 +62,21 @@ export function ReadingPage() {
         </div>
 
         <article className="stage-banner" style={{ marginTop: 10 }}>
-          <strong>经验口径说明</strong>
-          <p>阅读训练提交后会写入统一 XP 体系，个人中心总经验为唯一口径。</p>
-          <p>当前总经验：{user?.totalXP ?? 0}</p>
+          <strong>统一 XP 说明</strong>
+          <p>阅读训练获得的 XP 会直接累加到个人中心总 XP，阅读阶段也按同一套 XP 规则解锁。</p>
+          <p>当前总经验：{totalXP} · 当前解锁至 Stage {stageProgress.stageIndex + 1}</p>
         </article>
 
         <div className="route-grid" style={{ marginTop: 12 }}>
           {stages.map((stage, index) => (
-            <article key={stage.stage} className="route-point">
+            <article key={stage.stage} className="route-point" style={index <= stageProgress.stageIndex ? undefined : { opacity: 0.55 }}>
               <strong>{stage.stage}</strong>
-              <small>{exam} 阅读训练</small>
+              <small>{exam} 阅读训练 · {index <= stageProgress.stageIndex ? "已解锁" : `需 ${getStageRequirement(index, stages.length)} XP`}</small>
               <p style={{ marginTop: 8 }}>{stage.themes.join(" / ")}</p>
               <button
                 type="button"
                 className="btn-ghost"
+                disabled={index > stageProgress.stageIndex}
                 onClick={() => navigate(`/reading/generate/${exam}/${index}?topic=${encodeURIComponent(stage.themes[0])}`)}
               >
                 <BookOpenText size={14} /> 进入本阶段并生成

@@ -10,25 +10,6 @@ on:
       - "v*"
 
 jobs:
-  web:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      VITE_API_URL: /graphql
-      VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - run: npm install
-      - run: npm run build --workspace apps/client
-      - uses: actions/upload-artifact@v4
-        with:
-          name: web-dist
-          path: apps/client/dist
-
   desktop:
     runs-on: ${{ matrix.os }}
     permissions:
@@ -36,134 +17,203 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            artifact_name: tauri-linux
+          - os: windows-latest
+            platform: windows
+            artifact_name: tauri-windows
+          - os: macos-latest
+            platform: macos
+            artifact_name: tauri-macos
     env:
-      VITE_API_URL: ${{ secrets.VITE_API_URL_PROD }}
+      VITE_API_URL: http://61.244.24.7/graphql
       VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - uses: dtolnay/rust-toolchain@stable
-      - run: npm install
-      - name: Validate Tauri icon source
-        shell: bash
-        run: |
-          test -f apps/client/src-tauri/icons/app-icon.svg || (echo "Missing apps/client/src-tauri/icons/app-icon.svg" && exit 1)
+          cache: npm
+          cache-dependency-path: package-lock.json
 
-      - name: Generate Tauri icons (CI)
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Tauri icons
         working-directory: apps/client
         run: npx tauri icon src-tauri/icons/app-icon.svg
 
-      - name: Validate generated platform icons
-        shell: bash
-        run: |
-          test -f apps/client/src-tauri/icons/icon.ico || (echo "Missing generated Windows icon: apps/client/src-tauri/icons/icon.ico" && exit 1)
-          test -f apps/client/src-tauri/icons/icon.icns || (echo "Missing generated macOS icon: apps/client/src-tauri/icons/icon.icns" && exit 1)
+      - name: Build Linux bundle
+        if: matrix.platform == 'linux'
+        working-directory: apps/client
+        run: npx tauri build --bundles appimage,deb
 
-      - name: Build Tauri desktop app (Windows NSIS only)
-        if: matrix.os == 'windows-latest'
+      - name: Build Windows bundle
+        if: matrix.platform == 'windows'
         working-directory: apps/client
         run: npx tauri build --bundles nsis
 
-      - name: Build Tauri desktop app (Non-Windows)
-        if: matrix.os != 'windows-latest'
+      - name: Build macOS bundle
+        if: matrix.platform == 'macos'
         run: npm run tauri:build --workspace apps/client
-      - uses: actions/upload-artifact@v4
+
+      - name: Upload desktop bundles
+        uses: actions/upload-artifact@v4
         with:
-          name: tauri-${{ matrix.os }}
+          name: ${{ matrix.artifact_name }}
           path: apps/client/src-tauri/target/release/bundle/**
+          if-no-files-found: error
 
   android:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     env:
-      VITE_API_URL: ${{ secrets.VITE_API_URL_PROD }}
+      VITE_API_URL: http://61.244.24.7/graphql
       VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - uses: actions/setup-java@v4
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Rust with Android targets
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi
-      - run: npm install
 
-      - name: Validate Tauri icon source
-        shell: bash
-        run: |
-          test -f apps/client/src-tauri/icons/app-icon.svg || (echo "Missing apps/client/src-tauri/icons/app-icon.svg" && exit 1)
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Generate Tauri icons (CI)
+      - name: Generate Tauri icons
         working-directory: apps/client
         run: npx tauri icon src-tauri/icons/app-icon.svg
 
-      - name: Validate generated common icon
-        shell: bash
-        run: |
-          test -f apps/client/src-tauri/icons/icon.png || (echo "Missing generated icon: apps/client/src-tauri/icons/icon.png" && exit 1)
-
-      - name: Init Android project (CI)
+      - name: Init Android project
+        working-directory: apps/client
         run: npx tauri android init --ci
-        working-directory: apps/client
 
-      - name: Build Android app (release if keystore configured, else debug)
+      - name: Configure Android release signing
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEY_PASSWORD != '' }}
         shell: bash
         working-directory: apps/client
         run: |
-          set -e
-          MODE="--debug"
+          set -euo pipefail
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          cat > src-tauri/gen/android/keystore.properties <<EOF
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          storeFile=$RUNNER_TEMP/release.keystore
+          EOF
 
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("src-tauri/gen/android/app/build.gradle.kts")
+          text = path.read_text()
+
+          if "import java.io.FileInputStream" not in text:
+              text = "import java.io.FileInputStream\nimport java.util.Properties\n\n" + text
+
+          signing_block = """signingConfigs {
+              create("release") {
+                  val keystorePropertiesFile = rootProject.file("keystore.properties")
+                  val keystoreProperties = Properties()
+                  if (keystorePropertiesFile.exists()) {
+                      keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+                  }
+
+                  keyAlias = keystoreProperties["keyAlias"] as String
+                  keyPassword = keystoreProperties["keyPassword"] as String
+                  storeFile = file(keystoreProperties["storeFile"] as String)
+                  storePassword = keystoreProperties["storePassword"] as String
+              }
+          }
+
+          """
+
+          if 'create("release")' not in text:
+              text = text.replace("buildTypes {", signing_block + "buildTypes {", 1)
+
+          release_block = """getByName("release") {
+                      signingConfig = signingConfigs.getByName("release")"""
+
+          if 'signingConfig = signingConfigs.getByName("release")' not in text:
+              text = text.replace('getByName("release") {', release_block, 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Build Android package
+        shell: bash
+        working-directory: apps/client
+        run: |
+          set -euo pipefail
+          MODE="--debug"
           if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > src-tauri/gen/android/release.keystore
-            export TAURI_ANDROID_KEYSTORE_PATH="src-tauri/gen/android/release.keystore"
-            export TAURI_ANDROID_KEYSTORE_PASSWORD="$ANDROID_KEYSTORE_PASSWORD"
-            export TAURI_ANDROID_KEY_ALIAS="$ANDROID_KEY_ALIAS"
-            export TAURI_ANDROID_KEY_PASSWORD="$ANDROID_KEY_PASSWORD"
             MODE=""
-            echo "Keystore detected: using release build."
-          else
-            echo "Keystore secrets not fully configured: using debug build to keep CI green."
           fi
 
-          for i in 1 2 3; do
-            echo "Android build attempt $i/3 (mode: ${MODE:---release})"
-            if npx tauri android build $MODE; then
-              exit 0
-            fi
-            if [ "$i" -lt 3 ]; then
-              echo "Build failed. Retrying in 20s..."
-              sleep 20
-            fi
-          done
-          echo "Android build failed after 3 attempts."
-          exit 1
+          npx tauri android build --apk $MODE
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: android-apk
+          name: tauri-android
           path: apps/client/src-tauri/gen/android/app/build/outputs/**/*.apk
+          if-no-files-found: error
 
   docker-images:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -175,7 +225,7 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-server
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=sha,format=short,prefix=sha-
             type=ref,event=tag
 
       - name: Build and push server image
@@ -194,7 +244,7 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-client
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=sha,format=short,prefix=sha-
             type=ref,event=tag
 
       - name: Build and push client image
@@ -203,62 +253,66 @@ jobs:
           context: ./apps/client
           file: ./apps/client/Dockerfile
           push: true
+          build-args: |
+            VITE_API_URL=/graphql
+            VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
           tags: ${{ steps.meta-client.outputs.tags }}
           labels: ${{ steps.meta-client.outputs.labels }}
 
   release:
     runs-on: ubuntu-latest
-    needs: [web, desktop, android]
+    needs: [desktop, android, docker-images]
+    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:
       - name: Delete existing release (if any)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete "$GITHUB_REF_NAME" -y || true
+        run: gh release delete "$GITHUB_REF_NAME" -y || true
 
-      - name: Download web dist
+      - name: Download Linux bundle
         uses: actions/download-artifact@v4
         with:
-          name: web-dist
-          path: release-assets/web-dist
+          name: tauri-linux
+          path: release-assets/tauri-linux
 
-      - name: Download desktop bundles (Windows)
+      - name: Download Windows bundle
         uses: actions/download-artifact@v4
         with:
-          name: tauri-windows-latest
+          name: tauri-windows
           path: release-assets/tauri-windows
 
-      - name: Download desktop bundles (macOS)
+      - name: Download macOS bundle
         uses: actions/download-artifact@v4
         with:
-          name: tauri-macos-latest
+          name: tauri-macos
           path: release-assets/tauri-macos
 
-      - name: Download Android APK
+      - name: Download Android package
         uses: actions/download-artifact@v4
         with:
-          name: android-apk
+          name: tauri-android
           path: release-assets/android
 
-      - name: Prepare release asset names
+      - name: Prepare release assets
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
           TAG_NAME="${GITHUB_REF_NAME}"
-          APK_PATH=$(find release-assets/android -type f -name "*.apk" | head -n 1)
-          if [ -n "$APK_PATH" ]; then
-            mv "$APK_PATH" "release-assets/LinguaQuest-android-${TAG_NAME}.apk"
-          fi
-
           mkdir -p release-assets/filtered
 
+          find release-assets/tauri-linux -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" \) -print0 \
+            | xargs -0 -r -I {} cp "{}" release-assets/filtered/
+
           find release-assets/tauri-windows -type f \( -name "*setup*.exe" -o -name "*.msi" \) -print0 \
-            | xargs -0 -I {} cp "{}" "release-assets/filtered/"
+            | xargs -0 -r -I {} cp "{}" release-assets/filtered/
 
           find release-assets/tauri-macos -type f \( -name "*.dmg" -o -name "*.app.tar.gz" -o -name "*.app.zip" \) -print0 \
-            | xargs -0 -I {} cp "{}" "release-assets/filtered/"
+            | xargs -0 -r -I {} cp "{}" release-assets/filtered/
+
+          find release-assets/android -type f -name "*.apk" -print0 \
+            | xargs -0 -r -I {} cp "{}" "release-assets/filtered/LinguaQuest-android-${TAG_NAME}.apk"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -267,10 +321,13 @@ jobs:
           body: |
             Release: ${GITHUB_REF_NAME}
 
+            Default API endpoint:
+            - http://61.244.24.7/graphql
+
             Assets:
-            - LinguaQuest-android-${GITHUB_REF_NAME}.apk
-            - Windows setup (.exe)
-            - macOS dmg / app archive
+            - Linux (.AppImage / .deb)
+            - Windows setup (.exe / .msi)
+            - macOS (.dmg / app archive)
+            - Android (.apk)
           files: |
-            release-assets/LinguaQuest-android-${GITHUB_REF_NAME}.apk
             release-assets/filtered/**

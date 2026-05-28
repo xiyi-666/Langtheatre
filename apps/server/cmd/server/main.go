@@ -70,16 +70,27 @@ func main() {
 	}()
 	redisClient := cache.New(cfg.RedisAddr)
 	generator := ai.NewOpenAIGenerator(cfg.OpenAIAPIKey, cfg.OpenAIModel, cfg.OpenAIBaseURL)
+	if savedModelConfig, err := dataStore.GetModelConfig(); err == nil {
+		generator.UpdateModelConfig(savedModelConfig)
+		log.Printf("loaded persisted model config provider=%s model=%s", savedModelConfig.Provider, savedModelConfig.Model)
+	}
 	tts := ai.NewAPITTS(
+		cfg.TTSProvider,
 		cfg.TTSAPIURL,
 		cfg.TTSAPIKey,
 		cfg.TTSVoice,
+		cfg.TTSModel,
+		cfg.TTSAudioFormat,
 		cfg.TTSUseUploadPrompt,
 		cfg.TTSPromptAudioPath,
 		cfg.TTSReturnJSON,
 		cfg.TTSTimeoutSeconds,
 		cfg.TTSMaxRetries,
 	)
+	if savedTTSConfig, err := dataStore.GetTTSConfig(); err == nil {
+		tts.UpdateTTSConfig(savedTTSConfig)
+		log.Printf("loaded persisted tts config provider=%s model=%s voice=%s", savedTTSConfig.Provider, savedTTSConfig.Model, savedTTSConfig.Voice)
+	}
 	svc := service.New(dataStore, redisClient, generator, tts, cfg.JWTSecret)
 	schema, err := graph.NewSchema(svc)
 	if err != nil {

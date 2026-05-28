@@ -18,6 +18,8 @@ import { getSharedTheater, getTheater, toggleFavorite } from "../api";
 import { playClip } from "../audio";
 import { useAppStore } from "../store";
 
+const THEATER_STATUS_POLL_MS = 1500;
+
 export function TheaterPage() {
   const { id = "", shareCode = "" } = useParams();
   const isSharedView = shareCode.trim() !== "";
@@ -53,6 +55,42 @@ export function TheaterPage() {
       setFavorite(Boolean(theater.isFavorite));
     }
   }, [id, setTheater, shareCode, theater]);
+
+  useEffect(() => {
+    if (isSharedView || !theater || theater.id !== id || theater.status !== "GENERATING") {
+      return;
+    }
+    const theaterID = theater.id;
+    let cancelled = false;
+
+    async function pollTheaterStatus() {
+      while (!cancelled) {
+        try {
+          await new Promise((resolve) => window.setTimeout(resolve, THEATER_STATUS_POLL_MS));
+          const current = await getTheater(theaterID);
+          if (cancelled) {
+            return;
+          }
+          setTheater(current);
+          setFavorite(Boolean(current.isFavorite));
+          if (current.status !== "GENERATING") {
+            return;
+          }
+        } catch (error) {
+          if (!cancelled) {
+            console.error("poll theater page status failed", error);
+          }
+          return;
+        }
+      }
+    }
+
+    void pollTheaterStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, isSharedView, setTheater, theater]);
 
   useEffect(() => {
     return () => {
@@ -275,6 +313,28 @@ export function TheaterPage() {
 
   if (!theater) {
     return <main className="page-center">加载剧场中...</main>;
+  }
+
+  if (theater.status === "GENERATING") {
+    return (
+      <main className="page-center">
+        <section className="card" style={{ maxWidth: 560 }}>
+          <h2 style={{ marginBottom: 8 }}>剧场生成中</h2>
+          <p style={{ margin: 0 }}>文字内容已经准备完成，正在等待语音合成。完成后当前页面会自动刷新。</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (theater.status === "FAILED") {
+    return (
+      <main className="page-center">
+        <section className="card" style={{ maxWidth: 560 }}>
+          <h2 style={{ marginBottom: 8 }}>剧场生成失败</h2>
+          <p style={{ margin: 0 }}>这条剧场记录没有完成语音生成，请返回生成页重新创建。</p>
+        </section>
+      </main>
+    );
   }
 
   return (

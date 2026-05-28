@@ -13,6 +13,8 @@ Endpoint: `POST /graphql`
 - `refresh(accessToken) -> { accessToken }`
 - `logout() -> Boolean`
 - `updateProfile(nickname, avatarUrl, bio) -> User`
+- `updateModelConfig(model, baseURL, apiKey, clearApiKey) -> ModelConfig`
+- `updateTTSConfig(provider, model, baseURL, voice, apiKey, clearApiKey) -> TTSConfig`
 - `generateTheater(input) -> Theater`
 - `submitAnswers(theaterId, answers) -> PracticeResult`
 - `toggleFavorite(theaterId, favorite) -> Boolean`
@@ -24,6 +26,8 @@ Endpoint: `POST /graphql`
 ## Queries
 
 - `me -> User`
+- `modelConfig -> ModelConfig`
+- `ttsConfig -> TTSConfig`
 - `theater(id) -> Theater`
 - `myTheaters(language, status, favorite) -> [Theater]`
 - `courses(language) -> [Course]`

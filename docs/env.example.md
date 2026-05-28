@@ -2,19 +2,22 @@
 
 ## 后端 (`apps/server`)
 
-- `PORT=8080`
+- `PORT=8177`
 - `JWT_SECRET=replace-with-production-secret`
 - `REDIS_ADDR=localhost:6379`
 - `SUPABASE_DB_URL=postgresql://postgres:YOUR_PASSWORD_URLENCODED@db.jctsgtqtwuwbxyrxgwgy.supabase.co:5432/postgres`
 - `DATABASE_URL=postgresql://postgres:YOUR_PASSWORD_URLENCODED@db.jctsgtqtwuwbxyrxgwgy.supabase.co:5432/postgres`（可选）
 - `RABBITMQ_URL=amqp://guest:guest@localhost:5672/`
 - `OPENAI_API_KEY=`
-- `OPENAI_MODEL=gpt-4o-mini`
-- `OPENAI_BASE_URL=https://api.openai.com`（可替换为你自己的网关）
-- `TTS_API_URL=`
+- `OPENAI_MODEL=gpt-5.4`
+- `OPENAI_BASE_URL=http://43.172.5.210:3000/v1`（可替换为你自己的网关）
+- `TTS_PROVIDER=XIAOMI`（可选：`CUSTOM` / `XIAOMI`）
+- `TTS_API_URL=https://token-plan-cn.xiaomimimo.com/v1`
 - `TTS_API_KEY=`
-- `TTS_VOICE=female-1`
-- `TTS_TIMEOUT_SECONDS=45`
+- `TTS_VOICE=mimo_default`（也可切换为 `冰糖` / `Chloe` 等官方音色）
+- `TTS_MODEL=mimo-v2.5-tts`
+- `TTS_AUDIO_FORMAT=wav`
+- `TTS_TIMEOUT_SECONDS=300`
 - `TTS_MAX_RETRIES=1`
 - `R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`
 - `R2_ACCESS_KEY=xxx`
@@ -26,5 +29,7 @@
 
 ## 前端 (`apps/client`)
 
-- `VITE_API_URL=http://localhost:8080/graphql`
+- 本地开发：`VITE_API_URL=http://localhost:8177/graphql`
+- 桌面端 / Android 发布：`VITE_API_URL=http://61.244.24.7/graphql`
+- Docker Web 部署：`VITE_API_URL=/graphql`
 - `VITE_SENTRY_DSN=xxx`

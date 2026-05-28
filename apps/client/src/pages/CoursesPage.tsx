@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { Compass, Route, Scale, Sparkles } from "lucide-react";
 import { courses } from "../api";
 import { useAppStore } from "../store";
+import { calculateStageProgress } from "../xp";
 
 const stageModules = {
   CANTONESE: [
@@ -68,8 +69,6 @@ const stageModules = {
   ]
 } as const;
 
-const stageThresholds = [0, 120, 280, 480, 720, 980, 1280, 1680];
-
 export function CoursesPage() {
   const [language, setLanguage] = useState<"CANTONESE" | "ENGLISH">("CANTONESE");
   const list = useAppStore((s) => s.courses);
@@ -79,57 +78,31 @@ export function CoursesPage() {
   const roleplay = useAppStore((s) => s.roleplay);
   const setCourses = useAppStore((s) => s.setCourses);
   const navigate = useNavigate();
+  const totalXP = user?.totalXP ?? 0;
 
-  const learningProgress = useMemo(() => {
+  const stageProgress = useMemo(
+    () => calculateStageProgress(totalXP, stageModules[language].length),
+    [language, totalXP]
+  );
+
+  const learningStats = useMemo(() => {
     const completedCourses = list.filter((item) => item.isActive).length;
     const practiceCount = theaters.filter((item) => item.language === language).length + (roleplay ? roleplay.turnIndex + 1 : 0);
     const accuracy = latestResult && latestResult.totalCount > 0
       ? latestResult.correctCount / latestResult.totalCount
       : Math.min(1, Math.max(0, (roleplay?.currentScore ?? 0) / 100));
 
-    const courseXP = completedCourses * 70;
-    const practiceXP = practiceCount * 15;
-    const accuracyXP = Math.round(accuracy * 400);
-    const totalXP = user?.totalXP ?? 0;
-    const learningIndex = courseXP + practiceXP + accuracyXP;
-    const stageXP = totalXP;
-
-    let stageIndex = stageThresholds.length - 1;
-    for (let i = 0; i < stageThresholds.length - 1; i += 1) {
-      if (stageXP >= stageThresholds[i] && stageXP < stageThresholds[i + 1]) {
-        stageIndex = i;
-        break;
-      }
-    }
-
-    const currentStart = stageThresholds[stageIndex];
-    const nextTarget = stageThresholds[Math.min(stageIndex + 1, stageThresholds.length - 1)];
-    const denominator = Math.max(1, nextTarget - currentStart);
-    const currentPercent = Math.min(100, Math.max(0, Math.round(((stageXP - currentStart) / denominator) * 100)));
-    const totalProgressPercent = Math.min(100, Math.max(0, Math.round((totalXP / stageThresholds[stageThresholds.length - 1]) * 100)));
-    const nextLevelRemaining = Math.max(0, nextTarget - stageXP);
     const courseCompletionPercent = list.length > 0 ? Math.min(100, Math.round((completedCourses / list.length) * 100)) : 0;
     const practiceProgressPercent = Math.min(100, practiceCount * 10);
-    const learningIndexPercent = Math.min(100, Math.round((learningIndex / 1200) * 100));
 
     return {
       completedCourses,
       practiceCount,
       accuracy,
-      learningIndex,
-      totalXP,
-      stageXP,
-      stageIndex,
-      currentPercent,
-      currentStart,
-      nextTarget,
-      nextLevelRemaining,
-      totalProgressPercent,
       courseCompletionPercent,
-      practiceProgressPercent,
-      learningIndexPercent
+      practiceProgressPercent
     };
-  }, [language, list, theaters, roleplay, latestResult, user]);
+  }, [language, list, theaters, roleplay, latestResult]);
 
   useEffect(() => {
     void (async () => {
@@ -154,26 +127,26 @@ export function CoursesPage() {
 
             <div className="course-xp-panel">
               <div className="course-xp-headline">
-                <strong>Lv.{learningProgress.stageIndex + 1}</strong>
-                <small>总经验 {learningProgress.totalXP}</small>
+                <strong>Lv.{stageProgress.stageIndex + 1}</strong>
+                <small>总经验 {stageProgress.totalXP}</small>
               </div>
               <div className="course-progress-duo" aria-hidden>
                 <div>
                   <span>当前等级进度</span>
                   <div className="mini-progress">
-                    <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.currentPercent}%` }} transition={{ duration: 0.7, ease: "easeOut" }} />
+                    <motion.span initial={{ width: 0 }} animate={{ width: `${stageProgress.currentPercent}%` }} transition={{ duration: 0.7, ease: "easeOut" }} />
                   </div>
                 </div>
                 <div>
                   <span>总经验里程</span>
                   <div className="mini-progress">
-                    <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.totalProgressPercent}%` }} transition={{ duration: 0.9, ease: "easeOut" }} />
+                    <motion.span initial={{ width: 0 }} animate={{ width: `${stageProgress.totalProgressPercent}%` }} transition={{ duration: 0.9, ease: "easeOut" }} />
                   </div>
                 </div>
               </div>
               <div className="course-xp-foot">
-                <small>当前阶段：{learningProgress.currentPercent}%</small>
-                <small>{learningProgress.stageIndex < stageModules[language].length ? `距下一阶段 ${learningProgress.nextLevelRemaining} XP` : "已达最高阶段"}</small>
+                <small>当前阶段：{stageProgress.currentPercent}%</small>
+                <small>{stageProgress.stageIndex < stageModules[language].length - 1 ? `距下一阶段 ${stageProgress.nextLevelRemaining} XP` : "已达最高阶段"}</small>
               </div>
             </div>
           </div>
@@ -185,8 +158,8 @@ export function CoursesPage() {
 
         <div className="route-grid" style={{ marginBottom: 12 }}>
           {stageModules[language].map((stage, stageIndex) => {
-            const unlocked = stageIndex <= learningProgress.stageIndex;
-            const progress = stageIndex < learningProgress.stageIndex ? 100 : stageIndex === learningProgress.stageIndex ? learningProgress.currentPercent : 0;
+            const unlocked = stageIndex <= stageProgress.stageIndex;
+            const progress = stageIndex < stageProgress.stageIndex ? 100 : stageIndex === stageProgress.stageIndex ? stageProgress.currentPercent : 0;
             return (
               <article key={stage.stage} className="route-point" style={unlocked ? undefined : { opacity: 0.55 }}>
                 <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
@@ -225,35 +198,35 @@ export function CoursesPage() {
         </div>
 
         <article className="stage-banner course-metrics-banner" style={{ marginBottom: 12 }}>
-          <strong>学习指标说明</strong>
-          <p style={{ margin: "6px 0 0" }}>学习指标用于阶段推荐，不替代总经验；总经验统一以个人中心为准。</p>
+          <strong>统一 XP 说明</strong>
+          <p style={{ margin: "6px 0 0" }}>课程阶段解锁与个人中心总 XP 共用同一套规则。下方统计仅用于学习反馈，不会额外生成第二套经验。</p>
           <div className="course-metrics-grid">
             <div className="course-metric-card">
               <small>课程完成</small>
-              <strong>{learningProgress.completedCourses}</strong>
+              <strong>{learningStats.completedCourses}</strong>
               <div className="mini-progress" aria-hidden>
-                <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.courseCompletionPercent}%` }} transition={{ duration: 0.6, ease: "easeOut" }} />
+                <motion.span initial={{ width: 0 }} animate={{ width: `${learningStats.courseCompletionPercent}%` }} transition={{ duration: 0.6, ease: "easeOut" }} />
               </div>
             </div>
             <div className="course-metric-card">
               <small>练习次数</small>
-              <strong>{learningProgress.practiceCount}</strong>
+              <strong>{learningStats.practiceCount}</strong>
               <div className="mini-progress" aria-hidden>
-                <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.practiceProgressPercent}%` }} transition={{ duration: 0.7, ease: "easeOut" }} />
+                <motion.span initial={{ width: 0 }} animate={{ width: `${learningStats.practiceProgressPercent}%` }} transition={{ duration: 0.7, ease: "easeOut" }} />
               </div>
             </div>
             <div className="course-metric-card">
               <small>正确率</small>
-              <strong>{(learningProgress.accuracy * 100).toFixed(0)}%</strong>
+              <strong>{(learningStats.accuracy * 100).toFixed(0)}%</strong>
               <div className="mini-progress" aria-hidden>
-                <motion.span initial={{ width: 0 }} animate={{ width: `${Math.round(learningProgress.accuracy * 100)}%` }} transition={{ duration: 0.8, ease: "easeOut" }} />
+                <motion.span initial={{ width: 0 }} animate={{ width: `${Math.round(learningStats.accuracy * 100)}%` }} transition={{ duration: 0.8, ease: "easeOut" }} />
               </div>
             </div>
             <div className="course-metric-card emphasis">
-              <small>学习指标</small>
-              <strong>{learningProgress.learningIndex}</strong>
+              <small>统一 XP 阶段</small>
+              <strong>Lv.{stageProgress.stageIndex + 1}</strong>
               <div className="mini-progress" aria-hidden>
-                <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.learningIndexPercent}%` }} transition={{ duration: 0.9, ease: "easeOut" }} />
+                <motion.span initial={{ width: 0 }} animate={{ width: `${stageProgress.currentPercent}%` }} transition={{ duration: 0.9, ease: "easeOut" }} />
               </div>
             </div>
           </div>

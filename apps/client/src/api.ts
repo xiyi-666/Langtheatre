@@ -1,4 +1,6 @@
-import type { ContentSource, Course, PracticeResult, ReadingMaterial, RoleplaySession, Theater, User } from "./types";
+import type { ContentSource, Course, ModelConfig, PracticeResult, ReadingMaterial, RoleplaySession, TTSConfig, Theater, User } from "./types";
+
+const DEFAULT_REMOTE_API_URL = "http://61.244.24.7/graphql";
 
 function resolveApiUrl(): string {
   const envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
@@ -10,7 +12,7 @@ function resolveApiUrl(): string {
   const isTauriRuntime = window.location.protocol === "tauri:" || hostname === "tauri.localhost" || hostname.endsWith(".localhost");
 
   if (isTauriRuntime) {
-    throw new Error("VITE_API_URL is required for Tauri runtime. Please set it in build environment.");
+    return DEFAULT_REMOTE_API_URL;
   }
 
   return "/graphql";
@@ -134,6 +136,63 @@ export async function updateProfile(input: {
     input
   );
   return data.updateProfile;
+}
+
+export async function getModelConfig(): Promise<ModelConfig> {
+  await ensureAccessToken();
+  const data = await request<{ modelConfig: ModelConfig }>(
+    `query ModelConfig {
+      modelConfig { provider model baseURL hasApiKey apiKeyPreview updatedAt }
+    }`
+  );
+  return data.modelConfig;
+}
+
+export async function updateModelConfig(input: {
+  provider?: string;
+  model?: string;
+  baseURL?: string;
+  apiKey?: string;
+}): Promise<ModelConfig> {
+  await ensureAccessToken();
+  const data = await request<{ updateModelConfig: ModelConfig }>(
+    `mutation UpdateModelConfig($provider: String, $model: String, $baseURL: String, $apiKey: String) {
+      updateModelConfig(provider: $provider, model: $model, baseURL: $baseURL, apiKey: $apiKey) {
+        provider model baseURL hasApiKey apiKeyPreview updatedAt
+      }
+    }`,
+    input
+  );
+  return data.updateModelConfig;
+}
+
+export async function getTTSConfig(): Promise<TTSConfig> {
+  await ensureAccessToken();
+  const data = await request<{ ttsConfig: TTSConfig }>(
+    `query TTSConfig {
+      ttsConfig { provider model baseURL voice audioFormat hasApiKey apiKeyPreview updatedAt }
+    }`
+  );
+  return data.ttsConfig;
+}
+
+export async function updateTTSConfig(input: {
+  provider?: string;
+  model?: string;
+  baseURL?: string;
+  voice?: string;
+  apiKey?: string;
+}): Promise<TTSConfig> {
+  await ensureAccessToken();
+  const data = await request<{ updateTTSConfig: TTSConfig }>(
+    `mutation UpdateTTSConfig($provider: String, $model: String, $baseURL: String, $voice: String, $apiKey: String) {
+      updateTTSConfig(provider: $provider, model: $model, baseURL: $baseURL, voice: $voice, apiKey: $apiKey) {
+        provider model baseURL voice audioFormat hasApiKey apiKeyPreview updatedAt
+      }
+    }`,
+    input
+  );
+  return data.updateTTSConfig;
 }
 
 export async function generateTheater(input: {

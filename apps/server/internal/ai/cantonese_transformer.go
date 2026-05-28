@@ -19,10 +19,10 @@ type CantoneseTransformer struct {
 
 func NewCantoneseTransformer(apiKey string, model string, baseURL string) *CantoneseTransformer {
 	if strings.TrimSpace(baseURL) == "" {
-		baseURL = "https://api.openai.com"
+		baseURL = "http://43.172.5.210:3000/v1"
 	}
 	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
+		model = "gpt-5.4"
 	}
 	return &CantoneseTransformer{
 		APIKey:  apiKey,

@@ -2,6 +2,8 @@ name: deploy
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  DEPLOY_HOST: 61.244.24.7
+  DEPLOY_DIR: /opt/linguaquest
 
 on:
   workflow_dispatch:
@@ -12,7 +14,6 @@ on:
       - apps/server/**
       - infra/docker-compose.deploy.yml
       - .github/workflows/deploy.yml
-      - .github/workflows/dockerhub.yml
 
 jobs:
   build-and-push-images:
@@ -39,7 +40,7 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-server
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=sha,format=short,prefix=sha-
 
       - name: Build and push server image
         uses: docker/build-push-action@v6
@@ -57,7 +58,7 @@ jobs:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-client
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=sha,format=short,prefix=sha-
 
       - name: Build and push client image
         uses: docker/build-push-action@v6
@@ -66,30 +67,107 @@ jobs:
           file: ./apps/client/Dockerfile
           push: true
           build-args: |
+            VITE_API_URL=/graphql
             VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
           tags: ${{ steps.meta-client.outputs.tags }}
           labels: ${{ steps.meta-client.outputs.labels }}
 
-  validate-deploy-bundle:
+  prepare-deploy-bundle:
     runs-on: ubuntu-latest
     needs: [build-and-push-images]
     permissions:
       contents: read
-    env:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      JWT_SECRET: sample-secret
-      SUPABASE_DB_URL: postgresql://demo:demo@db.example.com:5432/postgres
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate deploy compose config
-        run: docker compose -f infra/docker-compose.deploy.yml config > deploy-compose.rendered.yml
+      - name: Create deployment bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .deploy
+          cp infra/docker-compose.deploy.yml .deploy/docker-compose.deploy.yml
+          cat > .deploy/.env.production <<EOF
+          DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+          CLIENT_IMAGE_TAG=sha-${GITHUB_SHA::7}
+          SERVER_IMAGE_TAG=sha-${GITHUB_SHA::7}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          SUPABASE_DB_URL=${{ secrets.SUPABASE_DB_URL }}
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL=${{ vars.OPENAI_MODEL }}
+          OPENAI_BASE_URL=${{ vars.OPENAI_BASE_URL }}
+          TTS_PROVIDER=${{ vars.TTS_PROVIDER }}
+          TTS_API_URL=${{ vars.TTS_API_URL }}
+          TTS_API_KEY=${{ secrets.TTS_API_KEY }}
+          TTS_VOICE=${{ vars.TTS_VOICE }}
+          TTS_MODEL=${{ vars.TTS_MODEL }}
+          TTS_AUDIO_FORMAT=${{ vars.TTS_AUDIO_FORMAT }}
+          TTS_USE_UPLOAD_PROMPT=${{ vars.TTS_USE_UPLOAD_PROMPT }}
+          TTS_PROMPT_AUDIO_PATH=${{ vars.TTS_PROMPT_AUDIO_PATH }}
+          TTS_RETURN_JSON=${{ vars.TTS_RETURN_JSON }}
+          TTS_TIMEOUT_SECONDS=${{ vars.TTS_TIMEOUT_SECONDS }}
+          TTS_MAX_RETRIES=${{ vars.TTS_MAX_RETRIES }}
+          SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+          EOF
+          docker compose --env-file .deploy/.env.production -f .deploy/docker-compose.deploy.yml config > .deploy/docker-compose.rendered.yml
 
       - name: Upload deploy bundle
         uses: actions/upload-artifact@v4
         with:
           name: deploy-bundle
+          include-hidden-files: true
           path: |
-            infra/docker-compose.deploy.yml
-            deploy-compose.rendered.yml
+            .deploy/.env.production
+            .deploy/docker-compose.deploy.yml
+            .deploy/docker-compose.rendered.yml
+
+  deploy-to-server:
+    runs-on: ubuntu-latest
+    needs: [prepare-deploy-bundle]
+    permissions:
+      contents: read
+    env:
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+    steps:
+      - name: Download deploy bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: deploy-bundle
+          path: .deploy
+
+      - name: Skip remote deploy when SSH secrets are missing
+        if: ${{ env.DEPLOY_USER == '' || env.DEPLOY_SSH_KEY == '' }}
+        run: echo "DEPLOY_USER or DEPLOY_SSH_KEY is not configured, skipping remote deployment."
+
+      - name: Upload deploy files to server
+        if: ${{ env.DEPLOY_USER != '' && env.DEPLOY_SSH_KEY != '' }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ env.DEPLOY_SSH_KEY }}
+          source: ".deploy/.env.production,.deploy/docker-compose.deploy.yml"
+          target: ${{ env.DEPLOY_DIR }}
+          strip_components: 1
+
+      - name: Pull and restart containers
+        if: ${{ env.DEPLOY_USER != '' && env.DEPLOY_SSH_KEY != '' }}
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_DIR: ${{ env.DEPLOY_DIR }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ env.DEPLOY_SSH_KEY }}
+          envs: DEPLOY_DIR,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
+          script: |
+            set -e
+            mkdir -p "$DEPLOY_DIR"
+            cd "$DEPLOY_DIR"
+            printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+            docker compose --env-file .env.production -f docker-compose.deploy.yml pull
+            docker compose --env-file .env.production -f docker-compose.deploy.yml up -d --remove-orphans
+            docker image prune -f

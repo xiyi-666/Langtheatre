@@ -8,34 +8,106 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/linguaquest/server/internal/domain"
 )
 
 type OpenAIGenerator struct {
-	APIKey  string
-	Model   string
-	BaseURL string
-	Client  *http.Client
+	mu       sync.RWMutex
+	Provider string
+	APIKey   string
+	Model    string
+	BaseURL  string
+	Client   *http.Client
 }
 
 const (
 	modelAPIMaxRetries = 2
 )
 
+const (
+	defaultModelProvider = "OPENAI"
+	defaultModelName     = "gpt-5.4"
+	defaultBaseURL       = "http://43.172.5.210:3000/v1"
+)
+
 func NewOpenAIGenerator(apiKey string, model string, baseURL string) *OpenAIGenerator {
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
+	generator := &OpenAIGenerator{
+		Client: &http.Client{Timeout: 45 * time.Second},
 	}
-	return &OpenAIGenerator{
-		APIKey:  strings.TrimSpace(apiKey),
-		Model:   strings.TrimSpace(model),
-		BaseURL: strings.TrimRight(baseURL, "/"),
-		Client:  &http.Client{Timeout: 45 * time.Second},
+	generator.UpdateModelConfig(domain.ModelConfig{
+		Provider: defaultModelProvider,
+		APIKey:   apiKey,
+		Model:    model,
+		BaseURL:  baseURL,
+	})
+	return generator
+}
+
+func (g *OpenAIGenerator) GetModelConfig() domain.ModelConfig {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return domain.ModelConfig{
+		Provider: normalizedModelProvider(g.Provider),
+		APIKey:   strings.TrimSpace(g.APIKey),
+		Model:    normalizedModelName(g.Model),
+		BaseURL:  normalizedBaseURL(g.BaseURL),
 	}
+}
+
+func (g *OpenAIGenerator) UpdateModelConfig(config domain.ModelConfig) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.Provider = normalizedModelProvider(config.Provider)
+	g.APIKey = strings.TrimSpace(config.APIKey)
+	g.Model = normalizedModelName(config.Model)
+	g.BaseURL = normalizedBaseURL(config.BaseURL)
+}
+
+func normalizedModelProvider(provider string) string {
+	cleaned := strings.ToUpper(strings.TrimSpace(provider))
+	if cleaned == "" {
+		return defaultModelProvider
+	}
+	return cleaned
+}
+
+func normalizedModelName(model string) string {
+	cleaned := strings.TrimSpace(model)
+	if cleaned == "" {
+		return defaultModelName
+	}
+	return cleaned
+}
+
+func normalizedBaseURL(baseURL string) string {
+	cleaned := strings.TrimSpace(baseURL)
+	if cleaned == "" {
+		cleaned = defaultBaseURL
+	}
+	return strings.TrimRight(cleaned, "/")
+}
+
+func (g *OpenAIGenerator) apiKey() string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return strings.TrimSpace(g.APIKey)
+}
+
+func (g *OpenAIGenerator) modelName() string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return normalizedModelName(g.Model)
+}
+
+func (g *OpenAIGenerator) baseURL() string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return normalizedBaseURL(g.BaseURL)
 }
 
 func languageDirective(language string) string {
@@ -74,7 +146,7 @@ func readingMinWords(topic string) int {
 
 // Generate returns dialogues and comprehension questions with options and reference answers for server-side grading.
 func (g *OpenAIGenerator) Generate(ctx context.Context, language string, topic string, difficulty float64, mode string) ([]domain.Dialogue, []domain.QuizQuestion, error) {
-	apiKey := strings.TrimSpace(g.APIKey)
+	apiKey := g.apiKey()
 	if apiKey == "" {
 		return nil, nil, fmt.Errorf("OPENAI_API_KEY is empty")
 	}
@@ -137,10 +209,7 @@ Rules for quiz:
 			language, topic, scenarioBrief, difficulty, mode, quizCount,
 		)
 	}
-	model := strings.TrimSpace(g.Model)
-	if model == "" {
-		model = "gpt-4o-mini"
-	}
+	model := g.modelName()
 	payload := map[string]any{
 		"model": model,
 		"messages": []map[string]string{
@@ -150,9 +219,9 @@ Rules for quiz:
 		"temperature": 0.65,
 	}
 	content, err := g.callModelJSONPayload(ctx, payload)
-	if err != nil && strings.Contains(err.Error(), "no parsable text") && !strings.EqualFold(model, "gpt-4o-mini") {
-		log.Printf("model %s returned empty content, retry with fallback model gpt-4o-mini", model)
-		payload["model"] = "gpt-4o-mini"
+	if err != nil && strings.Contains(err.Error(), "no parsable text") && !strings.EqualFold(model, defaultModelName) {
+		log.Printf("model %s returned empty content, retry with fallback model %s", model, defaultModelName)
+		payload["model"] = defaultModelName
 		content, err = g.callModelJSONPayload(ctx, payload)
 	}
 	if err != nil {
@@ -184,10 +253,7 @@ Rules for quiz:
 }
 
 func (g *OpenAIGenerator) expandConversationScenario(ctx context.Context, language string, topic string, difficulty float64, mode string) (string, error) {
-	model := strings.TrimSpace(g.Model)
-	if model == "" {
-		model = "gpt-4o-mini"
-	}
+	model := g.modelName()
 	system := "You expand a learning topic into one concrete, realistic conversation scenario. Return JSON only."
 	user := fmt.Sprintf(`Language: %s
 Topic: %s
@@ -232,10 +298,16 @@ JSON:
 }
 
 func (g *OpenAIGenerator) chatCompletionsURL() string {
-	if strings.HasSuffix(g.BaseURL, "/v1") {
-		return g.BaseURL + "/chat/completions"
+	baseURL := g.baseURL()
+	if strings.HasSuffix(baseURL, "/chat/completions") {
+		return baseURL
 	}
-	return g.BaseURL + "/v1/chat/completions"
+
+	parsed, err := url.Parse(baseURL)
+	if err == nil && strings.Trim(parsed.Path, "/") == "" {
+		return strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
+	}
+	return strings.TrimRight(baseURL, "/") + "/chat/completions"
 }
 
 func shouldRetryModelStatus(status int) bool {
@@ -245,7 +317,7 @@ func shouldRetryModelStatus(status int) bool {
 func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[string]any) (string, error) {
 	raw, _ := json.Marshal(payload)
 	chatURL := g.chatCompletionsURL()
-	apiKey := strings.TrimSpace(g.APIKey)
+	apiKey := g.apiKey()
 	var lastErr error
 
 	for attempt := 0; attempt <= modelAPIMaxRetries; attempt++ {
@@ -610,14 +682,11 @@ func splitPassageForDialogues(passage string) []string {
 }
 
 func (g *OpenAIGenerator) AnalyzeReading(ctx context.Context, exam string, topic string, passage string, vocabulary []string) (domain.ReadingAnalysis, error) {
-	apiKey := strings.TrimSpace(g.APIKey)
+	apiKey := g.apiKey()
 	if apiKey == "" {
 		return domain.ReadingAnalysis{}, fmt.Errorf("OPENAI_API_KEY is empty")
 	}
-	model := strings.TrimSpace(g.Model)
-	if model == "" {
-		model = "gpt-4o-mini"
-	}
+	model := g.modelName()
 	vocabList := strings.Join(vocabulary, ", ")
 	prompt := fmt.Sprintf(
 		`You are an English learning assistant. Analyze the passage and return JSON only.

@@ -13,19 +13,74 @@ type User struct {
 	CreatedAt    time.Time
 }
 
+type ModelConfig struct {
+	Provider  string
+	Model     string
+	BaseURL   string
+	APIKey    string
+	UpdatedAt time.Time
+}
+
+type ModelConfigView struct {
+	Provider      string
+	Model         string
+	BaseURL       string
+	HasAPIKey     bool
+	APIKeyPreview string
+	UpdatedAt     time.Time
+}
+
+type ModelConfigUpdate struct {
+	Provider    string
+	Model       string
+	BaseURL     string
+	APIKey      string
+	ClearAPIKey bool
+}
+
+type TTSConfig struct {
+	Provider    string
+	Model       string
+	BaseURL     string
+	APIKey      string
+	Voice       string
+	AudioFormat string
+	UpdatedAt   time.Time
+}
+
+type TTSConfigView struct {
+	Provider      string
+	Model         string
+	BaseURL       string
+	Voice         string
+	AudioFormat   string
+	HasAPIKey     bool
+	APIKeyPreview string
+	UpdatedAt     time.Time
+}
+
+type TTSConfigUpdate struct {
+	Provider    string
+	Model       string
+	BaseURL     string
+	APIKey      string
+	Voice       string
+	ClearAPIKey bool
+}
+
 type Dialogue struct {
-	Speaker   string
-	Text      string
+	Speaker    string
+	Text       string
 	ZhSubtitle string
-	AudioURL  string
-	Timestamp float64
+	AudioURL   string
+	Timestamp  float64
 }
 
 // QuizQuestion pairs a comprehension question with a short reference answer used only server-side for grading.
 type QuizQuestion struct {
-	Question  string `json:"question"`
+	Question  string   `json:"question"`
 	Options   []string `json:"options,omitempty"`
-	AnswerKey string `json:"answerKey"`
+	AnswerKey string   `json:"answerKey"`
 }
 
 type Character struct {
@@ -52,11 +107,11 @@ type Theater struct {
 }
 
 type PracticeResult struct {
-	Score         int
-	XPEarned      int
-	Feedback      string
-	CorrectCount  int
-	TotalCount    int
+	Score        int
+	XPEarned     int
+	Feedback     string
+	CorrectCount int
+	TotalCount   int
 }
 
 type Course struct {
@@ -71,37 +126,37 @@ type Course struct {
 }
 
 type ContentSource struct {
-	ID           string
-	Name         string
-	Domain       string
-	Category     string
-	Exam         string
-	UseCases     []string
-	ContentMode  string
-	Enabled      bool
-	Priority     int
+	ID          string
+	Name        string
+	Domain      string
+	Category    string
+	Exam        string
+	UseCases    []string
+	ContentMode string
+	Enabled     bool
+	Priority    int
 }
 
 type ReadingMaterial struct {
-	ID             string
-	UserID         string
-	Exam           string
-	Language       string
-	Level          string
-	Topic          string
-	Title          string
-	Passage        string
-	Vocabulary     []string
-	Questions      []QuizQuestion
-	SourceIDs      []string
-	GenerationNote string
-	AudioURL       string
-	AudioURLs      []string
-	AudioStatus    string
-	VocabularyItems []VocabularyItem
+	ID                   string
+	UserID               string
+	Exam                 string
+	Language             string
+	Level                string
+	Topic                string
+	Title                string
+	Passage              string
+	Vocabulary           []string
+	Questions            []QuizQuestion
+	SourceIDs            []string
+	GenerationNote       string
+	AudioURL             string
+	AudioURLs            []string
+	AudioStatus          string
+	VocabularyItems      []VocabularyItem
 	AssociationSentences []string
-	GrammarInsights []GrammarInsight
-	CreatedAt      time.Time
+	GrammarInsights      []GrammarInsight
+	CreatedAt            time.Time
 }
 
 type VocabularyItem struct {
@@ -117,9 +172,9 @@ type GrammarInsight struct {
 }
 
 type ReadingAnalysis struct {
-	VocabularyItems     []VocabularyItem `json:"vocabularyItems"`
-	AssociationSentences []string        `json:"associationSentences"`
-	GrammarInsights     []GrammarInsight `json:"grammarInsights"`
+	VocabularyItems      []VocabularyItem `json:"vocabularyItems"`
+	AssociationSentences []string         `json:"associationSentences"`
+	GrammarInsights      []GrammarInsight `json:"grammarInsights"`
 }
 
 type RoleplaySession struct {

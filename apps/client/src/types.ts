@@ -9,6 +9,26 @@ export interface User {
   totalXP: number;
 }
 
+export interface ModelConfig {
+  provider: string;
+  model: string;
+  baseURL: string;
+  hasApiKey: boolean;
+  apiKeyPreview: string;
+  updatedAt?: string;
+}
+
+export interface TTSConfig {
+  provider: string;
+  model: string;
+  baseURL: string;
+  voice: string;
+  audioFormat: string;
+  hasApiKey: boolean;
+  apiKeyPreview: string;
+  updatedAt?: string;
+}
+
 export interface Dialogue {
   speaker: string;
   text: string;

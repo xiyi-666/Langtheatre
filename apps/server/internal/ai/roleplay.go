@@ -130,10 +130,7 @@ JSON format:
 }
 
 func (g *OpenAIGenerator) callJSONCompletion(ctx context.Context, systemPrompt string, userPrompt string) (string, error) {
-	model := strings.TrimSpace(g.Model)
-	if model == "" {
-		model = "gpt-4o-mini"
-	}
+	model := g.modelName()
 	payload := map[string]any{
 		"model": model,
 		"messages": []map[string]string{

@@ -20,6 +20,10 @@ type Store interface {
 	GetUserByEmail(email string) (domain.User, error)
 	GetUserByID(id string) (domain.User, error)
 	UpdateUserProfile(userID string, nickname string, avatarURL string, bio string) (domain.User, error)
+	GetModelConfig() (domain.ModelConfig, error)
+	SaveModelConfig(config domain.ModelConfig) (domain.ModelConfig, error)
+	GetTTSConfig() (domain.TTSConfig, error)
+	SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, error)
 	SaveTheater(theater domain.Theater) (domain.Theater, error)
 	GetTheater(id string) (domain.Theater, error)
 	GetTheaterByShareCode(shareCode string) (domain.Theater, error)
@@ -52,6 +56,16 @@ type ReadingAnalyzer interface {
 	AnalyzeReading(ctx context.Context, exam string, topic string, passage string, vocabulary []string) (domain.ReadingAnalysis, error)
 }
 
+type ModelConfigManager interface {
+	GetModelConfig() domain.ModelConfig
+	UpdateModelConfig(config domain.ModelConfig)
+}
+
+type TTSConfigManager interface {
+	GetTTSConfig() domain.TTSConfig
+	UpdateTTSConfig(config domain.TTSConfig)
+}
+
 type SpeechSynthesizer interface {
 	Synthesize(ctx context.Context, text string, language string, voice string) (string, error)
 }
@@ -60,7 +74,9 @@ type Service struct {
 	store            Store
 	session          SessionStore
 	generator        TheaterGenerator
+	modelConfig      ModelConfigManager
 	tts              SpeechSynthesizer
+	ttsConfig        TTSConfigManager
 	jwtSecret        string
 	tokenExpiry      time.Duration
 	readingMu        sync.RWMutex
@@ -73,11 +89,21 @@ type roleplayEngine interface {
 }
 
 func New(store Store, session SessionStore, generator TheaterGenerator, tts SpeechSynthesizer, jwtSecret string) *Service {
+	var modelConfigManager ModelConfigManager
+	if manager, ok := any(generator).(ModelConfigManager); ok {
+		modelConfigManager = manager
+	}
+	var ttsConfigManager TTSConfigManager
+	if manager, ok := any(tts).(TTSConfigManager); ok {
+		ttsConfigManager = manager
+	}
 	return &Service{
 		store:            store,
 		session:          session,
 		generator:        generator,
+		modelConfig:      modelConfigManager,
 		tts:              tts,
+		ttsConfig:        ttsConfigManager,
 		jwtSecret:        jwtSecret,
 		tokenExpiry:      2 * time.Hour,
 		readingMaterials: map[string]domain.ReadingMaterial{},
@@ -136,8 +162,349 @@ func (s *Service) Logout(userID string) error {
 	return s.session.SetRefreshToken(context.Background(), userID, "")
 }
 
+func buildModelConfigView(config domain.ModelConfig) domain.ModelConfigView {
+	apiKey := strings.TrimSpace(config.APIKey)
+	return domain.ModelConfigView{
+		Provider:      strings.TrimSpace(config.Provider),
+		Model:         strings.TrimSpace(config.Model),
+		BaseURL:       strings.TrimSpace(config.BaseURL),
+		HasAPIKey:     apiKey != "",
+		APIKeyPreview: previewAPIKey(apiKey),
+		UpdatedAt:     config.UpdatedAt,
+	}
+}
+
+func buildTTSConfigView(config domain.TTSConfig) domain.TTSConfigView {
+	apiKey := strings.TrimSpace(config.APIKey)
+	return domain.TTSConfigView{
+		Provider:      strings.TrimSpace(config.Provider),
+		Model:         strings.TrimSpace(config.Model),
+		BaseURL:       strings.TrimSpace(config.BaseURL),
+		Voice:         strings.TrimSpace(config.Voice),
+		AudioFormat:   strings.TrimSpace(config.AudioFormat),
+		HasAPIKey:     apiKey != "",
+		APIKeyPreview: previewAPIKey(apiKey),
+		UpdatedAt:     config.UpdatedAt,
+	}
+}
+
+func previewAPIKey(apiKey string) string {
+	if apiKey == "" {
+		return ""
+	}
+	if len(apiKey) <= 8 {
+		return apiKey[:2] + "****"
+	}
+	return apiKey[:4] + "****" + apiKey[len(apiKey)-4:]
+}
+
 func (s *Service) Me(userID string) (domain.User, error) {
 	return s.store.GetUserByID(userID)
+}
+
+func (s *Service) GetModelConfig() (domain.ModelConfigView, error) {
+	if s.modelConfig == nil {
+		return domain.ModelConfigView{}, errors.New("model management unavailable")
+	}
+	return buildModelConfigView(s.modelConfig.GetModelConfig()), nil
+}
+
+func (s *Service) UpdateModelConfig(input domain.ModelConfigUpdate) (domain.ModelConfigView, error) {
+	if s.modelConfig == nil {
+		return domain.ModelConfigView{}, errors.New("model management unavailable")
+	}
+
+	current := s.modelConfig.GetModelConfig()
+	next := current
+
+	provider := normalizeModelProvider(input.Provider, current.Provider)
+	providerChanged := !strings.EqualFold(strings.TrimSpace(current.Provider), provider)
+	baseURL := strings.TrimSpace(input.BaseURL)
+	if baseURL == "" {
+		if providerChanged {
+			baseURL = defaultModelBaseURL(provider)
+		} else {
+			baseURL = strings.TrimSpace(current.BaseURL)
+		}
+	}
+	if baseURL == "" {
+		baseURL = defaultModelBaseURL(provider)
+	}
+
+	model := strings.TrimSpace(input.Model)
+	if model == "" {
+		if providerChanged {
+			model = defaultModelName(provider)
+		} else {
+			model = strings.TrimSpace(current.Model)
+		}
+	}
+	if model == "" {
+		model = defaultModelName(provider)
+	}
+
+	next.Provider = provider
+	next.Model = model
+	next.BaseURL = strings.TrimRight(baseURL, "/")
+	switch {
+	case strings.TrimSpace(input.APIKey) != "":
+		next.APIKey = strings.TrimSpace(input.APIKey)
+	case input.ClearAPIKey:
+		next.APIKey = ""
+	}
+	next.UpdatedAt = time.Now().UTC()
+
+	saved, err := s.store.SaveModelConfig(next)
+	if err != nil {
+		return domain.ModelConfigView{}, err
+	}
+	s.modelConfig.UpdateModelConfig(saved)
+	return buildModelConfigView(saved), nil
+}
+
+func normalizeModelProvider(input string, fallback string) string {
+	provider := strings.ToUpper(strings.TrimSpace(input))
+	if provider == "" {
+		provider = strings.ToUpper(strings.TrimSpace(fallback))
+	}
+	switch provider {
+	case "OPENAI_COMPATIBLE":
+		return "OPENAI_COMPATIBLE"
+	case "OPENAI":
+		return "OPENAI"
+	case "CLAUDE":
+		return "CLAUDE"
+	case "GEMINI":
+		return "GEMINI"
+	case "GLM":
+		return "GLM"
+	case "MINIMAX":
+		return "MINIMAX"
+	case "DEEPSEEK":
+		return "DEEPSEEK"
+	case "DOUBAO":
+		return "DOUBAO"
+	case "QWEN":
+		return "QWEN"
+	default:
+		return "OPENAI_COMPATIBLE"
+	}
+}
+
+func defaultModelBaseURL(provider string) string {
+	switch strings.ToUpper(strings.TrimSpace(provider)) {
+	case "OPENAI_COMPATIBLE":
+		return "http://43.172.5.210:3000/v1"
+	case "OPENAI":
+		return "http://43.172.5.210:3000/v1"
+	case "CLAUDE":
+		return "https://api.anthropic.com/v1"
+	case "GEMINI":
+		return "https://generativelanguage.googleapis.com/v1beta/openai"
+	case "GLM":
+		return "https://open.bigmodel.cn/api/paas/v4"
+	case "MINIMAX":
+		return "https://api.minimax.io/v1"
+	case "DEEPSEEK":
+		return "https://api.deepseek.com"
+	case "DOUBAO":
+		return "https://ark.cn-beijing.volces.com/api/v3"
+	case "QWEN":
+		return "https://dashscope.aliyuncs.com/compatible-mode/v1"
+	default:
+		return "http://43.172.5.210:3000/v1"
+	}
+}
+
+func defaultModelName(provider string) string {
+	switch strings.ToUpper(strings.TrimSpace(provider)) {
+	case "OPENAI_COMPATIBLE":
+		return "gpt-5.4"
+	case "OPENAI":
+		return "gpt-5.4"
+	case "CLAUDE":
+		return "claude-sonnet-4-6"
+	case "GEMINI":
+		return "gemini-2.5-flash"
+	case "GLM":
+		return "glm-5.1"
+	case "MINIMAX":
+		return "MiniMax-M2.7"
+	case "DEEPSEEK":
+		return "deepseek-v4-flash"
+	case "DOUBAO":
+		return "doubao-seed-2-0-lite-260428"
+	case "QWEN":
+		return "qwen3.6-plus"
+	default:
+		return "gpt-5.4"
+	}
+}
+
+func (s *Service) GetTTSConfig() (domain.TTSConfigView, error) {
+	if s.ttsConfig == nil {
+		return domain.TTSConfigView{}, errors.New("tts management unavailable")
+	}
+	return buildTTSConfigView(s.ttsConfig.GetTTSConfig()), nil
+}
+
+func (s *Service) UpdateTTSConfig(input domain.TTSConfigUpdate) (domain.TTSConfigView, error) {
+	if s.ttsConfig == nil {
+		return domain.TTSConfigView{}, errors.New("tts management unavailable")
+	}
+
+	current := s.ttsConfig.GetTTSConfig()
+	next := current
+
+	provider := normalizeTTSProvider(input.Provider, current.Provider)
+	providerChanged := !strings.EqualFold(strings.TrimSpace(current.Provider), provider)
+	baseURL := strings.TrimSpace(input.BaseURL)
+	if baseURL == "" {
+		if providerChanged {
+			baseURL = defaultTTSBaseURL(provider)
+		} else {
+			baseURL = strings.TrimSpace(current.BaseURL)
+		}
+	}
+	if baseURL == "" {
+		return domain.TTSConfigView{}, errors.New("tts base url is required")
+	}
+
+	model := strings.TrimSpace(input.Model)
+	if model == "" {
+		if providerChanged {
+			model = defaultTTSModel(provider)
+		} else {
+			model = strings.TrimSpace(current.Model)
+		}
+	}
+
+	voice := strings.TrimSpace(input.Voice)
+	if voice == "" {
+		if providerChanged {
+			voice = defaultTTSVoice(provider, model)
+		} else {
+			voice = strings.TrimSpace(current.Voice)
+		}
+	}
+	if provider != "CUSTOM" && strings.EqualFold(voice, "female-1") {
+		voice = defaultTTSVoice(provider, model)
+	}
+	voice = normalizeTTSVoiceValue(provider, model, voice)
+	if voice == "" {
+		voice = defaultTTSVoice(provider, model)
+	}
+
+	next.Provider = provider
+	next.Model = model
+	next.BaseURL = strings.TrimRight(baseURL, "/")
+	next.Voice = voice
+	next.AudioFormat = "wav"
+	switch {
+	case strings.TrimSpace(input.APIKey) != "":
+		next.APIKey = strings.TrimSpace(input.APIKey)
+	case input.ClearAPIKey:
+		next.APIKey = ""
+	}
+	next.UpdatedAt = time.Now().UTC()
+
+	saved, err := s.store.SaveTTSConfig(next)
+	if err != nil {
+		return domain.TTSConfigView{}, err
+	}
+	s.ttsConfig.UpdateTTSConfig(saved)
+	return buildTTSConfigView(saved), nil
+}
+
+func normalizeTTSProvider(input string, fallback string) string {
+	provider := strings.ToUpper(strings.TrimSpace(input))
+	if provider == "" {
+		provider = strings.ToUpper(strings.TrimSpace(fallback))
+	}
+	switch provider {
+	case "XIAOMI":
+		return "XIAOMI"
+	case "MINIMAX":
+		return "MINIMAX"
+	case "ALIYUN":
+		return "ALIYUN"
+	case "CUSTOM", "API":
+		return "CUSTOM"
+	default:
+		return "CUSTOM"
+	}
+}
+
+func defaultTTSBaseURL(provider string) string {
+	switch strings.ToUpper(strings.TrimSpace(provider)) {
+	case "XIAOMI":
+		return "https://token-plan-cn.xiaomimimo.com/v1"
+	case "MINIMAX":
+		return "https://api.minimax.io/v1/t2a_v2"
+	case "ALIYUN":
+		return "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer"
+	default:
+		return ""
+	}
+}
+
+func defaultTTSModel(provider string) string {
+	switch strings.ToUpper(strings.TrimSpace(provider)) {
+	case "XIAOMI":
+		return "mimo-v2.5-tts"
+	case "MINIMAX":
+		return "speech-2.8-hd"
+	case "ALIYUN":
+		return "cosyvoice-v3-flash"
+	default:
+		return ""
+	}
+}
+
+func defaultTTSVoice(provider string, model string) string {
+	switch strings.ToUpper(strings.TrimSpace(provider)) {
+	case "XIAOMI":
+		switch strings.ToLower(strings.TrimSpace(model)) {
+		case "mimo-v2.5-tts-voicedesign":
+			return "20 多岁女性，声音亲和自然，吐字清晰，适合粤语和英文学习内容。"
+		case "mimo-v2.5-tts-voiceclone":
+			return ""
+		default:
+			return "mimo_default"
+		}
+	case "MINIMAX":
+		return "Cantonese_GentleLady"
+	case "ALIYUN":
+		return "longjiaxin_v3"
+	default:
+		return "female-1"
+	}
+}
+
+func normalizeTTSVoiceValue(provider string, model string, voice string) string {
+	cleaned := strings.TrimSpace(voice)
+	if !strings.EqualFold(provider, "XIAOMI") {
+		return cleaned
+	}
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "mimo-v2.5-tts-voicedesign":
+		if cleaned == "" || strings.HasPrefix(strings.ToLower(cleaned), "data:audio/") {
+			return defaultTTSVoice(provider, model)
+		}
+		return cleaned
+	case "mimo-v2.5-tts-voiceclone":
+		if strings.HasPrefix(strings.ToLower(cleaned), "data:audio/") {
+			return cleaned
+		}
+		return ""
+	default:
+		switch cleaned {
+		case "mimo_default", "冰糖", "茉莉", "苏打", "白桦", "Mia", "Chloe", "Milo", "Dean":
+			return cleaned
+		default:
+			return defaultTTSVoice(provider, model)
+		}
+	}
 }
 
 func (s *Service) UpdateProfile(userID string, nickname string, avatarURL string, bio string) (domain.User, error) {
@@ -161,59 +528,92 @@ func (s *Service) GenerateTheater(userID string, language string, topic string, 
 		requiredQuiz = 3
 	}
 	preparedTopic := prepareTheaterTopic(language, topic)
-
-	var dialogues []domain.Dialogue
-	var quiz []domain.QuizQuestion
-
-	if s.generator == nil {
-		log.Printf("generator is nil, use fallback content language=%s topic=%s", language, topic)
-		dialogues, quiz = fallbackGeneratedContent(language, topic, requiredQuiz)
-	} else {
-		generated, q, err := s.generator.Generate(context.Background(), language, preparedTopic, difficulty, mode)
-		if err != nil {
-			log.Printf("model generate failed err=%v", err)
-			return domain.Theater{}, fmt.Errorf("ai generation failed: %w", err)
-		} else {
-			if len(generated) == 0 || dialogueLooksTemplated(generated) {
-				log.Printf("model returned empty or templated content, use fallback content dialogues=%d quiz=%d", len(generated), len(q))
-				dialogues, quiz = fallbackGeneratedContent(language, topic, requiredQuiz)
-			} else {
-				dialogues = generated
-				quiz = completeQuizSet(language, topic, q, requiredQuiz)
-			}
-		}
-	}
-	if s.tts != nil {
-		voicePair := selectDialogueVoicePair(topic)
-		for i := range dialogues {
-			voiceStyle := voicePair[i%2]
-			audioURL, err := s.tts.Synthesize(context.Background(), dialogues[i].Text, language, voiceStyle)
-			if err != nil {
-				log.Printf("tts failed index=%d err=%v", i, err)
-				continue
-			}
-			if strings.TrimSpace(audioURL) == "" {
-				log.Printf("tts returned empty audio url index=%d", i)
-				continue
-			}
-			dialogues[i].AudioURL = audioURL
-		}
-	} else {
-		log.Printf("tts disabled: synthesizer is nil")
-	}
-	theater := domain.Theater{
+	placeholder := domain.Theater{
 		ID:            uuid.NewString(),
 		UserID:        userID,
 		Language:      language,
 		Topic:         topic,
 		Difficulty:    difficulty,
 		Mode:          mode,
-		Status:        "READY",
-		Dialogues:     dialogues,
-		QuizQuestions: quiz,
+		Status:        "GENERATING",
+		Dialogues:     []domain.Dialogue{},
+		QuizQuestions: []domain.QuizQuestion{},
 		CreatedAt:     time.Now(),
 	}
-	return s.store.SaveTheater(theater)
+	saved, err := s.store.SaveTheater(placeholder)
+	if err != nil {
+		return domain.Theater{}, err
+	}
+	go s.generateTheaterAsync(saved, preparedTopic, requiredQuiz)
+	return saved, nil
+}
+
+func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic string, requiredQuiz int) {
+	var dialogues []domain.Dialogue
+	var quiz []domain.QuizQuestion
+
+	if s.generator == nil {
+		log.Printf("generator is nil, use fallback content language=%s topic=%s theater_id=%s", theater.Language, theater.Topic, theater.ID)
+		dialogues, quiz = fallbackGeneratedContent(theater.Language, theater.Topic, requiredQuiz)
+	} else {
+		generated, q, err := s.generator.Generate(context.Background(), theater.Language, preparedTopic, theater.Difficulty, theater.Mode)
+		if err != nil {
+			log.Printf("model generate failed theater_id=%s err=%v", theater.ID, err)
+			theater.Status = "FAILED"
+			current, getErr := s.store.GetTheater(theater.ID)
+			if getErr != nil {
+				log.Printf("skip failed theater persist theater_id=%s err=%v", theater.ID, getErr)
+				return
+			}
+			theater.IsFavorite = current.IsFavorite
+			theater.ShareCode = current.ShareCode
+			theater.CreatedAt = current.CreatedAt
+			if _, saveErr := s.store.SaveTheater(theater); saveErr != nil {
+				log.Printf("persist failed theater status failed theater_id=%s err=%v", theater.ID, saveErr)
+			}
+			return
+		} else {
+			if len(generated) == 0 || dialogueLooksTemplated(generated) {
+				log.Printf("model returned empty or templated content, use fallback content theater_id=%s dialogues=%d quiz=%d", theater.ID, len(generated), len(q))
+				dialogues, quiz = fallbackGeneratedContent(theater.Language, theater.Topic, requiredQuiz)
+			} else {
+				dialogues = generated
+				quiz = completeQuizSet(theater.Language, theater.Topic, q, requiredQuiz)
+			}
+		}
+	}
+	if s.tts != nil {
+		voicePair := selectDialogueVoicePair(theater.Topic)
+		for i := range dialogues {
+			voiceStyle := voicePair[i%2]
+			audioURL, err := s.tts.Synthesize(context.Background(), dialogues[i].Text, theater.Language, voiceStyle)
+			if err != nil {
+				log.Printf("tts failed theater_id=%s index=%d err=%v", theater.ID, i, err)
+				continue
+			}
+			if strings.TrimSpace(audioURL) == "" {
+				log.Printf("tts returned empty audio url theater_id=%s index=%d", theater.ID, i)
+				continue
+			}
+			dialogues[i].AudioURL = audioURL
+		}
+	} else {
+		log.Printf("tts disabled: synthesizer is nil theater_id=%s", theater.ID)
+	}
+	current, err := s.store.GetTheater(theater.ID)
+	if err != nil {
+		log.Printf("skip ready theater persist theater_id=%s err=%v", theater.ID, err)
+		return
+	}
+	theater.Status = "READY"
+	theater.Dialogues = dialogues
+	theater.QuizQuestions = quiz
+	theater.IsFavorite = current.IsFavorite
+	theater.ShareCode = current.ShareCode
+	theater.CreatedAt = current.CreatedAt
+	if _, err := s.store.SaveTheater(theater); err != nil {
+		log.Printf("persist ready theater failed theater_id=%s err=%v", theater.ID, err)
+	}
 }
 
 func prepareTheaterTopic(language string, topic string) string {
@@ -371,6 +771,9 @@ func (s *Service) SubmitAnswers(userID string, theaterID string, answers []strin
 	if err != nil {
 		return domain.PracticeResult{}, err
 	}
+	if err = ensureTheaterReady(theater); err != nil {
+		return domain.PracticeResult{}, err
+	}
 	quiz := theater.QuizQuestions
 	total := len(quiz)
 	if total == 0 {
@@ -388,9 +791,13 @@ func (s *Service) SubmitAnswers(userID string, theaterID string, answers []strin
 	}
 	score := (correct * 100) / total
 	xp := calculatePracticeXP(score)
-	_ = s.store.AddUserXP(userID, xp)
+	if err = s.store.AddUserXP(userID, xp); err != nil {
+		return domain.PracticeResult{}, err
+	}
 	feedback := buildPracticeFeedback(correct, total, score)
-	_ = s.store.SavePracticeRecord(userID, theaterID, score, answers, xp)
+	if err = s.store.SavePracticeRecord(userID, theaterID, score, answers, xp); err != nil {
+		return domain.PracticeResult{}, err
+	}
 	return domain.PracticeResult{
 		Score:        score,
 		XPEarned:     xp,
@@ -424,8 +831,12 @@ func (s *Service) SubmitReadingAnswers(userID string, materialID string, answers
 
 	score := (correct * 100) / total
 	xp := calculatePracticeXP(score)
-	_ = s.store.AddUserXP(userID, xp)
-	_ = s.store.SaveReadingPracticeRecord(userID, materialID, score, answers, xp)
+	if err = s.store.AddUserXP(userID, xp); err != nil {
+		return domain.PracticeResult{}, err
+	}
+	if err = s.store.SaveReadingPracticeRecord(userID, materialID, score, answers, xp); err != nil {
+		return domain.PracticeResult{}, err
+	}
 
 	return domain.PracticeResult{
 		Score:        score,
@@ -519,16 +930,14 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 	quizCount := 5
 	generated, q, err := s.generator.Generate(context.Background(), language, fmt.Sprintf("[%s Reading] %s", exam, topic), difficulty, "APPRECIATION")
 	if err != nil {
-		log.Printf("reading ai generation failed, use fallback passage err=%v", err)
-		generated, q = fallbackReadingGeneratedContent(exam, topic, quizCount)
+		log.Printf("reading ai generation failed err=%v", err)
+		return domain.ReadingMaterial{}, fmt.Errorf("reading ai generation failed: %w", err)
 	}
 	if len(generated) == 0 {
-		log.Printf("reading generation returned empty passage, use fallback passage")
-		generated, q = fallbackReadingGeneratedContent(exam, topic, quizCount)
+		return domain.ReadingMaterial{}, errors.New("reading generation returned empty passage")
 	}
 	if len(q) < quizCount {
-		log.Printf("reading generation returned insufficient questions, use fallback quiz got=%d required=%d", len(q), quizCount)
-		_, q = fallbackReadingGeneratedContent(exam, topic, quizCount)
+		return domain.ReadingMaterial{}, fmt.Errorf("reading generation returned insufficient questions: got=%d required=%d", len(q), quizCount)
 	}
 	if len(q) > quizCount {
 		q = q[:quizCount]
@@ -542,6 +951,9 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 		}
 	}
 	passage := strings.Join(passageParts, "\n")
+	if strings.TrimSpace(passage) == "" {
+		return domain.ReadingMaterial{}, errors.New("reading generation returned empty normalized passage")
+	}
 	vocabSet := map[string]struct{}{}
 	vocabulary := make([]string, 0, 8)
 	for _, word := range strings.Fields(strings.ToLower(passage)) {
@@ -1097,6 +1509,9 @@ func (s *Service) StartRoleplay(userID string, theaterID string, userRole string
 	if err != nil {
 		return domain.RoleplaySession{}, err
 	}
+	if err = ensureTheaterReady(theater); err != nil {
+		return domain.RoleplaySession{}, err
+	}
 	if !strings.EqualFold(strings.TrimSpace(theater.Mode), "ROLEPLAY") {
 		return domain.RoleplaySession{}, errors.New("当前剧场不是角色扮演模式")
 	}
@@ -1183,6 +1598,17 @@ func (s *Service) SubmitRoleplayReply(userID string, sessionID string, text stri
 	return s.store.UpdateRoleplaySession(session)
 }
 
+func ensureTheaterReady(theater domain.Theater) error {
+	switch strings.ToUpper(strings.TrimSpace(theater.Status)) {
+	case "", "READY":
+		return nil
+	case "FAILED":
+		return errors.New("该剧场生成失败，请重新生成")
+	default:
+		return errors.New("剧场仍在生成中，请稍后再试")
+	}
+}
+
 func (s *Service) EndRoleplay(userID string, sessionID string) (domain.RoleplaySession, error) {
 	session, err := s.store.GetRoleplaySession(sessionID, userID)
 	if err != nil {
@@ -1203,7 +1629,9 @@ func (s *Service) EndRoleplay(userID string, sessionID string) (domain.RoleplayS
 	}
 	session.UpdatedAt = time.Now()
 	xp := 20 + session.CurrentScore/5
-	_ = s.store.AddUserXP(userID, xp)
+	if err = s.store.AddUserXP(userID, xp); err != nil {
+		return domain.RoleplaySession{}, err
+	}
 	return s.store.UpdateRoleplaySession(session)
 }
 

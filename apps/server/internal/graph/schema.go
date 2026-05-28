@@ -3,6 +3,7 @@ package graph
 import (
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/graphql-go/graphql"
 	"github.com/linguaquest/server/internal/domain"
@@ -110,6 +111,50 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 			"avatarUrl": &graphql.Field{Type: graphql.String},
 			"bio":       &graphql.Field{Type: graphql.String},
 			"totalXP":   &graphql.Field{Type: graphql.Int},
+		},
+	})
+
+	modelConfigType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ModelConfig",
+		Fields: graphql.Fields{
+			"provider":      &graphql.Field{Type: graphql.String},
+			"model":         &graphql.Field{Type: graphql.String},
+			"baseURL":       &graphql.Field{Type: graphql.String},
+			"hasApiKey":     &graphql.Field{Type: graphql.Boolean},
+			"apiKeyPreview": &graphql.Field{Type: graphql.String},
+			"updatedAt": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					config, ok := p.Source.(domain.ModelConfigView)
+					if !ok || config.UpdatedAt.IsZero() {
+						return "", nil
+					}
+					return config.UpdatedAt.Format(time.RFC3339), nil
+				},
+			},
+		},
+	})
+
+	ttsConfigType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "TTSConfig",
+		Fields: graphql.Fields{
+			"provider":      &graphql.Field{Type: graphql.String},
+			"model":         &graphql.Field{Type: graphql.String},
+			"baseURL":       &graphql.Field{Type: graphql.String},
+			"voice":         &graphql.Field{Type: graphql.String},
+			"audioFormat":   &graphql.Field{Type: graphql.String},
+			"hasApiKey":     &graphql.Field{Type: graphql.Boolean},
+			"apiKeyPreview": &graphql.Field{Type: graphql.String},
+			"updatedAt": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					config, ok := p.Source.(domain.TTSConfigView)
+					if !ok || config.UpdatedAt.IsZero() {
+						return "", nil
+					}
+					return config.UpdatedAt.Format(time.RFC3339), nil
+				},
+			},
 		},
 	})
 
@@ -259,6 +304,26 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 						return nil, errors.New("unauthorized")
 					}
 					return svc.Me(userID)
+				},
+			},
+			"modelConfig": &graphql.Field{
+				Type: modelConfigType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
+					return svc.GetModelConfig()
+				},
+			},
+			"ttsConfig": &graphql.Field{
+				Type: ttsConfigType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
+					return svc.GetTTSConfig()
 				},
 			},
 			"theater": &graphql.Field{
@@ -439,6 +504,65 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 					avatarURL, _ := p.Args["avatarUrl"].(string)
 					bio, _ := p.Args["bio"].(string)
 					return svc.UpdateProfile(userID, nickname, avatarURL, bio)
+				},
+			},
+			"updateModelConfig": &graphql.Field{
+				Type: modelConfigType,
+				Args: graphql.FieldConfigArgument{
+					"provider":    &graphql.ArgumentConfig{Type: graphql.String},
+					"model":       &graphql.ArgumentConfig{Type: graphql.String},
+					"baseURL":     &graphql.ArgumentConfig{Type: graphql.String},
+					"apiKey":      &graphql.ArgumentConfig{Type: graphql.String},
+					"clearApiKey": &graphql.ArgumentConfig{Type: graphql.Boolean},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
+					provider, _ := p.Args["provider"].(string)
+					model, _ := p.Args["model"].(string)
+					baseURL, _ := p.Args["baseURL"].(string)
+					apiKey, _ := p.Args["apiKey"].(string)
+					clearAPIKey, _ := p.Args["clearApiKey"].(bool)
+					return svc.UpdateModelConfig(domain.ModelConfigUpdate{
+						Provider:    provider,
+						Model:       model,
+						BaseURL:     baseURL,
+						APIKey:      apiKey,
+						ClearAPIKey: clearAPIKey,
+					})
+				},
+			},
+			"updateTTSConfig": &graphql.Field{
+				Type: ttsConfigType,
+				Args: graphql.FieldConfigArgument{
+					"provider":    &graphql.ArgumentConfig{Type: graphql.String},
+					"model":       &graphql.ArgumentConfig{Type: graphql.String},
+					"baseURL":     &graphql.ArgumentConfig{Type: graphql.String},
+					"voice":       &graphql.ArgumentConfig{Type: graphql.String},
+					"apiKey":      &graphql.ArgumentConfig{Type: graphql.String},
+					"clearApiKey": &graphql.ArgumentConfig{Type: graphql.Boolean},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
+					provider, _ := p.Args["provider"].(string)
+					model, _ := p.Args["model"].(string)
+					baseURL, _ := p.Args["baseURL"].(string)
+					voice, _ := p.Args["voice"].(string)
+					apiKey, _ := p.Args["apiKey"].(string)
+					clearAPIKey, _ := p.Args["clearApiKey"].(bool)
+					return svc.UpdateTTSConfig(domain.TTSConfigUpdate{
+						Provider:    provider,
+						Model:       model,
+						BaseURL:     baseURL,
+						Voice:       voice,
+						APIKey:      apiKey,
+						ClearAPIKey: clearAPIKey,
+					})
 				},
 			},
 			"generateTheater": &graphql.Field{

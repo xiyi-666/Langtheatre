@@ -1,32 +1,17 @@
-name: tauri-multi-platform
+name: tauri-manual
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main, develop]
-    tags:
-      - "v*"
-    paths:
-      - "apps/client/**"
-      - ".github/workflows/tauri-multi-platform.yml"
-      - "package.json"
-      - "package-lock.json"
-  pull_request:
-    paths:
-      - "apps/client/**"
-      - ".github/workflows/tauri-multi-platform.yml"
-      - "package.json"
-      - "package-lock.json"
 
 jobs:
   build-desktop:
     name: build-${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     env:
-      VITE_API_URL: ${{ secrets.VITE_API_URL_PROD }}
+      VITE_API_URL: http://61.244.24.7/graphql
     strategy:
       fail-fast: false
       matrix:
@@ -95,7 +80,11 @@ jobs:
     name: build-android
     runs-on: ubuntu-latest
     env:
-      VITE_API_URL: ${{ secrets.VITE_API_URL_PROD }}
+      VITE_API_URL: http://61.244.24.7/graphql
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -137,9 +126,69 @@ jobs:
         working-directory: apps/client
         run: npx tauri android init --ci
 
-      - name: Build Android debug APK
+      - name: Configure Android release signing
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEY_PASSWORD != '' }}
+        shell: bash
         working-directory: apps/client
-        run: npx tauri android build --debug
+        run: |
+          set -euo pipefail
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          cat > src-tauri/gen/android/keystore.properties <<EOF
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          storeFile=$RUNNER_TEMP/release.keystore
+          EOF
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("src-tauri/gen/android/app/build.gradle.kts")
+          text = path.read_text()
+
+          if "import java.io.FileInputStream" not in text:
+              text = "import java.io.FileInputStream\nimport java.util.Properties\n\n" + text
+
+          signing_block = """signingConfigs {
+              create("release") {
+                  val keystorePropertiesFile = rootProject.file("keystore.properties")
+                  val keystoreProperties = Properties()
+                  if (keystorePropertiesFile.exists()) {
+                      keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+                  }
+
+                  keyAlias = keystoreProperties["keyAlias"] as String
+                  keyPassword = keystoreProperties["keyPassword"] as String
+                  storeFile = file(keystoreProperties["storeFile"] as String)
+                  storePassword = keystoreProperties["storePassword"] as String
+              }
+          }
+
+          """
+
+          if 'create("release")' not in text:
+              text = text.replace("buildTypes {", signing_block + "buildTypes {", 1)
+
+          release_block = """getByName("release") {
+                      signingConfig = signingConfigs.getByName("release")"""
+
+          if 'signingConfig = signingConfigs.getByName("release")' not in text:
+              text = text.replace('getByName("release") {', release_block, 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Build Android APK
+        shell: bash
+        working-directory: apps/client
+        run: |
+          set -euo pipefail
+          MODE="--debug"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            MODE=""
+          fi
+
+          npx tauri android build --apk $MODE
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
@@ -156,6 +205,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Download desktop bundles (Linux)
+        uses: actions/download-artifact@v4
+        with:
+          name: tauri-linux-bundle
+          path: release-assets/tauri-linux
+
       - name: Download desktop bundles (Windows)
         uses: actions/download-artifact@v4
         with:
@@ -187,6 +242,9 @@ jobs:
             cp "$APK_PATH" "release-assets/filtered/LinguaQuest-android-${TAG_NAME}.apk"
           fi
 
+          find release-assets/tauri-linux -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" \) -print0 \
+            | xargs -0 -I {} cp "{}" "release-assets/filtered/"
+
           find release-assets/tauri-windows -type f \( -name "*setup*.exe" -o -name "*.msi" \) -print0 \
             | xargs -0 -I {} cp "{}" "release-assets/filtered/"
 
@@ -201,6 +259,7 @@ jobs:
             Release: ${GITHUB_REF_NAME}
 
             Assets:
+            - Linux (.AppImage / .deb)
             - LinguaQuest-android-${GITHUB_REF_NAME}.apk
             - Windows setup (.exe)
             - macOS dmg / app archive

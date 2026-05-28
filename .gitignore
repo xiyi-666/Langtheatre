@@ -42,6 +42,9 @@ go.work.sum
 # Local tool metadata
 .cursor/
 .spec-workflow/
+.playwright-mcp/
+tmp/
+profile-*.png
 
 # Product requirement drafts (local only)
 demand/

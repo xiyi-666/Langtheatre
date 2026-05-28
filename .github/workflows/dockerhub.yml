@@ -1,17 +1,10 @@
-name: dockerhub
+name: dockerhub-manual
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    tags: ["v*"]
-    paths:
-      - apps/client/**
-      - apps/server/**
-      - .github/workflows/dockerhub.yml
 
 jobs:
   publish-images:
@@ -67,6 +60,7 @@ jobs:
           file: ./apps/client/Dockerfile
           push: true
           build-args: |
+            VITE_API_URL=/graphql
             VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
           tags: ${{ steps.meta-client.outputs.tags }}
           labels: ${{ steps.meta-client.outputs.labels }}

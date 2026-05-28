@@ -4,6 +4,7 @@ import { BookMarked, Filter, Sparkles } from "lucide-react";
 import { contentSources, generateReading, readingMaterials } from "../api";
 import { useAppStore } from "../store";
 import type { ContentSource } from "../types";
+import { calculateStageProgress, getStageRequirement } from "../xp";
 
 type ExamType = "IELTS" | "CET";
 type SourceCategory =
@@ -48,6 +49,7 @@ export function ReadingGeneratePage() {
     return queryTopic || stageSeeds[activeStage][0];
   });
   const [loading, setLoading] = useState(false);
+  const [generateError, setGenerateError] = useState("");
   const [sources, setSources] = useState<ContentSource[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [materials, setMaterials] = useState<import("../types").ReadingMaterial[]>([]);
@@ -74,6 +76,10 @@ export function ReadingGeneratePage() {
 
   const visibleSources = sources;
   const currentSeeds = useMemo(() => stageSeeds[activeStage], [activeStage, stageSeeds]);
+  const totalXP = user?.totalXP ?? 0;
+  const stageProgress = useMemo(() => calculateStageProgress(totalXP, stageSeeds.length), [stageSeeds.length, totalXP]);
+  const stageUnlocked = activeStage <= stageProgress.stageIndex;
+  const requiredXP = getStageRequirement(activeStage, stageSeeds.length);
 
   useEffect(() => {
     if (visibleSources.length === 0) {
@@ -89,6 +95,8 @@ export function ReadingGeneratePage() {
   }, [visibleSources]);
 
   async function handleGenerateReading() {
+    if (!stageUnlocked) return;
+    setGenerateError("");
     setLoading(true);
     try {
       const generated = await generateReading({
@@ -102,6 +110,7 @@ export function ReadingGeneratePage() {
       navigate(`/reading/${generated.id}/article`);
     } catch (e) {
       console.error("reading generate failed", e);
+      setGenerateError("真实阅读材料生成失败，请检查模型配置、API Key 或稍后重试。");
     } finally {
       setLoading(false);
     }
@@ -131,8 +140,9 @@ export function ReadingGeneratePage() {
 
         <article className="stage-banner" style={{ marginTop: 8 }}>
           <strong>当前考试与阶段</strong>
-          <p>{safeExam} · Stage {activeStage + 1}（阅读中心无经验门槛，所有阶段可直接进入）</p>
-          <p>总经验以个人中心为准：{user?.totalXP ?? 0}</p>
+          <p>{safeExam} · Stage {activeStage + 1} · 当前已解锁至 Stage {stageProgress.stageIndex + 1}</p>
+          <p>总经验：{totalXP}</p>
+          {!stageUnlocked ? <p className="error">当前阶段尚未解锁，需要 {requiredXP} XP，当前仅有 {totalXP} XP。</p> : null}
         </article>
 
         <div className="row" style={{ marginTop: 8 }}>
@@ -152,8 +162,8 @@ export function ReadingGeneratePage() {
             <span><BookMarked size={14} /> 阅读主题</span>
             <input value={topic} onChange={(e) => setTopic(e.target.value)} />
           </label>
-          <button onClick={handleGenerateReading} disabled={loading || !topic.trim()}>
-            <Sparkles size={14} /> {loading ? "生成中..." : "生成阅读材料"}
+          <button onClick={handleGenerateReading} disabled={loading || !topic.trim() || !stageUnlocked}>
+            <Sparkles size={14} /> {stageUnlocked ? (loading ? "生成中..." : "生成阅读材料") : `需 ${requiredXP} XP 解锁`}
           </button>
         </div>
 
@@ -162,6 +172,7 @@ export function ReadingGeneratePage() {
             <button key={seed} type="button" className="tag-chip" onClick={() => setTopic(seed)}>{seed}</button>
           ))}
         </div>
+        {generateError ? <p className="error" style={{ marginTop: 10 }}>{generateError}</p> : null}
 
         <article className="stage-banner" style={{ marginTop: 10 }}>
           <strong>来源可交互学习</strong>
