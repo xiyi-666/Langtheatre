@@ -51,9 +51,9 @@ export const MODEL_PROVIDER_PRESETS: ModelProviderPreset[] = [
       model: "gpt-5.4"
     },
     modelOptions: ["gpt-5.4", "gpt-4.1-mini", "gpt-4o-mini"],
-    endpointHint: "http://43.172.5.210:3000/v1/chat/completions",
+    endpointHint: "https://api.openai.com/v1/chat/completions",
     authHint: "Authorization: Bearer OPENAI_API_KEY",
-    compatibilityNote: "当前默认通过项目网关地址转发到 OpenAI 兼容接口。"
+    compatibilityNote: "这里展示的是 OpenAI 官方接口说明；默认 Base URL 仍可使用你当前配置的代理网关。"
   },
   {
     id: "CLAUDE",
