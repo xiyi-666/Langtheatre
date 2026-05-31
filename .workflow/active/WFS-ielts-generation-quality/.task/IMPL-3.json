@@ -1,0 +1,39 @@
+{
+  "id": "IMPL-3",
+  "title": "Reading Metadata And Question Model",
+  "description": "Add explicit reading metadata and a reading-compatible question structure while keeping legacy question/options/answerKey data readable. Wire the additive fields through domain, stores, migrations, GraphQL, client API, and client types.",
+  "depends_on": [
+    "IMPL-1"
+  ],
+  "convergence": {
+    "success": [
+      "ReadingMaterial exposes band, stage, section, skillFocus, questionType, and scenarioFamily.",
+      "Reading questions can represent Matching Headings, Matching Information, TFNG, Summary Completion, Multiple Choice, and Mixed sets.",
+      "Existing database rows and current GraphQL clients continue to work."
+    ],
+    "verification": [
+      "go test ./... from apps/server",
+      "npm run typecheck --workspace apps/client"
+    ]
+  },
+  "meta": {
+    "type": "schema-persistence-client",
+    "agent": "worker",
+    "owned_files": [
+      "apps/server/internal/domain/models.go",
+      "apps/server/internal/graph/schema.go",
+      "apps/server/internal/store/sqlite_store.go",
+      "apps/server/internal/store/postgres_store.go",
+      "apps/server/migrations/004_reading_metadata.sql",
+      "apps/client/src/api.ts",
+      "apps/client/src/types.ts"
+    ],
+    "priority": "P0",
+    "addresses": [
+      "reading question type mismatch",
+      "course metadata insufficiency"
+    ]
+  },
+  "status": "completed",
+  "completed_at": "2026-05-30T18:40:27+08:00"
+}

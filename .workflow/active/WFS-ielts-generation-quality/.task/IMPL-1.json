@@ -1,0 +1,35 @@
+{
+  "id": "IMPL-1",
+  "title": "Output Hygiene And Quality Guards",
+  "description": "Add backend helper functions and tests that treat English whitespace collapse, prompt leakage, too-short reading passages, and generic repeated questions as generation quality failures before content is saved or sent to TTS.",
+  "depends_on": [],
+  "convergence": {
+    "success": [
+      "Generated English text with collapsed token spacing is detected or repaired before persistence/TTS.",
+      "Reading passages containing prompt instructions are rejected or routed to fallback.",
+      "Focused Go unit tests cover whitespace, prompt-leak, word/paragraph count, and generic question detection."
+    ],
+    "verification": [
+      "go test ./... from apps/server"
+    ]
+  },
+  "meta": {
+    "type": "backend-quality-foundation",
+    "agent": "worker",
+    "owned_files": [
+      "apps/server/internal/ai/generator.go",
+      "apps/server/internal/service/service.go",
+      "apps/server/internal/ai/*_test.go",
+      "apps/server/internal/service/*_test.go"
+    ],
+    "priority": "P0",
+    "addresses": [
+      "listening whitespace loss",
+      "reading prompt leakage",
+      "reading generic questions",
+      "quality validation before scaling"
+    ]
+  },
+  "status": "completed",
+  "completed_at": "2026-05-30T18:32:15+08:00"
+}

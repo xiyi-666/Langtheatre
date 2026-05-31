@@ -1,0 +1,39 @@
+{
+  "id": "IMPL-7",
+  "title": "Small-Sample Quality Gate",
+  "description": "Add a pre-expansion quality gate that generates or validates 5 listening and 5 reading samples, reports objective quality checks, and blocks 300-item expansion until accepted.",
+  "depends_on": [
+    "IMPL-2",
+    "IMPL-4",
+    "IMPL-5",
+    "IMPL-6"
+  ],
+  "convergence": {
+    "success": [
+      "Quality report checks prompt leakage, English spacing, passage word count, paragraph count, question type shape, Band spread, and audio status.",
+      "Sample set covers multiple Bands, Sections, and reading question types.",
+      "Report clearly states whether expansion is blocked or allowed."
+    ],
+    "verification": [
+      "go test ./... from apps/server",
+      "Run documented small-sample gate command or script",
+      "Update docs/test-report.md with results"
+    ]
+  },
+  "meta": {
+    "type": "quality-gate",
+    "agent": "worker",
+    "owned_files": [
+      "apps/server/internal/service/*_test.go",
+      "apps/server/internal/ai/*_test.go",
+      "docs/test-report.md"
+    ],
+    "priority": "P0",
+    "addresses": [
+      "quality acceptance before batch generation",
+      "manual review readiness"
+    ]
+  },
+  "status": "completed",
+  "completed_at": "2026-05-30T18:53:52+08:00"
+}

@@ -1,0 +1,35 @@
+{
+  "id": "IMPL-6",
+  "title": "TTS Retry, Resume, And Audio Status Repair",
+  "description": "Improve transient TTS error handling and reading audio resumability so timeout/PENDING items can be retried without regenerating text content.",
+  "depends_on": [
+    "IMPL-1"
+  ],
+  "convergence": {
+    "success": [
+      "Timeouts and retryable HTTP statuses use bounded backoff retries.",
+      "Reading audio generation preserves successful chunks and can resume failed or pending materials.",
+      "A service/API or documented operational path exists to repair stuck audio status."
+    ],
+    "verification": [
+      "go test ./... from apps/server",
+      "Fake TTS tests for timeout, empty URL, partial chunk success, and retry success"
+    ]
+  },
+  "meta": {
+    "type": "backend-tts-stability",
+    "agent": "worker",
+    "owned_files": [
+      "apps/server/internal/ai/tts.go",
+      "apps/server/internal/service/service.go",
+      "apps/server/internal/graph/schema.go"
+    ],
+    "priority": "P1",
+    "addresses": [
+      "audio chain stability",
+      "PENDING/TIMEOUT repair"
+    ]
+  },
+  "status": "completed",
+  "completed_at": "2026-05-30T18:51:08+08:00"
+}

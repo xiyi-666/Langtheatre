@@ -1,0 +1,65 @@
+{
+  "session_id": "WFS-ielts-generation-quality",
+  "task_ids": [
+    "IMPL-1",
+    "IMPL-2",
+    "IMPL-3",
+    "IMPL-4",
+    "IMPL-5",
+    "IMPL-6",
+    "IMPL-7"
+  ],
+  "recommended_execution": "phased",
+  "complexity": "complex",
+  "quality_gate": "BLOCK_EXPANSION_UNTIL_SMALL_SAMPLE_PASSES",
+  "shared_context": {
+    "goal": "Fix IELTS listening and reading generation quality before scaling content generation.",
+    "context_package": ".workflow/active/WFS-ielts-generation-quality/.process/context-package.json",
+    "planning_notes": ".workflow/active/WFS-ielts-generation-quality/planning-notes.md",
+    "critical_constraints": [
+      "Do not expand to 300 generated items before quality gate passes.",
+      "Keep changes backward compatible for existing content and clients.",
+      "Use original generated exam-style practice only; do not copy official test content.",
+      "Treat prompt leaks and English whitespace collapse as hard failures."
+    ]
+  },
+  "execution_waves": [
+    {
+      "wave": 1,
+      "tasks": [
+        "IMPL-1"
+      ],
+      "reason": "Establish shared output hygiene and validators before changing generation behavior."
+    },
+    {
+      "wave": 2,
+      "tasks": [
+        "IMPL-2",
+        "IMPL-3"
+      ],
+      "reason": "Listening profile work and reading model/metadata compatibility are mostly independent."
+    },
+    {
+      "wave": 3,
+      "tasks": [
+        "IMPL-4"
+      ],
+      "reason": "Reading generation depends on the reading model and metadata contract."
+    },
+    {
+      "wave": 4,
+      "tasks": [
+        "IMPL-5",
+        "IMPL-6"
+      ],
+      "reason": "Fallback and TTS stability can proceed after core content shape is known."
+    },
+    {
+      "wave": 5,
+      "tasks": [
+        "IMPL-7"
+      ],
+      "reason": "Quality gate must verify all generation and audio changes together."
+    }
+  ]
+}
