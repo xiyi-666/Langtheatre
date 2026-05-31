@@ -11,7 +11,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/linguaquest/server/internal/auth"
+	"github.com/linguaquest/server/internal/contentquality"
 	"github.com/linguaquest/server/internal/domain"
+	"github.com/linguaquest/server/internal/ielts"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -438,7 +440,7 @@ func normalizeTTSProvider(input string, fallback string) string {
 func defaultTTSBaseURL(provider string) string {
 	switch strings.ToUpper(strings.TrimSpace(provider)) {
 	case "XIAOMI":
-		return "https://token-plan-cn.xiaomimimo.com/v1"
+		return "https://api.xiaomimimo.com/v1"
 	case "MINIMAX":
 		return "https://api.minimax.io/v1/t2a_v2"
 	case "ALIYUN":
@@ -523,10 +525,7 @@ func (s *Service) MeFromToken(token string) (domain.User, error) {
 }
 
 func (s *Service) GenerateTheater(userID string, language string, topic string, difficulty float64, mode string) (domain.Theater, error) {
-	requiredQuiz := 2
-	if difficulty >= 7.0 {
-		requiredQuiz = 3
-	}
+	requiredQuiz := ielts.ListeningProfileFromTopic(topic, difficulty).QuizCount
 	preparedTopic := prepareTheaterTopic(language, topic)
 	placeholder := domain.Theater{
 		ID:            uuid.NewString(),
@@ -580,6 +579,30 @@ func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic str
 				dialogues = generated
 				quiz = completeQuizSet(theater.Language, theater.Topic, q, requiredQuiz)
 			}
+		}
+	}
+	dialogues = normalizeGeneratedDialoguesForDelivery(theater.Language, dialogues)
+	quiz = normalizeGeneratedQuizForDelivery(theater.Language, quiz)
+	if err := validateGeneratedPracticeForDelivery(theater.Language, false, dialogues, quiz); err != nil {
+		log.Printf("generated theater quality guard failed theater_id=%s err=%v", theater.ID, err)
+		dialogues, quiz = fallbackGeneratedContent(theater.Language, theater.Topic, requiredQuiz)
+		dialogues = normalizeGeneratedDialoguesForDelivery(theater.Language, dialogues)
+		quiz = normalizeGeneratedQuizForDelivery(theater.Language, quiz)
+		if fallbackErr := validateGeneratedPracticeForDelivery(theater.Language, false, dialogues, quiz); fallbackErr != nil {
+			log.Printf("fallback theater quality guard failed theater_id=%s err=%v", theater.ID, fallbackErr)
+			theater.Status = "FAILED"
+			current, getErr := s.store.GetTheater(theater.ID)
+			if getErr != nil {
+				log.Printf("skip failed theater persist theater_id=%s err=%v", theater.ID, getErr)
+				return
+			}
+			theater.IsFavorite = current.IsFavorite
+			theater.ShareCode = current.ShareCode
+			theater.CreatedAt = current.CreatedAt
+			if _, saveErr := s.store.SaveTheater(theater); saveErr != nil {
+				log.Printf("persist failed theater status failed theater_id=%s err=%v", theater.ID, saveErr)
+			}
+			return
 		}
 	}
 	if s.tts != nil {
@@ -921,27 +944,41 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 	}
 
 	language := "ENGLISH"
-	difficulty := 6.5
-	if exam == "CET" {
-		difficulty = 5.5
-	}
+	metadata := ielts.ReadingMetadataFromTopic(exam, topic, level)
+	difficulty := metadata.Band
 
 	// Reading generation should not pollute theater library.
 	quizCount := 5
-	generated, q, err := s.generator.Generate(context.Background(), language, fmt.Sprintf("[%s Reading] %s", exam, topic), difficulty, "APPRECIATION")
-	if err != nil {
-		log.Printf("reading ai generation failed err=%v", err)
-		return domain.ReadingMaterial{}, fmt.Errorf("reading ai generation failed: %w", err)
+	generationTopic := readingGenerationTopic(exam, topic, metadata)
+	usedFallback := false
+	var generated []domain.Dialogue
+	var q []domain.QuizQuestion
+	if s.generator == nil {
+		log.Printf("reading generator is nil, use fallback content topic=%s", topic)
+		generated, q = fallbackReadingContentWithMetadata(topic, metadata, quizCount)
+		usedFallback = true
+	} else {
+		var err error
+		generated, q, err = s.generator.Generate(context.Background(), language, generationTopic, difficulty, "APPRECIATION")
+		if err != nil {
+			log.Printf("reading ai generation failed, use fallback err=%v", err)
+			generated, q = fallbackReadingContentWithMetadata(topic, metadata, quizCount)
+			usedFallback = true
+		}
 	}
 	if len(generated) == 0 {
-		return domain.ReadingMaterial{}, errors.New("reading generation returned empty passage")
+		generated, q = fallbackReadingContentWithMetadata(topic, metadata, quizCount)
+		usedFallback = true
 	}
 	if len(q) < quizCount {
-		return domain.ReadingMaterial{}, fmt.Errorf("reading generation returned insufficient questions: got=%d required=%d", len(q), quizCount)
+		generated, q = fallbackReadingContentWithMetadata(topic, metadata, quizCount)
+		usedFallback = true
 	}
 	if len(q) > quizCount {
 		q = q[:quizCount]
 	}
+	generated = normalizeGeneratedDialoguesForDelivery(language, generated)
+	q = normalizeGeneratedQuizForDelivery(language, q)
 
 	passageParts := make([]string, 0, len(generated))
 	for _, d := range generated {
@@ -953,6 +990,10 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 	passage := strings.Join(passageParts, "\n")
 	if strings.TrimSpace(passage) == "" {
 		return domain.ReadingMaterial{}, errors.New("reading generation returned empty normalized passage")
+	}
+	lengthLimits := ielts.ReadingLengthLimitsFromMetadata(exam, topic, metadata)
+	if err := validateReadingMaterialText(passage, q, lengthLimits.MinWords, lengthLimits.MinSegments); err != nil {
+		return domain.ReadingMaterial{}, err
 	}
 	vocabSet := map[string]struct{}{}
 	vocabulary := make([]string, 0, 8)
@@ -991,18 +1032,25 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 		Language:             language,
 		Level:                level,
 		Topic:                topic,
+		Band:                 metadata.Band,
+		Stage:                metadata.Stage,
+		Section:              metadata.Section,
+		SkillFocus:           metadata.SkillFocus,
+		QuestionType:         metadata.QuestionType,
+		ScenarioFamily:       metadata.ScenarioFamily,
 		Title:                fmt.Sprintf("%s Reading Drill: %s", exam, topic),
 		Passage:              passage,
 		Vocabulary:           vocabulary,
 		Questions:            q,
 		SourceIDs:            sourceIDs,
-		GenerationNote:       "Generated via AI chain with source-category constraints.",
+		GenerationNote:       readingGenerationNote(usedFallback),
 		AudioStatus:          "PENDING",
 		VocabularyItems:      analysis.VocabularyItems,
 		AssociationSentences: analysis.AssociationSentences,
 		GrammarInsights:      analysis.GrammarInsights,
 		CreatedAt:            time.Now(),
 	}
+	ensureReadingMetadata(&material)
 
 	saved, err := s.store.SaveReadingMaterial(material)
 	if err != nil {
@@ -1016,39 +1064,123 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 }
 
 func fallbackReadingGeneratedContent(exam string, topic string, quizCount int) ([]domain.Dialogue, []domain.QuizQuestion) {
-	paragraphs := []string{
-		fmt.Sprintf("In recent years, educators have paid closer attention to how %s influences student learning outcomes, because reading tasks are no longer judged only by speed, but also by depth of understanding and evidence-based reasoning.", topic),
-		"A strong reading routine usually combines previewing, question prediction, and focused scanning, so learners can quickly identify key details while still keeping the main argument in mind.",
-		"Researchers also note that vocabulary growth is most effective when words are repeatedly encountered in meaningful contexts, rather than memorized in isolation, which explains why thematic reading units often outperform random drills.",
-		"At the same time, digital tools can support progress tracking, yet they can become distracting when learners switch tasks too frequently, reducing sustained attention and weakening long-term retention.",
-		"For exam preparation, high-performing students tend to annotate paragraph functions, such as background, evidence, contrast, and conclusion, enabling them to locate answers with greater precision under time pressure.",
-		"Teachers therefore recommend a balanced plan that includes timed practice, error analysis, and periodic review, because each stage targets a different cognitive skill needed for accurate comprehension.",
-		"Another practical strategy is to compare similar passages from different sources, which helps readers detect shifts in tone, purpose, and author stance, all of which are commonly tested in advanced reading sections.",
-		"Ultimately, consistent reflection after each exercise turns reading from a passive activity into an active learning cycle, where students identify weaknesses, adjust methods, and steadily improve performance.",
-	}
+	meta := ielts.ReadingMetadataFromTopic(exam, topic, "")
+	return fallbackReadingContentWithMetadata(topic, meta, quizCount)
+}
 
-	dialogues := make([]domain.Dialogue, 0, len(paragraphs))
-	for idx, p := range paragraphs {
-		dialogues = append(dialogues, domain.Dialogue{
-			Speaker:    "Passage",
-			Text:       p,
-			ZhSubtitle: "段落主旨：围绕阅读能力提升策略与考试表现改进展开。",
-			Timestamp:  float64(idx) * 2.1,
-		})
+func readingGenerationNote(usedFallback bool) string {
+	if usedFallback {
+		return "Generated via structured fallback after AI generation was unavailable or failed quality validation."
 	}
+	return "Generated via AI chain with source-category constraints."
+}
 
-	questions := []domain.QuizQuestion{
-		{Question: "What is the main focus of the passage?", Options: []string{"Improving reading performance through structured strategies", "Replacing reading with digital media", "Eliminating vocabulary learning", "Reducing exam standards"}, AnswerKey: "Improving reading performance through structured strategies"},
-		{Question: "Why are thematic reading units considered effective?", Options: []string{"They avoid repeated exposure", "They provide context for vocabulary use", "They remove the need for review", "They only test grammar"}, AnswerKey: "They provide context for vocabulary use"},
-		{Question: "What risk of digital tools is mentioned?", Options: []string{"They always increase retention", "They reduce teacher workload to zero", "They may distract learners from sustained attention", "They prevent learners from taking notes"}, AnswerKey: "They may distract learners from sustained attention"},
-		{Question: "What do high-performing students do during exam reading?", Options: []string{"Memorize entire passages", "Ignore paragraph roles", "Annotate functions of paragraphs", "Skip difficult sections"}, AnswerKey: "Annotate functions of paragraphs"},
-		{Question: "What is the long-term benefit of post-reading reflection?", Options: []string{"It turns reading into an active improvement cycle", "It removes the need for practice", "It guarantees full marks immediately", "It shortens all passages"}, AnswerKey: "It turns reading into an active improvement cycle"},
+func readingGenerationTopic(exam string, topic string, metadata ielts.ReadingMetadata) string {
+	parts := []string{fmt.Sprintf("[%s Reading]", strings.ToUpper(strings.TrimSpace(exam)))}
+	if metadata.Stage != "" {
+		parts = append(parts, "["+metadata.Stage+"]")
 	}
+	if metadata.Band > 0 {
+		parts = append(parts, fmt.Sprintf("[Band %.1f]", metadata.Band))
+	}
+	if metadata.Section != "" {
+		parts = append(parts, "["+metadata.Section+"]")
+	}
+	if metadata.QuestionType != "" {
+		parts = append(parts, "["+metadata.QuestionType+"]")
+	}
+	if metadata.SkillFocus != "" {
+		parts = append(parts, "Focus: "+metadata.SkillFocus)
+	}
+	cleanTopic := ielts.CleanTopic(topic)
+	if cleanTopic == "" {
+		cleanTopic = strings.TrimSpace(topic)
+	}
+	parts = append(parts, cleanTopic)
+	return strings.Join(parts, " ")
+}
 
-	if len(questions) > quizCount {
-		questions = questions[:quizCount]
+func normalizeGeneratedDialoguesForDelivery(language string, dialogues []domain.Dialogue) []domain.Dialogue {
+	if !strings.EqualFold(strings.TrimSpace(language), "ENGLISH") {
+		return dialogues
 	}
-	return dialogues, questions
+	for i := range dialogues {
+		dialogues[i].Text = contentquality.NormalizeEnglishSpacing(dialogues[i].Text)
+	}
+	return dialogues
+}
+
+func normalizeGeneratedQuizForDelivery(language string, quiz []domain.QuizQuestion) []domain.QuizQuestion {
+	if !strings.EqualFold(strings.TrimSpace(language), "ENGLISH") {
+		return quiz
+	}
+	for i := range quiz {
+		quiz[i].Question = contentquality.NormalizeEnglishSpacing(quiz[i].Question)
+		for j := range quiz[i].Options {
+			quiz[i].Options[j] = contentquality.NormalizeEnglishSpacing(quiz[i].Options[j])
+		}
+		quiz[i].AnswerKey = contentquality.NormalizeEnglishSpacing(quiz[i].AnswerKey)
+		quiz[i].ParagraphRef = contentquality.NormalizeEnglishSpacing(quiz[i].ParagraphRef)
+		quiz[i].Evidence = contentquality.NormalizeEnglishSpacing(quiz[i].Evidence)
+		for j := range quiz[i].Headings {
+			quiz[i].Headings[j] = contentquality.NormalizeEnglishSpacing(quiz[i].Headings[j])
+		}
+		quiz[i].SummaryText = contentquality.NormalizeEnglishSpacing(quiz[i].SummaryText)
+		for j := range quiz[i].WordBank {
+			quiz[i].WordBank[j] = contentquality.NormalizeEnglishSpacing(quiz[i].WordBank[j])
+		}
+		for j := range quiz[i].Answers {
+			quiz[i].Answers[j] = contentquality.NormalizeEnglishSpacing(quiz[i].Answers[j])
+		}
+		for j := range quiz[i].Statements {
+			quiz[i].Statements[j].Text = contentquality.NormalizeEnglishSpacing(quiz[i].Statements[j].Text)
+			quiz[i].Statements[j].Answer = contentquality.NormalizeEnglishSpacing(quiz[i].Statements[j].Answer)
+		}
+	}
+	return quiz
+}
+
+func validateGeneratedPracticeForDelivery(language string, readingMode bool, dialogues []domain.Dialogue, quiz []domain.QuizQuestion) error {
+	english := strings.EqualFold(strings.TrimSpace(language), "ENGLISH")
+	for i, dialogue := range dialogues {
+		if err := contentquality.ValidateReadableText(fmt.Sprintf("dialogue %d", i+1), dialogue.Text, english); err != nil {
+			return err
+		}
+	}
+	genericReadingQuestions := 0
+	for i, question := range quiz {
+		if err := contentquality.ValidateReadableText(fmt.Sprintf("question %d", i+1), question.Question, english); err != nil {
+			return err
+		}
+		for j, option := range question.Options {
+			if err := contentquality.ValidateReadableText(fmt.Sprintf("question %d option %d", i+1, j+1), option, english); err != nil {
+				return err
+			}
+		}
+		if err := contentquality.ValidateReadableText(fmt.Sprintf("question %d answer", i+1), question.AnswerKey, english); err != nil {
+			return err
+		}
+		if readingMode && contentquality.IsGenericReadingQuestion(question.Question) {
+			genericReadingQuestions++
+		}
+	}
+	if readingMode && genericReadingQuestions >= 2 {
+		return fmt.Errorf("reading content contains too many generic questions: %d", genericReadingQuestions)
+	}
+	return nil
+}
+
+func validateReadingMaterialText(passage string, quiz []domain.QuizQuestion, minWords int, minParagraphs int) error {
+	if err := contentquality.ValidateReadableText("reading passage", passage, true); err != nil {
+		return err
+	}
+	if words := contentquality.WordCount(passage); words < minWords {
+		return fmt.Errorf("reading passage too short: got %d words, want at least %d", words, minWords)
+	}
+	if paragraphs := contentquality.ParagraphCount(passage); paragraphs < minParagraphs {
+		return fmt.Errorf("reading passage has too few paragraphs: got %d, want at least %d", paragraphs, minParagraphs)
+	}
+	return validateGeneratedPracticeForDelivery("ENGLISH", true, nil, quiz)
 }
 
 func normalizeReadingAnalysis(in domain.ReadingAnalysis, baseVocabulary []string, topic string) domain.ReadingAnalysis {
@@ -1313,16 +1445,40 @@ func (s *Service) generateReadingAudio(materialID string, text string, language 
 	}
 
 	chunks := splitTextChunks(text, 420)
+	existing, existingErr := s.store.GetReadingMaterial(materialID, "")
 	audioURLs := make([]string, 0, len(chunks))
-	for _, chunk := range chunks {
+	if existingErr == nil && len(existing.AudioURLs) > 0 {
+		audioURLs = append(audioURLs, existing.AudioURLs...)
+		if len(audioURLs) > len(chunks) {
+			audioURLs = audioURLs[:len(chunks)]
+		}
+	}
+	if len(chunks) > 0 && len(audioURLs) >= len(chunks) {
+		if err := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
+			m.AudioStatus = "READY"
+			m.AudioURLs = audioURLs
+			m.AudioURL = audioURLs[0]
+		}); err != nil {
+			log.Printf("reading audio resume ready persist failed material_id=%s err=%v", materialID, err)
+		}
+		return
+	}
+	for index := len(audioURLs); index < len(chunks); index++ {
+		chunk := chunks[index]
 		audioURL, err := s.tts.Synthesize(context.Background(), chunk, language, "")
 		if err != nil || strings.TrimSpace(audioURL) == "" {
 			updateErr := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
-				m.AudioStatus = "FAILED"
-				if err != nil {
-					m.GenerationNote = strings.TrimSpace(m.GenerationNote + " | audio error: " + err.Error())
+				m.AudioURLs = audioURLs
+				if len(audioURLs) > 0 {
+					m.AudioURL = audioURLs[0]
+					m.AudioStatus = "PENDING"
 				} else {
-					m.GenerationNote = strings.TrimSpace(m.GenerationNote + " | audio error: empty audio url")
+					m.AudioStatus = "FAILED"
+				}
+				if err != nil {
+					m.GenerationNote = strings.TrimSpace(m.GenerationNote + fmt.Sprintf(" | audio chunk %d/%d error: %s", index+1, len(chunks), err.Error()))
+				} else {
+					m.GenerationNote = strings.TrimSpace(m.GenerationNote + fmt.Sprintf(" | audio chunk %d/%d error: empty audio url", index+1, len(chunks)))
 				}
 			})
 			if updateErr != nil {
@@ -1342,6 +1498,25 @@ func (s *Service) generateReadingAudio(materialID string, text string, language 
 	}); err != nil {
 		log.Printf("reading audio ready state persist failed material_id=%s err=%v", materialID, err)
 	}
+}
+
+func (s *Service) RetryReadingAudio(userID string, materialID string) (domain.ReadingMaterial, error) {
+	material, err := s.store.GetReadingMaterial(materialID, userID)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	if strings.TrimSpace(material.Passage) == "" {
+		return domain.ReadingMaterial{}, errors.New("reading material has empty passage")
+	}
+	material.AudioStatus = "PENDING"
+	material.GenerationNote = strings.TrimSpace(material.GenerationNote + " | audio retry queued")
+	saved, err := s.store.SaveReadingMaterial(material)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	s.cacheReadingMaterial(saved)
+	go s.generateReadingAudio(saved.ID, saved.Passage, saved.Language)
+	return saved, nil
 }
 
 func splitTextChunks(text string, maxLen int) []string {
@@ -1398,8 +1573,9 @@ func (s *Service) ReadingMaterials(userID string, exam string) ([]domain.Reading
 	if err != nil {
 		return nil, err
 	}
-	for _, item := range result {
-		s.cacheReadingMaterial(item)
+	for i := range result {
+		ensureReadingMetadata(&result[i])
+		s.cacheReadingMaterial(result[i])
 	}
 	return result, nil
 }
@@ -1409,6 +1585,7 @@ func (s *Service) ReadingMaterial(userID string, materialID string) (domain.Read
 	if err != nil {
 		return domain.ReadingMaterial{}, err
 	}
+	ensureReadingMetadata(&item)
 	s.cacheReadingMaterial(item)
 
 	if needsReadingAnalysis(item) {
@@ -1433,6 +1610,31 @@ func (s *Service) ReadingMaterial(userID string, materialID string) (domain.Read
 		item = saved
 	}
 	return item, nil
+}
+
+func ensureReadingMetadata(material *domain.ReadingMaterial) {
+	if material == nil {
+		return
+	}
+	meta := ielts.ReadingMetadataFromTopic(material.Exam, material.Topic, material.Level)
+	if material.Band <= 0 {
+		material.Band = meta.Band
+	}
+	if strings.TrimSpace(material.Stage) == "" {
+		material.Stage = meta.Stage
+	}
+	if strings.TrimSpace(material.Section) == "" {
+		material.Section = meta.Section
+	}
+	if strings.TrimSpace(material.SkillFocus) == "" {
+		material.SkillFocus = meta.SkillFocus
+	}
+	if strings.TrimSpace(material.QuestionType) == "" {
+		material.QuestionType = meta.QuestionType
+	}
+	if strings.TrimSpace(material.ScenarioFamily) == "" {
+		material.ScenarioFamily = meta.ScenarioFamily
+	}
 }
 
 func (s *Service) cacheReadingMaterial(material domain.ReadingMaterial) {
@@ -1685,43 +1887,27 @@ func fallbackGeneratedContent(language string, topic string, requiredQuiz int) (
 	}
 	dialogues := make([]domain.Dialogue, 0, 8)
 	if lang == "ENGLISH" {
-		scenario := strings.TrimSpace(topic)
-		if scenario == "" {
-			scenario = "a delayed morning commute"
-		}
-		lines := []string{
-			fmt.Sprintf("Morning, I just got a message that our usual route is delayed, and it affects %s.", scenario),
-			"Got it. What time do you need to arrive, and what's your backup option right now?",
-			"I need to be there by 8:40, and the fastest backup seems to be bus 23 plus a short walk.",
-			"Can you estimate the transfer time, so we can decide whether to call ahead?",
-			"If traffic is normal, the transfer takes about 12 minutes; otherwise it could be 20.",
-			"Then let's send a quick update first and confirm whether a five-minute delay is acceptable.",
-			"Done. They said a short delay is okay if we share the revised arrival time now.",
-			"Perfect. Keep this pattern: clarify constraints, compare options, then confirm next action.",
-		}
+		profile := ielts.ListeningProfileFromTopic(topic, 6.5)
+		lines := fallbackEnglishListeningLines(topic, profile)
 		for i, text := range lines {
 			dialogues = append(dialogues, domain.Dialogue{
-				Speaker:    map[bool]string{i%2 == 0: "Coordinator", i%2 != 0: "Learner"}[true],
+				Speaker:    fallbackEnglishSpeaker(profile.Section, i),
 				Text:       text,
-				ZhSubtitle: "场景化沟通练习句，强调真实决策流程。",
+				ZhSubtitle: "IELTS 听力场景句，强调信息定位与干扰项辨别。",
 				Timestamp:  float64(i) * 2.0,
 			})
 		}
-		quiz := []domain.QuizQuestion{
-			{Question: "What is the learner's target arrival time?", Options: []string{"8:10", "8:25", "8:40", "9:00"}, AnswerKey: "8:40"},
-			{Question: "Which backup route is mentioned?", Options: []string{"Train line A only", "Bus 23 plus a short walk", "Taxi with no transfer", "Bike sharing only"}, AnswerKey: "Bus 23 plus a short walk"},
-			{Question: "What action do they take before finalizing the route?", Options: []string{"Cancel the appointment", "Wait without notifying anyone", "Send an update and confirm delay acceptance", "Switch to a completely different destination"}, AnswerKey: "Send an update and confirm delay acceptance"},
-		}
+		quiz := fallbackEnglishListeningQuiz(profile)
 		for len(quiz) < requiredQuiz {
 			quiz = append(quiz, domain.QuizQuestion{
-				Question: fmt.Sprintf("According to the dialogue, what is the best summary #%d?", len(quiz)+1),
+				Question: fmt.Sprintf("Which detail is corrected before the speakers agree on the next step? (#%d)", len(quiz)+1),
 				Options: []string{
-					"The speakers avoid the issue.",
-					"They focus on practical communication steps.",
-					"They mainly discuss travel planning.",
-					"They decide to cancel the conversation.",
+					"The original time or location is revised.",
+					"The speakers cancel the task immediately.",
+					"The final answer is unrelated to the situation.",
+					"No detail is changed during the exchange.",
 				},
-				AnswerKey: "They focus on practical communication steps.",
+				AnswerKey: "The original time or location is revised.",
 			})
 		}
 		return dialogues, quiz[:min(requiredQuiz, len(quiz))]
@@ -1769,70 +1955,302 @@ func fallbackGeneratedContent(language string, topic string, requiredQuiz int) (
 }
 
 func fallbackReadingContent(topic string, requiredQuiz int) ([]domain.Dialogue, []domain.QuizQuestion) {
-	cleanTopic := strings.TrimSpace(topic)
+	meta := ielts.ReadingMetadataFromTopic("IELTS", topic, "")
+	return fallbackReadingContentWithMetadata(topic, meta, requiredQuiz)
+}
+
+func fallbackReadingContentWithMetadata(topic string, metadata ielts.ReadingMetadata, requiredQuiz int) ([]domain.Dialogue, []domain.QuizQuestion) {
+	cleanTopic := ielts.CleanTopic(topic)
+	if cleanTopic == "" {
+		cleanTopic = strings.TrimSpace(topic)
+	}
+	limits := ielts.ReadingLengthLimitsFromMetadata("IELTS", topic, metadata)
+	segmentCount := fallbackReadingSegmentCount(limits)
 	segments := []struct {
 		text string
 		zh   string
 	}{
 		{
-			text: fmt.Sprintf("In recent years, the public debate around %s has moved from specialist circles into mainstream policy design. Researchers argue that the issue can no longer be described as a single technical problem, because it combines economic incentives, behavioral habits, and institutional constraints. This shift matters for exam candidates because modern reading passages often test whether readers can identify multi-causal explanations rather than linear cause-and-effect narratives.", cleanTopic),
-			zh:   "该段说明该主题已从单一技术问题转向多因素综合议题。",
+			text: fmt.Sprintf("Public discussion of %s often begins with a simple promise: a new policy, design, or technology will make everyday systems work better. In practice, the subject is rarely that simple. Local authorities, businesses and residents usually approach the same proposal with different expectations, because each group notices a different cost or benefit. Supporters may focus on efficiency and wider access, while critics ask who maintains the system, who pays for it, and who is left out. This tension gives the issue its real significance.", cleanTopic),
+			zh:   "该段引入主题，说明不同群体会从成本、维护和公平等角度看待同一方案。",
 		},
 		{
-			text: "One influential school of thought emphasizes that individual choices are highly sensitive to context. When citizens face uncertain information, they often rely on simple heuristics, such as following peers or repeating familiar routines. These heuristics are efficient in daily life but can produce systematic bias in long-term decisions. Policymakers therefore design interventions that reduce cognitive burden, for example by presenting default options and clearer comparison frameworks.",
-			zh:   "该段强调个体决策受情境影响，并解释启发式决策的利弊。",
+			text: "The first practical question is whether the proposal fits existing routines. A scheme that looks impressive in a report can fail if it asks people to change too many habits at once. Successful projects usually begin with familiar behaviour and then make a small part of that behaviour easier. For example, a service may be placed near a bus stop, a workplace entrance, or a community building so that users meet it during an ordinary journey. Convenience does not guarantee success, but it lowers the first barrier to participation.",
+			zh:   "该段说明方案是否贴近日常习惯会影响参与度。",
 		},
 		{
-			text: "A competing perspective warns that context-based interventions may produce short-term compliance without durable understanding. According to this view, people adapt quickly to new interfaces while leaving deeper assumptions unchanged. As a result, the initial gains may fade when incentives weaken or social norms evolve. Proponents of this perspective recommend combining immediate nudges with long-term education, so that procedural changes are reinforced by conceptual learning.",
-			zh:   "该段提出反方观点：仅靠情境干预可能难以形成长期效果。",
+			text: "A second issue is maintenance. Early descriptions of new initiatives often emphasise opening dates, user numbers and public enthusiasm, but long-term performance depends on quieter work. Equipment must be repaired, staff must answer questions, and data must be checked for errors. If these tasks are not planned from the beginning, the project can appear successful for a few months and then gradually lose reliability. Maintenance is therefore not a minor technical detail; it is part of the social contract between organisers and users.",
+			zh:   "该段强调维护工作决定项目能否长期可靠运行。",
 		},
 		{
-			text: "Historical comparisons provide useful evidence for both positions. In several countries, pilot programs delivered rapid improvements during the first year, particularly where implementation teams monitored feedback weekly. Yet longitudinal data revealed uneven outcomes across regions, suggesting that local governance capacity and trust in institutions played decisive roles. This pattern illustrates a common exam theme: identical policy instruments can yield divergent results when background conditions differ.",
-			zh:   "该段通过跨国历史比较说明同一政策在不同地区效果不一。",
+			text: "Evidence from pilot projects is useful, but it needs careful interpretation. A small trial may attract motivated participants who already support the idea, so its results can look stronger than those of a later city-wide programme. Short trials also tend to measure visible outcomes, such as attendance, travel time or energy use, while missing slower changes in trust and confidence. For this reason, researchers increasingly compare early results with follow-up interviews and administrative records collected after the initial publicity has faded.",
+			zh:   "该段说明试点数据有价值，但需要结合后续证据谨慎解读。",
 		},
 		{
-			text: "Methodologically, scholars caution against overinterpreting headline statistics. Aggregate indicators can conceal distributional effects, meaning that average progress may coexist with widening inequality among subgroups. To address this limitation, recent studies increasingly integrate qualitative interviews with quantitative tracking. By triangulating multiple data sources, researchers can detect hidden trade-offs and provide more actionable recommendations for practitioners and administrators.",
-			zh:   "该段强调研究方法需避免仅看平均值，并倡导多源证据。",
+			text: "Equity is another recurring concern. Average figures may suggest improvement even when benefits are unevenly distributed. A project can reduce waiting times overall while still serving central districts better than outer neighbourhoods. It can also help confident users more than people who need guidance, translation or flexible opening hours. Stronger evaluations therefore separate results by location, income, age or previous experience. This does not make the analysis unnecessarily complicated; it shows whether a public solution is genuinely public.",
+			zh:   "该段指出平均数据可能掩盖不同群体之间的受益差异。",
 		},
 		{
-			text: "For test takers, a practical reading strategy is to map each paragraph to a function before answering questions: background framing, mechanism explanation, counterargument, evidence, methodological caution, and implication. This functional mapping prevents confusion when options include partially true statements. In high-level exams, distractors often recycle vocabulary from the passage while subtly changing logical relationships, so structural understanding is usually more reliable than keyword matching.",
-			zh:   "该段给出应试策略：先识别段落功能，再处理选项干扰。",
+			text: "There is also a communication problem. Organisers often describe a new system using broad words such as innovation, access or sustainability, but these labels do not tell residents what will change on Monday morning. Clear communication links the general aim to specific actions: where to go, what to bring, how long it takes, and what support is available if something goes wrong. When instructions are vague, people may blame themselves for confusion and stop using the service, even if the underlying design is sound.",
+			zh:   "该段强调清晰说明具体操作比抽象口号更有用。",
 		},
 		{
-			text: fmt.Sprintf("Looking ahead, analysts expect the next phase of work on %s to focus on adaptive governance. Instead of fixed annual plans, institutions may adopt iterative cycles with rapid experimentation, transparent reporting, and stakeholder negotiation. Such frameworks require stronger interdisciplinary communication, because legal feasibility, economic efficiency, and social acceptance must be evaluated simultaneously. This final point reinforces the passage's core message: durable progress depends on coordinated systems rather than isolated actions.", cleanTopic),
-			zh:   "该段展望未来治理趋势，强调协同系统比单点行动更关键。",
+			text: fmt.Sprintf("The future of %s is likely to depend on adaptive management rather than a single final design. Adaptive management means testing a limited version, collecting evidence, changing the weak parts and explaining those changes openly. This approach is slower than announcing a complete solution, but it is more honest about uncertainty. It also allows different forms of expertise to interact: technical knowledge can identify what is possible, while local experience can reveal what is practical, trusted and worth repeating.", cleanTopic),
+			zh:   "该段说明未来更可能依赖持续调整和多方证据，而不是一次性方案。",
+		},
+		{
+			text: "However, adaptation has limits. If every decision is treated as temporary, users may feel that rules are unstable and that promises cannot be relied on. Good governance therefore needs a balance between flexibility and commitment. The aims of a project should remain clear, while the methods used to reach them can be revised as evidence improves. This distinction is especially important when money, safety or access to essential services is involved, because users need both responsiveness and a sense of dependable obligation.",
+			zh:   "该段提出适应性治理也需要稳定承诺，不能让规则显得随意。",
+		},
+		{
+			text: "The broader lesson is that durable improvement comes from relationships among design, evidence and trust. A well-designed system makes participation easy; good evidence shows whether the benefits are real; and trust encourages people to keep using the system while it is refined. Weakness in any one part can reduce the value of the others. For that reason, serious assessments should look beyond whether a proposal sounds modern and ask whether it can be maintained, explained, measured and adjusted without losing public confidence.",
+			zh:   "该段总结设计、证据和信任之间的关系，强调可维护和可解释的重要性。",
 		},
 	}
 	dialogues := make([]domain.Dialogue, 0, len(segments))
-	for i, seg := range segments {
+	for i, seg := range segments[:segmentCount] {
+		text := fallbackReadingSegmentText(seg.text, cleanTopic, metadata.Band, i)
 		dialogues = append(dialogues, domain.Dialogue{
 			Speaker:    "Passage",
-			Text:       seg.text,
+			Text:       text,
 			ZhSubtitle: seg.zh,
 			Timestamp:  float64(i) * 2,
 		})
 	}
 
-	quiz := []domain.QuizQuestion{
-		{Question: "What is the central argument of the passage?", Options: []string{"The topic is purely technical and easy to solve", "Durable progress requires coordinated systems and context-aware design", "Short-term incentives always guarantee long-term outcomes", "Quantitative data should replace interviews in all studies"}, AnswerKey: "Durable progress requires coordinated systems and context-aware design"},
-		{Question: "Why do the authors discuss heuristics in decision-making?", Options: []string{"To show that people never make rational choices", "To explain why context can shape choices but also create bias", "To reject all behavior-based interventions", "To argue that defaults are ineffective"}, AnswerKey: "To explain why context can shape choices but also create bias"},
-		{Question: "What limitation of aggregate indicators is highlighted?", Options: []string{"They are too expensive to collect", "They cannot be compared across countries", "They may hide unequal outcomes within subgroups", "They always underestimate policy success"}, AnswerKey: "They may hide unequal outcomes within subgroups"},
-		{Question: "Which reading strategy is recommended for exam candidates?", Options: []string{"Memorize every number in the passage", "Translate each sentence literally before answering", "Map paragraph functions before evaluating options", "Answer quickly based on repeated keywords"}, AnswerKey: "Map paragraph functions before evaluating options"},
-		{Question: "How does the passage characterize future governance?", Options: []string{"More rigid annual plans with less feedback", "Adaptive cycles with experimentation and transparent reporting", "A return to single-discipline decision making", "Complete replacement of institutions by individuals"}, AnswerKey: "Adaptive cycles with experimentation and transparent reporting"},
-	}
+	quiz := fallbackReadingQuiz(metadata, requiredQuiz)
 	for len(quiz) < requiredQuiz {
-		quiz = append(quiz, domain.QuizQuestion{
-			Question: fmt.Sprintf("According to the passage, which statement is best supported? (#%d)", len(quiz)+1),
-			Options: []string{
-				"Policy outcomes are identical across all regions.",
-				"Structural understanding is often more reliable than keyword matching.",
-				"Long-term education has no role in behavior change.",
-				"Exam passages avoid counterarguments.",
-			},
-			AnswerKey: "Structural understanding is often more reliable than keyword matching.",
-		})
+		quiz = append(quiz, fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Multiple Choice"}, 1)[0])
 	}
 	return dialogues, quiz[:min(requiredQuiz, len(quiz))]
+}
+
+func fallbackReadingSegmentText(base string, topic string, band float64, index int) string {
+	text := base
+	if band >= 6.0 {
+		text += " " + fallbackReadingEvidenceSentence(topic, index)
+	}
+	if band >= 7.0 {
+		text += " " + fallbackReadingAdvancedSentence(topic, index)
+	}
+	return text
+}
+
+func fallbackReadingEvidenceSentence(topic string, index int) string {
+	sentences := []string{
+		"Local reports on " + topic + " usually show this pattern most clearly when early enthusiasm is compared with ordinary use several months later.",
+		"This distinction matters because small design details can decide whether a service becomes routine or remains an occasional novelty.",
+		"In several evaluations, reliability was valued more highly than speed because users wanted confidence before changing established habits.",
+		"Follow-up interviews are especially useful here because they reveal problems that headline figures often treat as minor exceptions.",
+		"Such comparisons help explain why the same intervention can produce visible gains in one district and only limited change in another.",
+		"Clear instructions also make later evaluation fairer, since users and organisers are then working with the same expectations.",
+		"Without this cycle of evidence and revision, even a well-funded project can become a short-lived demonstration rather than a dependable service.",
+		"Researchers therefore treat stability and flexibility as linked qualities, not as opposing choices.",
+		"The most persuasive assessments combine measurable outcomes with evidence about trust, access and long-term administrative capacity.",
+	}
+	return sentences[index%len(sentences)]
+}
+
+func fallbackReadingAdvancedSentence(topic string, index int) string {
+	sentences := []string{
+		"For higher-level analysis, the important point is that " + topic + " should be read as a system of incentives and constraints rather than as a single isolated reform.",
+		"This also creates a useful tension between measurable efficiency and less visible forms of social legitimacy.",
+		"Consequently, a policy can be technically successful while remaining fragile if its benefits depend on conditions that cannot easily be reproduced.",
+		"The methodological challenge is to separate genuine causal influence from the temporary effects of publicity, novelty and selective participation.",
+		"That is why distributional evidence often changes the interpretation of results that initially appear straightforward.",
+		"In this context, communication is not merely promotional; it becomes part of the mechanism through which cooperation is sustained.",
+		"Adaptive systems are strongest when revision is transparent enough to preserve confidence rather than create uncertainty.",
+		"The central issue is therefore not whether adjustment is necessary, but how institutions decide which adjustments are justified.",
+		"This broader framing prevents the topic from being reduced to a simple question of approval or resistance.",
+	}
+	return sentences[index%len(sentences)]
+}
+
+func fallbackReadingSegmentCount(limits ielts.ReadingLengthLimits) int {
+	switch {
+	case limits.MinWords >= 820:
+		return min(limits.MaxSegments, 9)
+	case limits.MinWords >= 700:
+		return min(limits.MaxSegments, 8)
+	default:
+		return min(limits.MaxSegments, 7)
+	}
+}
+
+func fallbackEnglishListeningLines(topic string, profile ielts.ListeningProfile) []string {
+	scenario := ielts.CleanTopic(topic)
+	if scenario == "" {
+		scenario = "a campus services enquiry"
+	}
+	switch profile.Section {
+	case 1:
+		return []string{
+			fmt.Sprintf("Good morning, Brookdale Language Centre. Are you calling about the %s booking form?", scenario),
+			"Yes. I need to confirm the afternoon course, but I may have written the start date incorrectly.",
+			"The course starts on the fifteenth of July, not the fifth, and the fee is two hundred and forty pounds.",
+			"Thanks. Could you spell the tutor's surname for the form?",
+			"Certainly. It is H-A-R-G-R-E-A-V-E-S, and the room number is B twelve.",
+			"I also had a note about a deposit. Is it forty pounds or fourteen pounds?",
+			"It is forty pounds. The balance is due one week before the first class.",
+			"Great, I will update the date, the spelling, and the payment details now.",
+		}
+	case 2:
+		return []string{
+			fmt.Sprintf("Welcome to the orientation for %s. We will begin beside the main gate, facing the library.", scenario),
+			"The registration desk is not in the library this year; it has moved to the hall behind the cafe.",
+			"If you need the quiet study room, walk past the cafe and turn left before the glass corridor.",
+			"The sports centre is on the opposite side of the courtyard, but visitors should enter through the west door.",
+			"Maps show an older route through the garden, yet that path is closed during resurfacing work.",
+			"Workshop tickets can be collected after the safety briefing, not before it.",
+			"The final stop is the advice office, where staff can explain bus passes and local bank letters.",
+			"Please keep the printed map because the temporary signs will be removed tomorrow morning.",
+		}
+	case 3:
+		return []string{
+			fmt.Sprintf("I think our presentation on %s should compare the survey results with the interview notes.", scenario),
+			"Maybe, but I am worried the survey sample is too narrow to support a strong conclusion.",
+			"Dr Patel said the weakness is acceptable if we explain why the interviews add depth.",
+			"I agree about the interviews, though I still want a chart showing how opinions changed after the trial.",
+			"That works. I can introduce the chart, and you can discuss why two participants changed their views.",
+			"Let's also mention the conflicting evidence instead of hiding it in the appendix.",
+			"Good idea. The tutor usually rewards groups that acknowledge limitations clearly.",
+			"So our final claim should be cautious: the trial suggests improvement, but the evidence is not yet decisive.",
+		}
+	default:
+		return []string{
+			fmt.Sprintf("Today we will examine %s as an example of how institutions respond to complex change.", scenario),
+			"Early studies treated the issue as a technical problem, but later work emphasized social behaviour.",
+			"A key turning point came when researchers compared short pilot schemes with longer regional data.",
+			"The pilot schemes looked successful at first because participants received weekly guidance.",
+			"However, the long-term data showed that gains faded where local trust and administrative capacity were weak.",
+			"This contrast illustrates why a single policy tool may produce different results in different settings.",
+			"For your notes, record three factors: incentives, institutional trust, and feedback speed.",
+			"These factors will help explain why adaptive systems are often more durable than fixed annual plans.",
+		}
+	}
+}
+
+func fallbackEnglishSpeaker(section int, index int) string {
+	switch section {
+	case 1:
+		if index%2 == 0 {
+			return "Receptionist"
+		}
+		return "Caller"
+	case 2:
+		return "Guide"
+	case 3:
+		if index%2 == 0 {
+			return "Student A"
+		}
+		return "Student B"
+	default:
+		return "Lecturer"
+	}
+}
+
+func fallbackEnglishListeningQuiz(profile ielts.ListeningProfile) []domain.QuizQuestion {
+	switch profile.Section {
+	case 1:
+		return []domain.QuizQuestion{
+			{Question: "What is the corrected start date?", Options: []string{"5 July", "15 July", "14 July", "1 July"}, AnswerKey: "15 July", Type: "Form Completion"},
+			{Question: "How is the tutor's surname spelled?", Options: []string{"H-A-R-G-R-E-A-V-E-S", "H-A-R-G-R-A-V-E-S", "H-A-R-G-R-E-E-V-S", "H-A-R-G-R-I-E-V-E-S"}, AnswerKey: "H-A-R-G-R-E-A-V-E-S", Type: "Spelling"},
+			{Question: "What deposit must the caller pay?", Options: []string{"14 pounds", "40 pounds", "140 pounds", "240 pounds"}, AnswerKey: "40 pounds", Type: "Number Detail"},
+		}
+	case 2:
+		return []domain.QuizQuestion{
+			{Question: "Where is the registration desk this year?", Options: []string{"Inside the library", "Behind the cafe", "At the west door", "Beside the advice office"}, AnswerKey: "Behind the cafe", Type: "Map Detail"},
+			{Question: "Which route is unavailable?", Options: []string{"The garden path", "The glass corridor", "The west entrance", "The cafe stairs"}, AnswerKey: "The garden path", Type: "Route Detail"},
+			{Question: "When can workshop tickets be collected?", Options: []string{"Before the tour", "After the safety briefing", "Tomorrow morning", "During registration"}, AnswerKey: "After the safety briefing", Type: "Instruction Detail"},
+		}
+	case 3:
+		return []domain.QuizQuestion{
+			{Question: "What concern does Student B raise about the survey?", Options: []string{"The topic is outdated", "The sample is too narrow", "The chart is too detailed", "The tutor rejected the interviews"}, AnswerKey: "The sample is too narrow", Type: "Opinion Matching"},
+			{Question: "Why do they decide to include conflicting evidence?", Options: []string{"It makes the claim more cautious", "It removes the need for interviews", "It proves the sample is large", "It belongs in the title"}, AnswerKey: "It makes the claim more cautious", Type: "Reason Matching"},
+			{Question: "What final claim do the students prefer?", Options: []string{"The evidence is decisive", "The trial suggests improvement but remains limited", "The interviews should be ignored", "The survey should be repeated immediately"}, AnswerKey: "The trial suggests improvement but remains limited", Type: "Decision Detail"},
+		}
+	default:
+		return []domain.QuizQuestion{
+			{Question: "Which three factors should students record?", Options: []string{"Incentives, institutional trust, and feedback speed", "Costs, climate, and population size", "Technology, marketing, and tourism", "Legislation, exams, and transport"}, AnswerKey: "Incentives, institutional trust, and feedback speed", Type: "Note Completion"},
+			{Question: "Why did the pilot schemes appear successful at first?", Options: []string{"Participants received weekly guidance", "Local trust was measured daily", "Annual plans were abandoned", "No regional data was collected"}, AnswerKey: "Participants received weekly guidance", Type: "Lecture Detail"},
+			{Question: "What does the lecturer say about fixed annual plans?", Options: []string{"They are always more durable", "They may be less durable than adaptive systems", "They remove the need for feedback", "They explain every regional difference"}, AnswerKey: "They may be less durable than adaptive systems", Type: "Summary Detail"},
+		}
+	}
+}
+
+func fallbackReadingQuiz(metadata ielts.ReadingMetadata, requiredQuiz int) []domain.QuizQuestion {
+	switch ielts.QuestionTypeKey(metadata.QuestionType) {
+	case "matching_headings":
+		headings := []string{
+			"Different expectations behind public proposals",
+			"The importance of fitting existing routines",
+			"Why maintenance determines long-term reliability",
+			"Interpreting pilot evidence with caution",
+			"How averages can hide unequal benefits",
+			"Clear communication as practical support",
+			"Adaptive management and open revision",
+		}
+		quiz := []domain.QuizQuestion{
+			{Type: "Matching Headings", Question: "Choose the best heading for paragraph 1.", ParagraphRef: "Paragraph 1", Headings: headings, Options: headings, AnswerKey: headings[0], Evidence: "different expectations"},
+			{Type: "Matching Headings", Question: "Choose the best heading for paragraph 2.", ParagraphRef: "Paragraph 2", Headings: headings, Options: headings, AnswerKey: headings[1], Evidence: "fits existing routines"},
+			{Type: "Matching Headings", Question: "Choose the best heading for paragraph 3.", ParagraphRef: "Paragraph 3", Headings: headings, Options: headings, AnswerKey: headings[2], Evidence: "long-term performance depends on quieter work"},
+			{Type: "Matching Headings", Question: "Choose the best heading for paragraph 4.", ParagraphRef: "Paragraph 4", Headings: headings, Options: headings, AnswerKey: headings[3], Evidence: "A small trial may attract motivated participants"},
+			{Type: "Matching Headings", Question: "Choose the best heading for paragraph 5.", ParagraphRef: "Paragraph 5", Headings: headings, Options: headings, AnswerKey: headings[4], Evidence: "benefits are unevenly distributed"},
+		}
+		return quiz[:min(requiredQuiz, len(quiz))]
+	case "matching_information":
+		options := []string{"Paragraph 3", "Paragraph 4", "Paragraph 5", "Paragraph 6", "Paragraph 7"}
+		quiz := []domain.QuizQuestion{
+			{Type: "Matching Information", Question: "Which paragraph explains that residents need concrete details before using a service?", Options: options, AnswerKey: "Paragraph 6", ParagraphRef: "Paragraph 6", Evidence: "where to go, what to bring, how long it takes"},
+			{Type: "Matching Information", Question: "Which paragraph warns that small trials may overstate later performance?", Options: options, AnswerKey: "Paragraph 4", ParagraphRef: "Paragraph 4", Evidence: "A small trial may attract motivated participants"},
+			{Type: "Matching Information", Question: "Which paragraph says average figures can hide uneven benefits?", Options: options, AnswerKey: "Paragraph 5", ParagraphRef: "Paragraph 5", Evidence: "benefits are unevenly distributed"},
+			{Type: "Matching Information", Question: "Which paragraph describes adaptive management as testing and revising a limited version?", Options: options, AnswerKey: "Paragraph 7", ParagraphRef: "Paragraph 7", Evidence: "testing a limited version, collecting evidence, changing the weak parts"},
+			{Type: "Matching Information", Question: "Which paragraph describes the quieter work behind long-term performance?", Options: options, AnswerKey: "Paragraph 3", ParagraphRef: "Paragraph 3", Evidence: "long-term performance depends on quieter work"},
+		}
+		return quiz[:min(requiredQuiz, len(quiz))]
+	case "tfng":
+		options := []string{"TRUE", "FALSE", "NOT GIVEN"}
+		quiz := []domain.QuizQuestion{
+			{Type: "TFNG", Question: "Projects can fail if they require people to change too many habits at once.", Options: options, AnswerKey: "TRUE", Evidence: "fail if it asks people to change too many habits at once"},
+			{Type: "TFNG", Question: "The passage says opening dates are more important than maintenance.", Options: options, AnswerKey: "FALSE", Evidence: "long-term performance depends on quieter work"},
+			{Type: "TFNG", Question: "The passage gives the exact cost of running each pilot program.", Options: options, AnswerKey: "NOT GIVEN", Evidence: "not stated"},
+			{Type: "TFNG", Question: "Average figures may hide unevenly distributed benefits.", Options: options, AnswerKey: "TRUE", Evidence: "benefits are unevenly distributed"},
+			{Type: "TFNG", Question: "The passage argues that vague instructions can discourage continued use.", Options: options, AnswerKey: "TRUE", Evidence: "When instructions are vague"},
+		}
+		return quiz[:min(requiredQuiz, len(quiz))]
+	case "summary_completion":
+		wordBank := []string{"routines", "maintenance", "interviews", "adaptive", "trust", "equity"}
+		quiz := []domain.QuizQuestion{
+			{Type: "Summary Completion", Question: "Complete the summary using the best word from the bank.", SummaryText: "A proposal is more likely to work when it fits existing _____.", WordBank: wordBank, Options: wordBank, AnswerKey: "routines", Answers: []string{"routines"}, Evidence: "fits existing routines"},
+			{Type: "Summary Completion", Question: "Complete the summary using the best word from the bank.", SummaryText: "Long-term performance depends partly on planned _____.", WordBank: wordBank, Options: wordBank, AnswerKey: "maintenance", Answers: []string{"maintenance"}, Evidence: "A second issue is maintenance"},
+			{Type: "Summary Completion", Question: "Complete the summary using the best word from the bank.", SummaryText: "Researchers compare early results with follow-up _____ and records.", WordBank: wordBank, Options: wordBank, AnswerKey: "interviews", Answers: []string{"interviews"}, Evidence: "follow-up interviews and administrative records"},
+			{Type: "Summary Completion", Question: "Complete the summary using the best word from the bank.", SummaryText: "Future development may rely on _____ management.", WordBank: wordBank, Options: wordBank, AnswerKey: "adaptive", Answers: []string{"adaptive"}, Evidence: "adaptive management"},
+			{Type: "Summary Completion", Question: "Complete the summary using the best word from the bank.", SummaryText: "Durable improvement depends on design, evidence and _____.", WordBank: wordBank, Options: wordBank, AnswerKey: "trust", Answers: []string{"trust"}, Evidence: "design, evidence and trust"},
+		}
+		return quiz[:min(requiredQuiz, len(quiz))]
+	case "mixed":
+		multipleChoice := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Multiple Choice"}, 5)
+		matchingInformation := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Matching Information"}, 5)
+		tfng := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "TFNG"}, 5)
+		summaryCompletion := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Summary Completion"}, 5)
+		quiz := []domain.QuizQuestion{
+			multipleChoice[0],
+			matchingInformation[0],
+			tfng[0],
+			summaryCompletion[0],
+			multipleChoice[1],
+		}
+		return quiz[:min(requiredQuiz, len(quiz))]
+	default:
+		quiz := []domain.QuizQuestion{
+			{Type: "Multiple Choice", Question: "According to paragraph 4, why can a small trial look stronger than a later city-wide programme?", ParagraphRef: "Paragraph 4", Evidence: "A small trial may attract motivated participants", Options: []string{"It may attract participants who already support the idea", "It always measures every long-term outcome", "It excludes administrative records by design", "It is usually conducted after publicity has faded"}, AnswerKey: "It may attract participants who already support the idea"},
+			{Type: "Multiple Choice", Question: "What problem with average figures is identified in paragraph 5?", ParagraphRef: "Paragraph 5", Evidence: "benefits are unevenly distributed", Options: []string{"They can hide unequal benefits across groups", "They make local evidence impossible to collect", "They always exaggerate the cost of services", "They prove that central districts receive no support"}, AnswerKey: "They can hide unequal benefits across groups"},
+			{Type: "Multiple Choice", Question: "What may happen if maintenance is not planned from the beginning?", ParagraphRef: "Paragraph 3", Evidence: "gradually lose reliability", Options: []string{"The project may gradually lose reliability", "The opening date will become more popular", "User questions will disappear immediately", "Data checking will become unnecessary"}, AnswerKey: "The project may gradually lose reliability"},
+			{Type: "Multiple Choice", Question: "Why are broad labels such as innovation or sustainability insufficient?", ParagraphRef: "Paragraph 6", Evidence: "do not tell residents what will change on Monday morning", Options: []string{"They do not explain the specific actions users must take", "They provide too many exact operating instructions", "They remove the need for user support", "They make the underlying design unsound"}, AnswerKey: "They do not explain the specific actions users must take"},
+			{Type: "Multiple Choice", Question: "What does paragraph 7 say adaptive management involves?", ParagraphRef: "Paragraph 7", Evidence: "testing a limited version, collecting evidence, changing the weak parts", Options: []string{"Testing a limited version and revising weak parts", "Announcing a complete solution without revision", "Replacing local experience with technical knowledge", "Avoiding evidence until public trust declines"}, AnswerKey: "Testing a limited version and revising weak parts"},
+		}
+		return quiz[:min(requiredQuiz, len(quiz))]
+	}
 }
 
 func min(a int, b int) int {

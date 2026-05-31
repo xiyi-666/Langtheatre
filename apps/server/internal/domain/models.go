@@ -78,9 +78,23 @@ type Dialogue struct {
 
 // QuizQuestion pairs a comprehension question with a short reference answer used only server-side for grading.
 type QuizQuestion struct {
-	Question  string   `json:"question"`
-	Options   []string `json:"options,omitempty"`
-	AnswerKey string   `json:"answerKey"`
+	Question     string             `json:"question"`
+	Options      []string           `json:"options,omitempty"`
+	AnswerKey    string             `json:"answerKey"`
+	Type         string             `json:"type,omitempty"`
+	ParagraphRef string             `json:"paragraphRef,omitempty"`
+	Evidence     string             `json:"evidence,omitempty"`
+	Headings     []string           `json:"headings,omitempty"`
+	Statements   []ReadingStatement `json:"statements,omitempty"`
+	SummaryText  string             `json:"summaryText,omitempty"`
+	WordBank     []string           `json:"wordBank,omitempty"`
+	Answers      []string           `json:"answers,omitempty"`
+}
+
+type ReadingStatement struct {
+	ID     string `json:"id"`
+	Text   string `json:"text"`
+	Answer string `json:"answer"`
 }
 
 type Character struct {
@@ -144,6 +158,12 @@ type ReadingMaterial struct {
 	Language             string
 	Level                string
 	Topic                string
+	Band                 float64
+	Stage                string
+	Section              string
+	SkillFocus           string
+	QuestionType         string
+	ScenarioFamily       string
 	Title                string
 	Passage              string
 	Vocabulary           []string

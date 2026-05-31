@@ -26,12 +26,29 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 		},
 	})
 
+	readingStatementType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ReadingStatement",
+		Fields: graphql.Fields{
+			"id":     &graphql.Field{Type: graphql.String},
+			"text":   &graphql.Field{Type: graphql.String},
+			"answer": &graphql.Field{Type: graphql.String},
+		},
+	})
+
 	theaterQuizPublicType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "TheaterQuizQuestion",
 		Fields: graphql.Fields{
-			"question":  &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"options":   &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphql.String)))},
-			"answerKey": &graphql.Field{Type: graphql.String},
+			"question":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"options":      &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphql.String)))},
+			"answerKey":    &graphql.Field{Type: graphql.String},
+			"type":         &graphql.Field{Type: graphql.String},
+			"paragraphRef": &graphql.Field{Type: graphql.String},
+			"evidence":     &graphql.Field{Type: graphql.String},
+			"headings":     &graphql.Field{Type: graphql.NewList(graphql.String)},
+			"statements":   &graphql.Field{Type: graphql.NewList(readingStatementType)},
+			"summaryText":  &graphql.Field{Type: graphql.String},
+			"wordBank":     &graphql.Field{Type: graphql.NewList(graphql.String)},
+			"answers":      &graphql.Field{Type: graphql.NewList(graphql.String)},
 		},
 	})
 
@@ -90,8 +107,16 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 							options = []string{}
 						}
 						public = append(public, map[string]interface{}{
-							"question": q.Question,
-							"options":  options,
+							"question":     q.Question,
+							"options":      options,
+							"type":         q.Type,
+							"paragraphRef": q.ParagraphRef,
+							"evidence":     q.Evidence,
+							"headings":     q.Headings,
+							"statements":   q.Statements,
+							"summaryText":  q.SummaryText,
+							"wordBank":     q.WordBank,
+							"answers":      q.Answers,
 						})
 					}
 					return public, nil
@@ -230,6 +255,12 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 			"language":       &graphql.Field{Type: graphql.String},
 			"level":          &graphql.Field{Type: graphql.String},
 			"topic":          &graphql.Field{Type: graphql.String},
+			"band":           &graphql.Field{Type: graphql.Float},
+			"stage":          &graphql.Field{Type: graphql.String},
+			"section":        &graphql.Field{Type: graphql.String},
+			"skillFocus":     &graphql.Field{Type: graphql.String},
+			"questionType":   &graphql.Field{Type: graphql.String},
+			"scenarioFamily": &graphql.Field{Type: graphql.String},
 			"title":          &graphql.Field{Type: graphql.String},
 			"passage":        &graphql.Field{Type: graphql.String},
 			"vocabulary":     &graphql.Field{Type: graphql.NewList(graphql.String)},
@@ -251,7 +282,19 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 						if options == nil {
 							options = []string{}
 						}
-						public = append(public, map[string]interface{}{"question": q.Question, "options": options, "answerKey": q.AnswerKey})
+						public = append(public, map[string]interface{}{
+							"question":     q.Question,
+							"options":      options,
+							"answerKey":    q.AnswerKey,
+							"type":         q.Type,
+							"paragraphRef": q.ParagraphRef,
+							"evidence":     q.Evidence,
+							"headings":     q.Headings,
+							"statements":   q.Statements,
+							"summaryText":  q.SummaryText,
+							"wordBank":     q.WordBank,
+							"answers":      q.Answers,
+						})
 					}
 					return public, nil
 				},
@@ -608,6 +651,19 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 					}
 					level, _ := p.Args["level"].(string)
 					return svc.GenerateReadingMaterial(userID, p.Args["exam"].(string), p.Args["topic"].(string), level, sourceIDs)
+				},
+			},
+			"retryReadingAudio": &graphql.Field{
+				Type: readingMaterialType,
+				Args: graphql.FieldConfigArgument{
+					"materialId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
+					return svc.RetryReadingAudio(userID, p.Args["materialId"].(string))
 				},
 			},
 			"submitAnswers": &graphql.Field{

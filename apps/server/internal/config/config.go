@@ -120,7 +120,7 @@ func getenvInt(key string, fallback int) int {
 func defaultTTSBaseURL(provider string) string {
 	switch strings.ToUpper(strings.TrimSpace(provider)) {
 	case "XIAOMI":
-		return "https://token-plan-cn.xiaomimimo.com/v1"
+		return "https://api.xiaomimimo.com/v1"
 	case "MINIMAX":
 		return "https://api.minimax.io/v1/t2a_v2"
 	case "ALIYUN":

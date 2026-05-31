@@ -67,7 +67,7 @@ OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.4
 OPENAI_BASE_URL=http://43.172.5.210:3000/v1
 TTS_PROVIDER=XIAOMI
-TTS_API_URL=https://token-plan-cn.xiaomimimo.com/v1
+TTS_API_URL=https://api.xiaomimimo.com/v1
 TTS_API_KEY=
 TTS_VOICE=mimo_default
 TTS_MODEL=mimo-v2.5-tts
@@ -78,7 +78,7 @@ TTS_AUDIO_FORMAT=wav
 
 ```
 TTS_PROVIDER=XIAOMI
-TTS_API_URL=https://token-plan-cn.xiaomimimo.com/v1
+TTS_API_URL=https://api.xiaomimimo.com/v1
 TTS_MODEL=mimo-v2.5-tts
 TTS_VOICE=Chloe
 TTS_AUDIO_FORMAT=wav

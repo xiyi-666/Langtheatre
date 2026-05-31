@@ -13,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/linguaquest/server/internal/contentquality"
 	"github.com/linguaquest/server/internal/domain"
+	"github.com/linguaquest/server/internal/ielts"
 )
 
 type OpenAIGenerator struct {
@@ -27,6 +29,7 @@ type OpenAIGenerator struct {
 
 const (
 	modelAPIMaxRetries = 2
+	modelAPITimeout    = 180 * time.Second
 )
 
 const (
@@ -37,7 +40,7 @@ const (
 
 func NewOpenAIGenerator(apiKey string, model string, baseURL string) *OpenAIGenerator {
 	generator := &OpenAIGenerator{
-		Client: &http.Client{Timeout: 45 * time.Second},
+		Client: &http.Client{Timeout: modelAPITimeout},
 	}
 	generator.UpdateModelConfig(domain.ModelConfig{
 		Provider: defaultModelProvider,
@@ -132,16 +135,20 @@ func isReadingGeneration(mode string, topic string) bool {
 	return strings.EqualFold(strings.TrimSpace(mode), "APPRECIATION") && strings.Contains(strings.ToLower(topic), "reading")
 }
 
+func readingLengthLimitsForTopic(topic string) ielts.ReadingLengthLimits {
+	meta := ielts.ReadingMetadataFromTopic(readingExamFromTopic(topic), topic, "")
+	return ielts.ReadingLengthLimitsFromMetadata(readingExamFromTopic(topic), topic, meta)
+}
+
 func readingMinWords(topic string) int {
-	t := strings.ToUpper(topic)
-	switch {
-	case strings.Contains(t, "[IELTS READING]"):
-		return 620
-	case strings.Contains(t, "[CET READING]"):
-		return 480
-	default:
-		return 520
+	return readingLengthLimitsForTopic(topic).MinWords
+}
+
+func readingExamFromTopic(topic string) string {
+	if strings.Contains(strings.ToUpper(topic), "CET") {
+		return "CET"
 	}
+	return "IELTS"
 }
 
 // Generate returns dialogues and comprehension questions with options and reference answers for server-side grading.
@@ -152,32 +159,76 @@ func (g *OpenAIGenerator) Generate(ctx context.Context, language string, topic s
 	}
 	quizCount := requiredQuizCount(difficulty)
 	readingMode := isReadingGeneration(mode, topic)
+	listeningProfile := ielts.ListeningProfile{}
+	if !readingMode {
+		listeningProfile = ielts.ListeningProfileFromTopic(topic, difficulty)
+		quizCount = listeningProfile.QuizCount
+	}
 	if readingMode {
 		quizCount = 5
 	}
 	sys := languageDirective(language) + " Output one JSON object only, no markdown fences."
 	user := ""
 	if readingMode {
-		minWords := readingMinWords(topic)
+		lengthLimits := readingLengthLimitsForTopic(topic)
+		metadata := ielts.ReadingMetadataFromTopic(readingExamFromTopic(topic), topic, "")
+		questionInstruction := readingQuestionInstruction(metadata.QuestionType)
 		user = fmt.Sprintf(
-			`Learning language code: %s. Topic: %s. Difficulty: %.1f. Mode: %s.
-Create an exam-style long reading passage suitable for IELTS/CET practice.
-Length requirement: total English word count MUST be at least %d words.
-Structure:
-- 8 to 10 passage segments in "dialogues" array.
-- Each segment text should be a coherent paragraph (not chat turns), around 65-95 words.
-- Keep style formal and information-dense, like real exam materials.
+			`Learning language code: %s.
+Exam/topic brief: %s.
+Difficulty/Band: %.1f.
+Mode: %s.
+
+Create one original IELTS/CET-style academic reading drill. Do not copy official test content.
+
+Reading controls:
+- Band: %.1f.
+- Stage: %s.
+- Question type: %s.
+- Skill focus: %s.
+- Scenario family: %s.
+- Length requirement: total English word count MUST be between %d and %d words. Do not go below or above this range.
+- Structure: %d to %d passage segments in "dialogues" array.
+- Each segment text should be a coherent paragraph, not a chat turn.
+- Paragraph length: %s.
+- Band-specific difficulty: %s.
+- Passage text must never include prompt labels, bracket tags, task instructions, or metadata.
+
 JSON shape:
-{"dialogues":[{"speaker":"Passage","text":"...","zhSubtitle":"..."}],"quiz":[{"question":"...","options":["...","...","...","..."],"answerKey":"..."}]}
+{"dialogues":[{"speaker":"Passage","text":"...","zhSubtitle":"..."}],"quiz":[{"type":"...","question":"...","paragraphRef":"...","evidence":"...","options":["..."],"answerKey":"...","headings":["..."],"summaryText":"...","wordBank":["..."],"answers":["..."],"statements":[{"id":"...","text":"...","answer":"..."}]}]}
+Required top-level keys:
+- The JSON object MUST contain both "dialogues" and "quiz".
+- Do not stop after the "dialogues" array. The "quiz" array is mandatory.
+- For Summary Completion, include BOTH "wordBank" and "options" with the same entries.
+- For Matching Headings, include BOTH "headings" and "options" with the same heading bank.
 Rules for dialogues.zhSubtitle:
 - Must be concise Simplified Chinese explanation of that paragraph's core idea.
 - Do not translate word-by-word.
 Rules for quiz:
-1) Create exactly %d multiple-choice questions.
-2) Cover varied skills: main idea, detail locating, inference, vocabulary-in-context, author attitude/structure.
-3) options must contain exactly 4 choices, only one correct.
-4) answerKey must be exactly one of the 4 option strings (verbatim match).`,
-			language, topic, difficulty, mode, minWords, quizCount,
+1) Create exactly %d questions.
+2) Every question must be answerable from paragraph evidence and use paraphrase.
+3) Avoid generic questions such as "What is the main focus of the passage?"
+4) Use this exact task structure: %s
+5) For any item with options, answerKey must exactly match one option.
+6) evidence must be an exact short quote copied from the passage text, usually 4-18 words, not an explanation.
+7) paragraphRef must be one paragraph label such as "Paragraph 4", not a range.`,
+			language,
+			topic,
+			difficulty,
+			mode,
+			metadata.Band,
+			metadata.Stage,
+			metadata.QuestionType,
+			metadata.SkillFocus,
+			metadata.ScenarioFamily,
+			lengthLimits.MinWords,
+			lengthLimits.MaxWords,
+			lengthLimits.MinSegments,
+			lengthLimits.MaxSegments,
+			lengthLimits.SegmentGuidance,
+			lengthLimits.BandGuidance,
+			quizCount,
+			questionInstruction,
 		)
 	} else {
 		scenarioBrief, scenarioErr := g.expandConversationScenario(ctx, language, topic, difficulty, mode)
@@ -187,9 +238,12 @@ Rules for quiz:
 		user = fmt.Sprintf(
 			`Learning language code: %s. Topic: %s. Scenario brief: %s. Difficulty: %.1f. Mode: %s.
 Scene must be realistic and specific (place, time, roles). Use natural spoken lines for the target language.
+%s
 Do NOT use classroom/meta narration such as "today's topic is...", "we are discussing...", "welcome to mini theater", or direct topic announcements.
 The first turn must immediately enter a concrete real-life situation with actionable context (for example at a counter, station, office desk, clinic, or phone call).
-Each turn should either ask for concrete information, provide clarification, confirm details, or make a practical decision.
+For conversational listening sections, each turn should either ask for concrete information, provide clarification, confirm details, or make a practical decision.
+If the IELTS controls specify a single-speaker monologue, split it into 8 consecutive lecture chunks from the same speaker; each chunk should develop notes, contrasts, causes, evidence, or examples instead of asking or answering questions.
+For a single-speaker monologue, start directly with lecture content. Do not mention recording booths, upload deadlines, timers, worksheets, classroom logistics, apologies, or interruptions.
 If the topic is written in Simplified Chinese and the language is CANTONESE, first reinterpret the topic into a natural Hong Kong Cantonese life scenario internally, then write the dialogue in authentic Hong Kong Cantonese.
 All dialogue turns must stay consistent with the provided scenario brief.
 Produce exactly 8 dialogue turns and exactly %d listening comprehension single-choice questions based ONLY on those dialogues.
@@ -206,50 +260,301 @@ Rules for quiz:
 4) For CANTONESE, dialogue stays Traditional Chinese, but quiz question and options must use Simplified Chinese.
 5) Avoid generic/meta questions like "主题是什么" unless anchored by concrete dialogue details.
 6) Prefer realistic detail questions: numbers, time, location, preference, constraints, next-step decisions.`,
-			language, topic, scenarioBrief, difficulty, mode, quizCount,
+			language, topic, scenarioBrief, difficulty, mode, listeningProfile.PromptBlock(), quizCount,
 		)
 	}
 	model := g.modelName()
-	payload := map[string]any{
-		"model": model,
-		"messages": []map[string]string{
-			{"role": "system", "content": sys},
-			{"role": "user", "content": user},
-		},
-		"temperature": 0.65,
+	attempts := 1
+	if readingMode {
+		attempts = 2
 	}
-	content, err := g.callModelJSONPayload(ctx, payload)
-	if err != nil && strings.Contains(err.Error(), "no parsable text") && !strings.EqualFold(model, defaultModelName) {
-		log.Printf("model %s returned empty content, retry with fallback model %s", model, defaultModelName)
-		payload["model"] = defaultModelName
-		content, err = g.callModelJSONPayload(ctx, payload)
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-
-	dialogues, quiz := parseModelOutput(content)
-	if len(dialogues) == 0 {
-		snippet := content
-		if len(snippet) > 320 {
-			snippet = snippet[:320]
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		attemptUser := user
+		if attempt > 0 {
+			attemptUser += readingRegenerationInstruction(quizCount, topic)
 		}
-		log.Printf("model output parse failed snippet=%q", snippet)
+		payload := map[string]any{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "system", "content": sys},
+				{"role": "user", "content": attemptUser},
+			},
+			"temperature": 0.65,
+		}
+		if readingMode {
+			payload["max_tokens"] = 6000
+		}
+		content, err := g.callModelJSONPayload(ctx, payload)
+		if err != nil && strings.Contains(err.Error(), "no parsable text") && !strings.EqualFold(model, defaultModelName) {
+			log.Printf("model %s returned empty content, retry with fallback model %s", model, defaultModelName)
+			payload["model"] = defaultModelName
+			content, err = g.callModelJSONPayload(ctx, payload)
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			dialogues, quiz, parseErr := parseAndValidateModelContent(language, topic, readingMode, quizCount, content)
+			if parseErr == nil {
+				return dialogues, quiz[:quizCount], nil
+			}
+			lastErr = parseErr
+		}
+		if readingMode && attempt+1 < attempts {
+			log.Printf("reading model output failed quality gate, retrying attempt=%d err=%v", attempt+1, lastErr)
+			continue
+		}
+	}
+	return nil, nil, lastErr
+}
+
+func readingRegenerationInstruction(quizCount int, topic string) string {
+	metadata := ielts.ReadingMetadataFromTopic(readingExamFromTopic(topic), topic, "")
+	mixedInstruction := ""
+	if ielts.QuestionTypeKey(metadata.QuestionType) == "mixed" {
+		mixedInstruction = `
+- For Mixed Question Set, create this exact quiz sequence: Multiple Choice, Matching Information, TFNG, Summary Completion, Multiple Choice.`
+	}
+	return fmt.Sprintf(`
+
+Regenerate the full JSON object because the previous model response failed validation.
+Critical requirements for this retry:
+- Return BOTH "dialogues" and "quiz" at the top level.
+- Return exactly %d quiz items.
+- Keep every quiz item faithful to the requested question type and include all required fields.
+- Do not shorten the passage to make room for quiz items.%s`, quizCount, mixedInstruction)
+}
+
+func parseAndValidateModelContent(language string, topic string, readingMode bool, quizCount int, content string) ([]domain.Dialogue, []domain.QuizQuestion, error) {
+	dialogues, quiz := parseModelOutput(content)
+	dialogues = normalizeGeneratedDialogues(language, dialogues)
+	quiz = normalizeGeneratedQuiz(language, quiz)
+	if readingMode {
+		metadata := ielts.ReadingMetadataFromTopic(readingExamFromTopic(topic), topic, "")
+		quiz = applyReadingQuestionDefaults(metadata.QuestionType, quiz)
+	}
+	if len(dialogues) == 0 {
+		log.Printf("model output parse failed snippet=%q", modelOutputSnippet(content))
 		return nil, nil, fmt.Errorf("model output parsing failed: missing dialogues")
 	}
 	if len(quiz) < quizCount {
+		log.Printf("model output parse failed quiz_count=%d want=%d snippet=%q", len(quiz), quizCount, modelOutputSnippet(content))
 		return nil, nil, fmt.Errorf("model output parsing failed: missing quiz questions")
 	}
+	if err := validateGeneratedOutput(language, readingMode, dialogues, quiz); err != nil {
+		return nil, nil, err
+	}
 	if readingMode {
+		metadata := ielts.ReadingMetadataFromTopic(readingExamFromTopic(topic), topic, "")
+		if err := validateReadingQuestionShape(metadata.QuestionType, quiz); err != nil {
+			return nil, nil, err
+		}
+		lengthLimits := readingLengthLimitsForTopic(topic)
+		if len(dialogues) < lengthLimits.MinSegments {
+			return nil, nil, fmt.Errorf("model output has too few reading segments: got %d, want at least %d", len(dialogues), lengthLimits.MinSegments)
+		}
+		if len(dialogues) > lengthLimits.MaxSegments {
+			return nil, nil, fmt.Errorf("model output has too many reading segments: got %d, want at most %d", len(dialogues), lengthLimits.MaxSegments)
+		}
 		wordCount := 0
 		for _, d := range dialogues {
-			wordCount += len(strings.Fields(strings.TrimSpace(d.Text)))
+			wordCount += contentquality.WordCount(d.Text)
 		}
-		if wordCount < readingMinWords(topic) {
-			return nil, nil, fmt.Errorf("model output too short: got %d words", wordCount)
+		if wordCount < lengthLimits.MinWords {
+			return nil, nil, fmt.Errorf("model output too short: got %d words, want at least %d", wordCount, lengthLimits.MinWords)
+		}
+		if wordCount > lengthLimits.MaxWords {
+			return nil, nil, fmt.Errorf("model output too long: got %d words, want at most %d", wordCount, lengthLimits.MaxWords)
 		}
 	}
-	return dialogues, quiz[:quizCount], nil
+	return dialogues, quiz, nil
+}
+
+func modelOutputSnippet(content string) string {
+	if len(content) > 320 {
+		return content[:320]
+	}
+	return content
+}
+
+func readingQuestionInstruction(questionType string) string {
+	switch ielts.QuestionTypeKey(questionType) {
+	case "matching_headings":
+		return `Matching Headings. Each quiz item should target one paragraph. Set type to "Matching Headings", paragraphRef to the paragraph label, headings to a shared-style heading bank of at least 5 headings, options to the same headings, and answerKey to the correct heading.`
+	case "matching_information":
+		return `Matching Information. Each quiz item should ask where ONE specific piece of information appears, not a multi-statement matching set. Set type to "Matching Information", options to paragraph labels, paragraphRef to the one correct paragraph, evidence to an exact quote from that paragraph, and answerKey to the same paragraph label as paragraphRef.`
+	case "tfng":
+		return `TFNG. Each quiz item should be a claim. Set type to "TFNG", options to ["TRUE","FALSE","NOT GIVEN"], evidence to the relevant sentence or "not stated", and answerKey to exactly TRUE, FALSE, or NOT GIVEN.`
+	case "summary_completion":
+		return `Summary Completion. Each quiz item should contain a short summary sentence with one blank. Set type to "Summary Completion", summaryText to the summary with a blank, wordBank to at least 5 words or phrases, and answerKey to the correct word or phrase from the wordBank.`
+	case "mixed":
+		return `Mixed Question Set. Create exactly five quiz items in this order: 1) Multiple Choice with four options, paragraphRef, evidence and answerKey; 2) Matching Information asking where ONE specific detail appears, with paragraph-label options, paragraphRef, exact-quote evidence, and answerKey equal to paragraphRef; 3) TFNG with options ["TRUE","FALSE","NOT GIVEN"]; 4) Summary Completion with summaryText, wordBank, options copied from wordBank, and answerKey; 5) Multiple Choice with four options, paragraphRef, evidence and answerKey. Set type on every item and keep each item's structure faithful to that type.`
+	default:
+		return `Multiple Choice. Each quiz item must have four plausible options, paragraphRef, evidence, and one answerKey that exactly matches an option.`
+	}
+}
+
+func applyReadingQuestionDefaults(questionType string, quiz []domain.QuizQuestion) []domain.QuizQuestion {
+	defaultType := strings.TrimSpace(questionType)
+	if defaultType == "" {
+		defaultType = "Multiple Choice"
+	}
+	for i := range quiz {
+		if strings.TrimSpace(quiz[i].Type) == "" {
+			quiz[i].Type = defaultType
+		}
+		switch ielts.QuestionTypeKey(quiz[i].Type) {
+		case "matching_headings":
+			if len(quiz[i].Headings) == 0 && len(quiz[i].Options) > 0 {
+				quiz[i].Headings = append([]string{}, quiz[i].Options...)
+			}
+			if len(quiz[i].Options) == 0 && len(quiz[i].Headings) > 0 {
+				quiz[i].Options = append([]string{}, quiz[i].Headings...)
+			}
+		case "tfng":
+			if len(quiz[i].Options) == 0 {
+				quiz[i].Options = []string{"TRUE", "FALSE", "NOT GIVEN"}
+			}
+		case "summary_completion":
+			if len(quiz[i].WordBank) == 0 && len(quiz[i].Options) > 0 {
+				quiz[i].WordBank = append([]string{}, quiz[i].Options...)
+			}
+			if len(quiz[i].Options) == 0 && len(quiz[i].WordBank) > 0 {
+				quiz[i].Options = append([]string{}, quiz[i].WordBank...)
+			}
+			if len(quiz[i].Answers) == 0 && strings.TrimSpace(quiz[i].AnswerKey) != "" {
+				quiz[i].Answers = []string{quiz[i].AnswerKey}
+			}
+		}
+	}
+	return quiz
+}
+
+func validateReadingQuestionShape(questionType string, quiz []domain.QuizQuestion) error {
+	expectedKey := ielts.QuestionTypeKey(questionType)
+	for i, q := range quiz {
+		key := ielts.QuestionTypeKey(q.Type)
+		if expectedKey != "mixed" && key != expectedKey {
+			return fmt.Errorf("reading question %d type mismatch: got %q want %q", i+1, q.Type, questionType)
+		}
+		if strings.TrimSpace(q.Question) == "" {
+			return fmt.Errorf("reading question %d is empty", i+1)
+		}
+		switch key {
+		case "matching_headings":
+			if strings.TrimSpace(q.ParagraphRef) == "" {
+				return fmt.Errorf("matching headings question %d missing paragraphRef", i+1)
+			}
+			if len(q.Headings) < 4 && len(q.Options) < 4 {
+				return fmt.Errorf("matching headings question %d missing heading bank", i+1)
+			}
+		case "matching_information":
+			if len(q.Options) < 3 || strings.TrimSpace(q.AnswerKey) == "" || strings.TrimSpace(q.ParagraphRef) == "" {
+				return fmt.Errorf("matching information question %d missing paragraph options, paragraphRef, or answer", i+1)
+			}
+			if !answerInSet(q.AnswerKey, q.Options) {
+				return fmt.Errorf("matching information question %d answerKey %q is not one of the paragraph options", i+1, q.AnswerKey)
+			}
+			if !strings.EqualFold(strings.TrimSpace(q.AnswerKey), strings.TrimSpace(q.ParagraphRef)) {
+				return fmt.Errorf("matching information question %d paragraphRef %q must equal answerKey %q", i+1, q.ParagraphRef, q.AnswerKey)
+			}
+			if strings.Contains(strings.ToLower(q.ParagraphRef), "paragraphs") {
+				return fmt.Errorf("matching information question %d paragraphRef must be one paragraph, got %q", i+1, q.ParagraphRef)
+			}
+		case "tfng":
+			if !answerInSet(q.AnswerKey, []string{"TRUE", "FALSE", "NOT GIVEN"}) {
+				return fmt.Errorf("tfng question %d has invalid answerKey %q", i+1, q.AnswerKey)
+			}
+		case "summary_completion":
+			if strings.TrimSpace(q.SummaryText) == "" || len(q.WordBank) < 3 || strings.TrimSpace(q.AnswerKey) == "" {
+				return fmt.Errorf("summary completion question %d missing summaryText, wordBank, or answer", i+1)
+			}
+		default:
+			if len(q.Options) != 4 || strings.TrimSpace(q.AnswerKey) == "" {
+				return fmt.Errorf("multiple choice question %d must have four options and answerKey", i+1)
+			}
+		}
+	}
+	return nil
+}
+
+func answerInSet(answer string, allowed []string) bool {
+	for _, item := range allowed {
+		if strings.EqualFold(strings.TrimSpace(answer), item) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeGeneratedDialogues(language string, dialogues []domain.Dialogue) []domain.Dialogue {
+	if !strings.EqualFold(strings.TrimSpace(language), "ENGLISH") {
+		return dialogues
+	}
+	for i := range dialogues {
+		dialogues[i].Text = contentquality.NormalizeEnglishSpacing(dialogues[i].Text)
+	}
+	return dialogues
+}
+
+func normalizeGeneratedQuiz(language string, quiz []domain.QuizQuestion) []domain.QuizQuestion {
+	if !strings.EqualFold(strings.TrimSpace(language), "ENGLISH") {
+		return quiz
+	}
+	for i := range quiz {
+		quiz[i].Question = contentquality.NormalizeEnglishSpacing(quiz[i].Question)
+		for j := range quiz[i].Options {
+			quiz[i].Options[j] = contentquality.NormalizeEnglishSpacing(quiz[i].Options[j])
+		}
+		quiz[i].AnswerKey = contentquality.NormalizeEnglishSpacing(quiz[i].AnswerKey)
+		quiz[i].ParagraphRef = contentquality.NormalizeEnglishSpacing(quiz[i].ParagraphRef)
+		quiz[i].Evidence = contentquality.NormalizeEnglishSpacing(quiz[i].Evidence)
+		for j := range quiz[i].Headings {
+			quiz[i].Headings[j] = contentquality.NormalizeEnglishSpacing(quiz[i].Headings[j])
+		}
+		quiz[i].SummaryText = contentquality.NormalizeEnglishSpacing(quiz[i].SummaryText)
+		for j := range quiz[i].WordBank {
+			quiz[i].WordBank[j] = contentquality.NormalizeEnglishSpacing(quiz[i].WordBank[j])
+		}
+		for j := range quiz[i].Answers {
+			quiz[i].Answers[j] = contentquality.NormalizeEnglishSpacing(quiz[i].Answers[j])
+		}
+		for j := range quiz[i].Statements {
+			quiz[i].Statements[j].Text = contentquality.NormalizeEnglishSpacing(quiz[i].Statements[j].Text)
+			quiz[i].Statements[j].Answer = contentquality.NormalizeEnglishSpacing(quiz[i].Statements[j].Answer)
+		}
+	}
+	return quiz
+}
+
+func validateGeneratedOutput(language string, readingMode bool, dialogues []domain.Dialogue, quiz []domain.QuizQuestion) error {
+	english := strings.EqualFold(strings.TrimSpace(language), "ENGLISH")
+	for i, dialogue := range dialogues {
+		if err := contentquality.ValidateReadableText(fmt.Sprintf("dialogue %d", i+1), dialogue.Text, english); err != nil {
+			return err
+		}
+	}
+	genericReadingQuestions := 0
+	for i, question := range quiz {
+		if err := contentquality.ValidateReadableText(fmt.Sprintf("question %d", i+1), question.Question, english); err != nil {
+			return err
+		}
+		for j, option := range question.Options {
+			if err := contentquality.ValidateReadableText(fmt.Sprintf("question %d option %d", i+1, j+1), option, english); err != nil {
+				return err
+			}
+		}
+		if err := contentquality.ValidateReadableText(fmt.Sprintf("question %d answer", i+1), question.AnswerKey, english); err != nil {
+			return err
+		}
+		if readingMode && contentquality.IsGenericReadingQuestion(question.Question) {
+			genericReadingQuestions++
+		}
+	}
+	if readingMode && genericReadingQuestions >= 2 {
+		return fmt.Errorf("reading generation returned too many generic questions: %d", genericReadingQuestions)
+	}
+	return nil
 }
 
 func (g *OpenAIGenerator) expandConversationScenario(ctx context.Context, language string, topic string, difficulty float64, mode string) (string, error) {
@@ -315,7 +620,7 @@ func shouldRetryModelStatus(status int) bool {
 }
 
 func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[string]any) (string, error) {
-	raw, _ := json.Marshal(payload)
+	raw, _ := json.Marshal(modelPayloadWithStreaming(payload))
 	chatURL := g.chatCompletionsURL()
 	apiKey := g.apiKey()
 	var lastErr error
@@ -349,9 +654,12 @@ func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[
 					lastErr = readErr
 					return
 				}
-				content, lastErr = extractModelTextFromResponse(body)
+				content, lastErr = extractModelTextFromStreamResponse(body)
 				if lastErr != nil {
-					return
+					content, lastErr = extractModelTextFromResponse(body)
+					if lastErr != nil {
+						return
+					}
 				}
 				content = sanitizeJSONLikeContent(content)
 			}()
@@ -378,6 +686,107 @@ func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[
 		lastErr = fmt.Errorf("request model API failed: unknown error")
 	}
 	return "", lastErr
+}
+
+func modelPayloadWithStreaming(payload map[string]any) map[string]any {
+	out := make(map[string]any, len(payload)+1)
+	for key, value := range payload {
+		out[key] = value
+	}
+	out["stream"] = true
+	return out
+}
+
+func extractModelTextFromStreamResponse(body []byte) (string, error) {
+	text := strings.TrimSpace(string(body))
+	if !strings.Contains(text, "data:") {
+		return "", fmt.Errorf("model stream response has no data events")
+	}
+
+	var chunks []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		chunk, err := extractModelTextFromStreamChunk([]byte(data))
+		if err != nil {
+			return "", err
+		}
+		if chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+	}
+
+	if len(chunks) == 0 {
+		snippet := text
+		if len(snippet) > 320 {
+			snippet = snippet[:320]
+		}
+		return "", fmt.Errorf("model stream response returned no text chunks, snippet=%q", snippet)
+	}
+	return strings.Join(chunks, ""), nil
+}
+
+func extractModelTextFromStreamChunk(body []byte) (string, error) {
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return "", err
+	}
+
+	if choices, ok := raw["choices"].([]any); ok && len(choices) > 0 {
+		var chunks []string
+		for _, choice := range choices {
+			first, ok := choice.(map[string]any)
+			if !ok {
+				continue
+			}
+			if delta, ok := first["delta"].(map[string]any); ok {
+				if content, ok := rawString(delta["content"]); ok && content != "" {
+					chunks = append(chunks, content)
+				}
+			}
+			if text, ok := rawString(first["text"]); ok && text != "" {
+				chunks = append(chunks, text)
+			}
+		}
+		if len(chunks) > 0 {
+			return strings.Join(chunks, ""), nil
+		}
+	}
+
+	if output, ok := raw["output"].([]any); ok && len(output) > 0 {
+		var chunks []string
+		for _, item := range output {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if content, ok := entry["content"].([]any); ok {
+				for _, c := range content {
+					block, ok := c.(map[string]any)
+					if !ok {
+						continue
+					}
+					if txt, ok := rawString(firstNonNil(block["text"], block["content"])); ok && txt != "" {
+						chunks = append(chunks, txt)
+					}
+				}
+			}
+		}
+		if len(chunks) > 0 {
+			return strings.Join(chunks, ""), nil
+		}
+	}
+
+	return "", nil
 }
 
 func extractModelTextFromResponse(body []byte) (string, error) {
@@ -455,9 +864,33 @@ type genDialogue struct {
 }
 
 type genQuiz struct {
-	Question  string   `json:"question"`
-	Options   []string `json:"options"`
-	AnswerKey string   `json:"answerKey"`
+	Question           string                    `json:"question"`
+	Prompt             string                    `json:"prompt"`
+	Title              string                    `json:"title"`
+	Options            []string                  `json:"options"`
+	Choices            []string                  `json:"choices"`
+	Candidates         []string                  `json:"candidates"`
+	AnswerKey          string                    `json:"answerKey"`
+	Answer             string                    `json:"answer"`
+	Correct            string                    `json:"correct"`
+	CorrectAnswer      string                    `json:"correctAnswer"`
+	Type               string                    `json:"type"`
+	QuestionType       string                    `json:"questionType"`
+	ParagraphRef       string                    `json:"paragraphRef"`
+	Paragraph          string                    `json:"paragraph"`
+	Location           string                    `json:"location"`
+	Evidence           string                    `json:"evidence"`
+	Rationale          string                    `json:"rationale"`
+	SupportingEvidence string                    `json:"supportingEvidence"`
+	Headings           []string                  `json:"headings"`
+	HeadingOptions     []string                  `json:"headingOptions"`
+	Statements         []domain.ReadingStatement `json:"statements"`
+	SummaryText        string                    `json:"summaryText"`
+	Summary            string                    `json:"summary"`
+	WordBank           []string                  `json:"wordBank"`
+	Words              []string                  `json:"words"`
+	Answers            []string                  `json:"answers"`
+	AnswerKeys         []string                  `json:"answerKeys"`
 }
 
 type combinedOut struct {
@@ -602,64 +1035,143 @@ func parseQuizAliases(raw map[string]any) []domain.QuizQuestion {
 	if !ok || len(quizList) == 0 {
 		return nil
 	}
-	out := make([]domain.QuizQuestion, 0, len(quizList))
+	aliased := make([]genQuiz, 0, len(quizList))
 	for _, item := range quizList {
 		entry, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		question := asString(firstNonNil(entry["question"], entry["prompt"], entry["title"]))
-		options := toStringSlice(firstNonNil(entry["options"], entry["choices"], entry["candidates"]))
-		answer := asString(firstNonNil(entry["answerKey"], entry["answer"], entry["correct"], entry["correctAnswer"]))
-		if question == "" || len(options) == 0 {
-			continue
-		}
-		if answer == "" {
-			answer = options[0]
-		}
-		valid := false
-		for _, opt := range options {
-			if opt == answer {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			continue
-		}
-		out = append(out, domain.QuizQuestion{Question: question, Options: options, AnswerKey: answer})
+		aliased = append(aliased, genQuiz{
+			Question:     asString(firstNonNil(entry["question"], entry["prompt"], entry["title"])),
+			Options:      toStringSlice(firstNonNil(entry["options"], entry["choices"], entry["candidates"])),
+			AnswerKey:    asString(firstNonNil(entry["answerKey"], entry["answer"], entry["correct"], entry["correctAnswer"])),
+			Type:         asString(firstNonNil(entry["type"], entry["questionType"])),
+			ParagraphRef: asString(firstNonNil(entry["paragraphRef"], entry["paragraph"], entry["location"])),
+			Evidence:     asString(firstNonNil(entry["evidence"], entry["rationale"], entry["supportingEvidence"])),
+			Headings:     toStringSlice(firstNonNil(entry["headings"], entry["headingOptions"])),
+			SummaryText:  asString(firstNonNil(entry["summaryText"], entry["summary"])),
+			WordBank:     toStringSlice(firstNonNil(entry["wordBank"], entry["words"])),
+			Answers:      toStringSlice(firstNonNil(entry["answers"], entry["answerKeys"])),
+		})
 	}
-	return out
+	return normalizeQuiz(aliased)
 }
 
 func normalizeQuiz(input []genQuiz) []domain.QuizQuestion {
 	quiz := make([]domain.QuizQuestion, 0, len(input))
 	for _, q := range input {
-		if strings.TrimSpace(q.Question) == "" || strings.TrimSpace(q.AnswerKey) == "" || len(q.Options) < 2 {
+		questionType := firstNonEmptyString(q.Type, q.QuestionType)
+		questionKey := ielts.QuestionTypeKey(questionType)
+		question := firstNonEmptyString(q.Question, q.Prompt, q.Title)
+		options := firstNonEmptyStringSlice(q.Options, q.Choices, q.Candidates)
+		headings := firstNonEmptyStringSlice(q.Headings, q.HeadingOptions)
+		wordBank := firstNonEmptyStringSlice(q.WordBank, q.Words)
+		answers := firstNonEmptyStringSlice(q.Answers, q.AnswerKeys)
+		answerKey := firstNonEmptyString(q.AnswerKey, q.Answer, q.Correct, q.CorrectAnswer)
+		paragraphRef := firstNonEmptyString(q.ParagraphRef, q.Paragraph, q.Location)
+		evidence := firstNonEmptyString(q.Evidence, q.Rationale, q.SupportingEvidence)
+		summaryText := firstNonEmptyString(q.SummaryText, q.Summary)
+
+		if answerKey == "" && len(answers) > 0 {
+			answerKey = answers[0]
+		}
+		switch questionKey {
+		case "matching_headings":
+			if len(headings) == 0 && len(options) > 0 {
+				headings = append([]string{}, options...)
+			}
+			if len(options) == 0 && len(headings) > 0 {
+				options = append([]string{}, headings...)
+			}
+			if question == "" && paragraphRef != "" {
+				question = "Choose the best heading for " + paragraphRef + "."
+			}
+		case "tfng":
+			if len(options) == 0 {
+				options = []string{"TRUE", "FALSE", "NOT GIVEN"}
+			}
+		case "summary_completion":
+			if len(wordBank) == 0 && len(options) > 0 {
+				wordBank = append([]string{}, options...)
+			}
+			if len(options) == 0 && len(wordBank) > 0 {
+				options = append([]string{}, wordBank...)
+			}
+			if len(answers) == 0 && answerKey != "" {
+				answers = []string{answerKey}
+			}
+			if question == "" && summaryText != "" {
+				question = "Complete the summary using the word bank."
+			}
+		}
+		if answerKey != "" && len(options) > 0 {
+			answerKey = alignAnswerKeyToOption(answerKey, options)
+		}
+		if strings.TrimSpace(question) == "" || strings.TrimSpace(answerKey) == "" {
 			continue
 		}
-		options := make([]string, 0, len(q.Options))
-		for _, option := range q.Options {
-			trimmed := strings.TrimSpace(option)
-			if trimmed == "" {
-				continue
-			}
-			options = append(options, trimmed)
-		}
-		answerKey := strings.TrimSpace(q.AnswerKey)
-		validAnswer := false
-		for _, option := range options {
-			if option == answerKey {
-				validAnswer = true
-				break
-			}
-		}
-		if !validAnswer {
+		if questionKey == "" && len(options) == 0 {
 			continue
 		}
-		quiz = append(quiz, domain.QuizQuestion{Question: strings.TrimSpace(q.Question), Options: options, AnswerKey: answerKey})
+		quiz = append(quiz, domain.QuizQuestion{
+			Question:     question,
+			Options:      options,
+			AnswerKey:    answerKey,
+			Type:         questionType,
+			ParagraphRef: paragraphRef,
+			Evidence:     evidence,
+			Headings:     headings,
+			Statements:   q.Statements,
+			SummaryText:  summaryText,
+			WordBank:     wordBank,
+			Answers:      answers,
+		})
 	}
 	return quiz
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyStringSlice(values ...[]string) []string {
+	for _, value := range values {
+		if trimmed := trimStringSlice(value); len(trimmed) > 0 {
+			return trimmed
+		}
+	}
+	return nil
+}
+
+func alignAnswerKeyToOption(answerKey string, options []string) string {
+	clean := strings.TrimSpace(answerKey)
+	for _, option := range options {
+		if option == clean {
+			return clean
+		}
+	}
+	for _, option := range options {
+		if strings.EqualFold(option, clean) {
+			return option
+		}
+	}
+	return clean
+}
+
+func trimStringSlice(input []string) []string {
+	out := make([]string, 0, len(input))
+	for _, item := range input {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func splitPassageForDialogues(passage string) []string {
@@ -823,6 +1335,14 @@ func asString(v any) string {
 		return ""
 	}
 	return strings.TrimSpace(s)
+}
+
+func rawString(v any) (string, bool) {
+	if v == nil {
+		return "", false
+	}
+	s, ok := v.(string)
+	return s, ok
 }
 
 func toStringSlice(v any) []string {

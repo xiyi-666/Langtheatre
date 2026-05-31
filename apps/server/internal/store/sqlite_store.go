@@ -63,7 +63,7 @@ func applySQLiteSchema(db *sql.DB) error {
             id INTEGER PRIMARY KEY CHECK (id = 1),
             provider TEXT NOT NULL DEFAULT 'XIAOMI',
             model TEXT NOT NULL DEFAULT 'mimo-v2.5-tts',
-            base_url TEXT NOT NULL DEFAULT 'https://token-plan-cn.xiaomimimo.com/v1',
+            base_url TEXT NOT NULL DEFAULT 'https://api.xiaomimimo.com/v1',
             api_key TEXT NOT NULL DEFAULT '',
             voice TEXT NOT NULL DEFAULT 'mimo_default',
             audio_format TEXT NOT NULL DEFAULT 'wav',
@@ -116,6 +116,12 @@ func applySQLiteSchema(db *sql.DB) error {
             language TEXT NOT NULL,
             level TEXT NOT NULL,
             topic TEXT NOT NULL,
+            band REAL NOT NULL DEFAULT 0,
+            stage TEXT NOT NULL DEFAULT '',
+            section TEXT NOT NULL DEFAULT '',
+            skill_focus TEXT NOT NULL DEFAULT '',
+            question_type TEXT NOT NULL DEFAULT '',
+            scenario_family TEXT NOT NULL DEFAULT '',
             title TEXT NOT NULL,
             passage TEXT NOT NULL,
             vocabulary TEXT NOT NULL DEFAULT '[]',
@@ -152,6 +158,19 @@ func applySQLiteSchema(db *sql.DB) error {
 	}
 	if _, err := db.Exec(`ALTER TABLE theaters ADD COLUMN characters TEXT NOT NULL DEFAULT '[]'`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return err
+	}
+	readingMetadataColumns := []string{
+		`ALTER TABLE reading_materials ADD COLUMN band REAL NOT NULL DEFAULT 0`,
+		`ALTER TABLE reading_materials ADD COLUMN stage TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE reading_materials ADD COLUMN section TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE reading_materials ADD COLUMN skill_focus TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE reading_materials ADD COLUMN question_type TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE reading_materials ADD COLUMN scenario_family TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, stmt := range readingMetadataColumns {
+		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
 	}
 	return nil
 }
@@ -511,15 +530,22 @@ func (s *SQLiteStore) SaveReadingMaterial(material domain.ReadingMaterial) (doma
 	}
 	_, err = s.db.Exec(
 		`INSERT INTO reading_materials (
-            id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+            id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family,
+            title, passage, vocabulary, questions, source_ids,
             generation_note, audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             user_id=excluded.user_id,
             exam=excluded.exam,
             language=excluded.language,
             level=excluded.level,
             topic=excluded.topic,
+            band=excluded.band,
+            stage=excluded.stage,
+            section=excluded.section,
+            skill_focus=excluded.skill_focus,
+            question_type=excluded.question_type,
+            scenario_family=excluded.scenario_family,
             title=excluded.title,
             passage=excluded.passage,
             vocabulary=excluded.vocabulary,
@@ -539,6 +565,12 @@ func (s *SQLiteStore) SaveReadingMaterial(material domain.ReadingMaterial) (doma
 		material.Language,
 		material.Level,
 		material.Topic,
+		material.Band,
+		material.Stage,
+		material.Section,
+		material.SkillFocus,
+		material.QuestionType,
+		material.ScenarioFamily,
 		material.Title,
 		material.Passage,
 		string(vocabularyJSON),
@@ -561,7 +593,8 @@ func (s *SQLiteStore) SaveReadingMaterial(material domain.ReadingMaterial) (doma
 
 func (s *SQLiteStore) GetReadingMaterial(id string, userID string) (domain.ReadingMaterial, error) {
 	row := s.db.QueryRow(
-		`SELECT id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids, generation_note,
+		`SELECT id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family,
+            title, passage, vocabulary, questions, source_ids, generation_note,
             audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
          FROM reading_materials WHERE id = ? AND (? = '' OR user_id = ?)`,
 		id, userID, userID,
@@ -571,7 +604,8 @@ func (s *SQLiteStore) GetReadingMaterial(id string, userID string) (domain.Readi
 
 func (s *SQLiteStore) ListReadingMaterialsByUser(userID string, exam string) ([]domain.ReadingMaterial, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids, generation_note,
+		`SELECT id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family,
+            title, passage, vocabulary, questions, source_ids, generation_note,
             audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
          FROM reading_materials
          WHERE user_id = ? AND (? = '' OR exam = ?)
@@ -689,7 +723,8 @@ func scanReadingMaterial(scanner interface{ Scan(dest ...any) error }) (domain.R
 	var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON string
 	var createdAt string
 	if err := scanner.Scan(
-		&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic, &item.Title, &item.Passage,
+		&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic, &item.Band, &item.Stage,
+		&item.Section, &item.SkillFocus, &item.QuestionType, &item.ScenarioFamily, &item.Title, &item.Passage,
 		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &item.GenerationNote, &item.AudioURL, &audioURLsJSON,
 		&item.AudioStatus, &vocabularyItemsJSON, &associationJSON, &grammarJSON, &createdAt,
 	); err != nil {

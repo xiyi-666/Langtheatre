@@ -529,11 +529,12 @@ func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (do
 	err = s.pool.QueryRow(
 		ctx,
 		`INSERT INTO reading_materials (
-            id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+            id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family,
+            title, passage, vocabulary, questions, source_ids,
             generation_note, audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
         ) VALUES (
-            $1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb,
-            $12, $13, $14::jsonb, $15, $16::jsonb, $17::jsonb, $18::jsonb, $19
+            $1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+            $13, $14, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19, $20::jsonb, $21, $22::jsonb, $23::jsonb, $24::jsonb, $25
         )
         ON CONFLICT (id) DO UPDATE SET
             user_id = EXCLUDED.user_id,
@@ -541,6 +542,12 @@ func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (do
             language = EXCLUDED.language,
             level = EXCLUDED.level,
             topic = EXCLUDED.topic,
+            band = EXCLUDED.band,
+            stage = EXCLUDED.stage,
+            section = EXCLUDED.section,
+            skill_focus = EXCLUDED.skill_focus,
+            question_type = EXCLUDED.question_type,
+            scenario_family = EXCLUDED.scenario_family,
             title = EXCLUDED.title,
             passage = EXCLUDED.passage,
             vocabulary = EXCLUDED.vocabulary,
@@ -554,14 +561,19 @@ func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (do
             association_sentences = EXCLUDED.association_sentences,
             grammar_insights = EXCLUDED.grammar_insights,
             created_at = EXCLUDED.created_at
-        RETURNING id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+        RETURNING id::text, user_id::text, exam, language, level, topic,
+            COALESCE(band, 0), COALESCE(stage, ''), COALESCE(section, ''), COALESCE(skill_focus, ''), COALESCE(question_type, ''), COALESCE(scenario_family, ''),
+            title, passage, vocabulary, questions, source_ids,
             COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status,
             COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at`,
-		material.ID, material.UserID, material.Exam, material.Language, material.Level, material.Topic, material.Title, material.Passage,
-		string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL,
-		string(audioURLsJSON), material.AudioStatus, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), material.CreatedAt,
+		material.ID, material.UserID, material.Exam, material.Language, material.Level, material.Topic,
+		material.Band, material.Stage, material.Section, material.SkillFocus, material.QuestionType, material.ScenarioFamily,
+		material.Title, material.Passage, string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote,
+		material.AudioURL, string(audioURLsJSON), material.AudioStatus, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), material.CreatedAt,
 	).Scan(
-		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Title, &material.Passage,
+		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic,
+		&material.Band, &material.Stage, &material.Section, &material.SkillFocus, &material.QuestionType, &material.ScenarioFamily,
+		&material.Title, &material.Passage,
 		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus,
 		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &material.CreatedAt,
 	)
@@ -586,14 +598,18 @@ func (s *PostgresStore) GetReadingMaterial(id string, userID string) (domain.Rea
 	var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON []byte
 	err := s.pool.QueryRow(
 		ctx,
-		`SELECT id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+		`SELECT id::text, user_id::text, exam, language, level, topic,
+            COALESCE(band, 0), COALESCE(stage, ''), COALESCE(section, ''), COALESCE(skill_focus, ''), COALESCE(question_type, ''), COALESCE(scenario_family, ''),
+            title, passage, vocabulary, questions, source_ids,
             COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status,
             COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
          FROM reading_materials
          WHERE id = $1::uuid AND ($2 = '' OR user_id = NULLIF($2, '')::uuid)`,
 		id, userID,
 	).Scan(
-		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Title, &material.Passage,
+		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic,
+		&material.Band, &material.Stage, &material.Section, &material.SkillFocus, &material.QuestionType, &material.ScenarioFamily,
+		&material.Title, &material.Passage,
 		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus,
 		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &material.CreatedAt,
 	)
@@ -618,7 +634,9 @@ func (s *PostgresStore) ListReadingMaterialsByUser(userID string, exam string) (
 	defer cancel()
 	rows, err := s.pool.Query(
 		ctx,
-		`SELECT id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+		`SELECT id::text, user_id::text, exam, language, level, topic,
+            COALESCE(band, 0), COALESCE(stage, ''), COALESCE(section, ''), COALESCE(skill_focus, ''), COALESCE(question_type, ''), COALESCE(scenario_family, ''),
+            title, passage, vocabulary, questions, source_ids,
             COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status,
             COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
          FROM reading_materials
@@ -637,7 +655,9 @@ func (s *PostgresStore) ListReadingMaterialsByUser(userID string, exam string) (
 		var vocabularyJSON, questionsJSON, sourceIDsJSON []byte
 		var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON []byte
 		if scanErr := rows.Scan(
-			&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic, &item.Title, &item.Passage,
+			&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic,
+			&item.Band, &item.Stage, &item.Section, &item.SkillFocus, &item.QuestionType, &item.ScenarioFamily,
+			&item.Title, &item.Passage,
 			&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &item.GenerationNote, &item.AudioURL, &audioURLsJSON, &item.AudioStatus,
 			&vocabularyItemsJSON, &associationJSON, &grammarJSON, &item.CreatedAt,
 		); scanErr != nil {

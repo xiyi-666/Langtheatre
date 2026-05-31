@@ -1,0 +1,157 @@
+package ai
+
+import (
+	"testing"
+
+	"github.com/linguaquest/server/internal/domain"
+)
+
+func TestReadingMinWordsProgressesByBand(t *testing.T) {
+	low := readingMinWords("[IELTS Reading][Band 5.0] urban transport")
+	high := readingMinWords("[IELTS Reading][Band 7.0] urban transport")
+	if high <= low {
+		t.Fatalf("high band min words = %d, want greater than low band %d", high, low)
+	}
+}
+
+func TestReadingLengthLimitsCapLowerBands(t *testing.T) {
+	low := readingLengthLimitsForTopic("[IELTS Reading][Band 5.0] urban transport")
+	mid := readingLengthLimitsForTopic("[IELTS Reading][Band 6.0] urban transport")
+	high := readingLengthLimitsForTopic("[IELTS Reading][Band 7.0] urban transport")
+	if low.MaxWords >= mid.MaxWords {
+		t.Fatalf("Band 5 max words = %d, want lower than Band 6 max %d", low.MaxWords, mid.MaxWords)
+	}
+	if mid.MaxWords >= high.MaxWords {
+		t.Fatalf("Band 6 max words = %d, want lower than Band 7 max %d", mid.MaxWords, high.MaxWords)
+	}
+	if low.MaxWords > 800 {
+		t.Fatalf("Band 5 max words = %d, want capped for lower-band training", low.MaxWords)
+	}
+	if high.MinSegments <= low.MinSegments {
+		t.Fatalf("Band 7 min segments = %d, want more than Band 5 min %d", high.MinSegments, low.MinSegments)
+	}
+}
+
+func TestApplyReadingQuestionDefaultsForTFNG(t *testing.T) {
+	quiz := applyReadingQuestionDefaults("TFNG", []domain.QuizQuestion{{Question: "The pilot scheme produced identical results everywhere.", AnswerKey: "FALSE"}})
+	if quiz[0].Type != "TFNG" {
+		t.Fatalf("Type = %q, want TFNG", quiz[0].Type)
+	}
+	if len(quiz[0].Options) != 3 {
+		t.Fatalf("Options len = %d, want 3", len(quiz[0].Options))
+	}
+	if err := validateReadingQuestionShape("TFNG", quiz); err != nil {
+		t.Fatalf("validateReadingQuestionShape() error = %v", err)
+	}
+}
+
+func TestValidateReadingQuestionShapeRejectsMismatchedType(t *testing.T) {
+	quiz := []domain.QuizQuestion{{
+		Type:      "Multiple Choice",
+		Question:  "Which claim is supported?",
+		Options:   []string{"A", "B", "C", "D"},
+		AnswerKey: "A",
+	}}
+	if err := validateReadingQuestionShape("Matching Headings", quiz); err == nil {
+		t.Fatal("expected type mismatch error")
+	}
+}
+
+func TestValidateReadingQuestionShapeRejectsBroadMatchingInformation(t *testing.T) {
+	quiz := []domain.QuizQuestion{{
+		Type:         "Matching Information",
+		Question:     "Match each statement to the paragraph where it appears.",
+		Options:      []string{"Paragraph 1", "Paragraph 2", "Paragraph 3"},
+		AnswerKey:    "Paragraph 2",
+		ParagraphRef: "Paragraphs 1-3",
+		Evidence:     "broad explanation",
+	}}
+	if err := validateReadingQuestionShape("Mixed Question Set", quiz); err == nil {
+		t.Fatal("expected broad matching information paragraphRef to be rejected")
+	}
+}
+
+func TestNormalizeQuizAcceptsSummaryCompletionWithWordBankOnly(t *testing.T) {
+	quiz := normalizeQuiz([]genQuiz{{
+		Type:        "Summary Completion",
+		Question:    "Complete the summary using the word bank.",
+		SummaryText: "Future planning depends on _____ management.",
+		WordBank:    []string{"adaptive", "routine", "temporary"},
+		AnswerKey:   "adaptive",
+	}})
+	if len(quiz) != 1 {
+		t.Fatalf("quiz len = %d, want 1", len(quiz))
+	}
+	if len(quiz[0].Options) != 3 {
+		t.Fatalf("Options len = %d, want copied word bank", len(quiz[0].Options))
+	}
+	if err := validateReadingQuestionShape("Summary Completion", quiz); err != nil {
+		t.Fatalf("validateReadingQuestionShape() error = %v", err)
+	}
+}
+
+func TestParseModelOutputKeepsMixedQuizWhenSummaryHasNoOptions(t *testing.T) {
+	content := `{
+		"dialogues":[{"speaker":"Passage","text":"Paragraph text.","zhSubtitle":"段落说明"}],
+		"quiz":[
+			{"type":"Multiple Choice","question":"Which claim is supported?","options":["A","B","C","D"],"answerKey":"A","paragraphRef":"Paragraph 1","evidence":"Paragraph text"},
+			{"type":"Matching Information","question":"Which paragraph gives the example?","options":["Paragraph 1","Paragraph 2","Paragraph 3"],"answerKey":"Paragraph 1","paragraphRef":"Paragraph 1","evidence":"Paragraph text"},
+			{"type":"TFNG","question":"The passage includes paragraph text.","options":["TRUE","FALSE","NOT GIVEN"],"answerKey":"TRUE","evidence":"Paragraph text"},
+			{"type":"Summary Completion","question":"Complete the summary.","summaryText":"The paragraph contains _____.","wordBank":["text","data","policy"],"answerKey":"text","evidence":"Paragraph text"},
+			{"type":"Multiple Choice","question":"What is mentioned directly?","options":["Text","A date","A price","A name"],"answerKey":"Text","paragraphRef":"Paragraph 1","evidence":"Paragraph text"}
+		]
+	}`
+	_, quiz := parseModelOutput(content)
+	if len(quiz) != 5 {
+		t.Fatalf("quiz len = %d, want 5", len(quiz))
+	}
+	if quiz[3].Type != "Summary Completion" {
+		t.Fatalf("quiz[3].Type = %q, want Summary Completion", quiz[3].Type)
+	}
+	if len(quiz[3].Options) != len(quiz[3].WordBank) {
+		t.Fatalf("summary options len = %d, wordBank len = %d", len(quiz[3].Options), len(quiz[3].WordBank))
+	}
+}
+
+func TestExtractModelTextFromStreamResponse(t *testing.T) {
+	body := []byte("data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"dialogues\\\":\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"ignore me\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"[]\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\" }\"}}]}\n\n" +
+		"data: [DONE]\n")
+
+	got, err := extractModelTextFromStreamResponse(body)
+	if err != nil {
+		t.Fatalf("extractModelTextFromStreamResponse() error = %v", err)
+	}
+	if got != "{\"dialogues\":[] }" {
+		t.Fatalf("stream text = %q", got)
+	}
+}
+
+func TestExtractModelTextFromStreamResponsePreservesSpaces(t *testing.T) {
+	body := []byte("data: {\"choices\":[{\"delta\":{\"content\":\"Good\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\" afternoon\"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\", \"}}]}\n\n" +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"Sara.\"}}]}\n\n" +
+		"data: [DONE]\n")
+
+	got, err := extractModelTextFromStreamResponse(body)
+	if err != nil {
+		t.Fatalf("extractModelTextFromStreamResponse() error = %v", err)
+	}
+	if got != "Good afternoon, Sara." {
+		t.Fatalf("stream text = %q", got)
+	}
+}
+
+func TestModelPayloadWithStreamingDoesNotMutateInput(t *testing.T) {
+	payload := map[string]any{"model": "test-model"}
+	got := modelPayloadWithStreaming(payload)
+	if got["stream"] != true {
+		t.Fatalf("stream = %v, want true", got["stream"])
+	}
+	if _, ok := payload["stream"]; ok {
+		t.Fatal("modelPayloadWithStreaming mutated input")
+	}
+}

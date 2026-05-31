@@ -12,7 +12,7 @@
 - `OPENAI_MODEL=gpt-5.4`
 - `OPENAI_BASE_URL=http://43.172.5.210:3000/v1`（可替换为你自己的网关）
 - `TTS_PROVIDER=XIAOMI`（可选：`CUSTOM` / `XIAOMI`）
-- `TTS_API_URL=https://token-plan-cn.xiaomimimo.com/v1`
+- `TTS_API_URL=https://api.xiaomimimo.com/v1`
 - `TTS_API_KEY=`
 - `TTS_VOICE=mimo_default`（也可切换为 `冰糖` / `Chloe` 等官方音色）
 - `TTS_MODEL=mimo-v2.5-tts`

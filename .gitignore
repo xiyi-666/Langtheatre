@@ -43,6 +43,8 @@ go.work.sum
 .cursor/
 .spec-workflow/
 .playwright-mcp/
+.dev-logs/
+.workflow/
 tmp/
 profile-*.png
 

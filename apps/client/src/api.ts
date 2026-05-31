@@ -362,11 +362,11 @@ export async function generateReading(input: {
   await ensureAccessToken();
   const query = `mutation GenerateReading($exam: String!, $topic: String!, $level: String, $sourceIds: [String!]) {
       generateReading(exam: $exam, topic: $topic, level: $level, sourceIds: $sourceIds) {
-        id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
+        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
         vocabularyItems { word pos meanings }
         associationSentences
         grammarInsights { sentence difficultyPoints studySuggestions }
-        questions { question options answerKey }
+        questions { question options answerKey type paragraphRef evidence headings summaryText wordBank answers statements { id text answer } }
       }
     }`;
   const data = await requestWithAnswerKeyFallback<{ generateReading: ReadingMaterial }>(query, input);
@@ -377,11 +377,11 @@ export async function readingMaterials(exam?: string): Promise<ReadingMaterial[]
   await ensureAccessToken();
   const query = `query ReadingMaterials($exam: String) {
       readingMaterials(exam: $exam) {
-        id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
+        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
         vocabularyItems { word pos meanings }
         associationSentences
         grammarInsights { sentence difficultyPoints studySuggestions }
-        questions { question options answerKey }
+        questions { question options answerKey type paragraphRef evidence headings summaryText wordBank answers statements { id text answer } }
       }
     }`;
   const data = await requestWithAnswerKeyFallback<{ readingMaterials: ReadingMaterial[] }>(query, { exam });
@@ -392,15 +392,30 @@ export async function readingMaterial(id: string): Promise<ReadingMaterial> {
   await ensureAccessToken();
   const query = `query ReadingMaterial($id: ID!) {
       readingMaterial(id: $id) {
-        id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
+        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
         vocabularyItems { word pos meanings }
         associationSentences
         grammarInsights { sentence difficultyPoints studySuggestions }
-        questions { question options answerKey }
+        questions { question options answerKey type paragraphRef evidence headings summaryText wordBank answers statements { id text answer } }
       }
     }`;
   const data = await requestWithAnswerKeyFallback<{ readingMaterial: ReadingMaterial }>(query, { id });
   return data.readingMaterial;
+}
+
+export async function retryReadingAudio(materialId: string): Promise<ReadingMaterial> {
+  await ensureAccessToken();
+  const query = `mutation RetryReadingAudio($materialId: ID!) {
+      retryReadingAudio(materialId: $materialId) {
+        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
+        vocabularyItems { word pos meanings }
+        associationSentences
+        grammarInsights { sentence difficultyPoints studySuggestions }
+        questions { question options answerKey type paragraphRef evidence headings summaryText wordBank answers statements { id text answer } }
+      }
+    }`;
+  const data = await requestWithAnswerKeyFallback<{ retryReadingAudio: ReadingMaterial }>(query, { materialId });
+  return data.retryReadingAudio;
 }
 
 export async function submitReadingAnswers(materialId: string, answers: string[]): Promise<PracticeResult> {

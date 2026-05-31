@@ -77,13 +77,13 @@ export const TTS_PROVIDER_PRESETS: TTSProviderPreset[] = [
     description: "MiMo TTS，chat/completions 兼容接口",
     logo: "/provider-logos/xiaomi.png",
     defaults: {
-      baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
+      baseURL: "https://api.xiaomimimo.com/v1",
       model: "mimo-v2.5-tts",
       voice: "mimo_default"
     },
     modelOptions: XIAOMI_TTS_MODEL_PRESETS.map((item) => item.id),
     voiceOptions: [...xiaomiPresetVoiceOptions],
-    endpointHint: "https://token-plan-cn.xiaomimimo.com/v1",
+    endpointHint: "https://api.xiaomimimo.com/v1",
     authHint: "Header: api-key"
   },
   {

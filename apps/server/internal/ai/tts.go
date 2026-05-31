@@ -353,13 +353,25 @@ func (t *APITTS) doXiaomiSynthesis(ctx context.Context, config domain.TTSConfig,
 		req.Header.Set("api-key", apiKey)
 
 		resp, err = t.Client.Do(req)
+		if err == nil && resp != nil && shouldRetryTTSStatus(resp.StatusCode) && attempt < t.MaxRetries {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
+			log.Printf("xiaomi tts retryable status=%d attempt=%d/%d body=%s", resp.StatusCode, attempt+1, t.MaxRetries+1, strings.TrimSpace(string(body)))
+			if sleepErr := sleepBeforeTTSRetry(ctx, attempt); sleepErr != nil {
+				return "", sleepErr
+			}
+			continue
+		}
 		if err == nil {
 			break
 		}
-		if !isTimeoutErr(err) || attempt == t.MaxRetries {
+		if !isRetryableTTSError(err) || attempt == t.MaxRetries {
 			return "", err
 		}
-		log.Printf("xiaomi tts timeout attempt=%d/%d err=%v", attempt+1, t.MaxRetries+1, err)
+		log.Printf("xiaomi tts retryable error attempt=%d/%d err=%v", attempt+1, t.MaxRetries+1, err)
+		if sleepErr := sleepBeforeTTSRetry(ctx, attempt); sleepErr != nil {
+			return "", sleepErr
+		}
 	}
 	if resp == nil {
 		return "", errors.New("xiaomi tts request failed")
@@ -594,13 +606,25 @@ func (t *APITTS) doTTSRequestWithRetry(ctx context.Context, url string, raw []by
 		}
 		prepare(req)
 		resp, err = t.Client.Do(req)
+		if err == nil && resp != nil && shouldRetryTTSStatus(resp.StatusCode) && attempt < t.MaxRetries {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
+			log.Printf("tts retryable status provider_url=%s status=%d attempt=%d/%d body=%s", url, resp.StatusCode, attempt+1, t.MaxRetries+1, strings.TrimSpace(string(body)))
+			if sleepErr := sleepBeforeTTSRetry(ctx, attempt); sleepErr != nil {
+				return nil, sleepErr
+			}
+			continue
+		}
 		if err == nil {
 			return resp, nil
 		}
-		if !isTimeoutErr(err) || attempt == t.MaxRetries {
+		if !isRetryableTTSError(err) || attempt == t.MaxRetries {
 			return nil, err
 		}
-		log.Printf("tts timeout provider_url=%s attempt=%d/%d err=%v", url, attempt+1, t.MaxRetries+1, err)
+		log.Printf("tts retryable error provider_url=%s attempt=%d/%d err=%v", url, attempt+1, t.MaxRetries+1, err)
+		if sleepErr := sleepBeforeTTSRetry(ctx, attempt); sleepErr != nil {
+			return nil, sleepErr
+		}
 	}
 	return resp, err
 }
@@ -883,6 +907,41 @@ func isTimeoutErr(err error) bool {
 		return netErr.Timeout()
 	}
 	return false
+}
+
+func isRetryableTTSError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isTimeoutErr(err) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Temporary() {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "tls handshake timeout") ||
+		strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "connection refused") ||
+		strings.Contains(lower, "unexpected eof") ||
+		strings.Contains(lower, "temporary")
+}
+
+func shouldRetryTTSStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusRequestTimeout || status >= 500
+}
+
+func sleepBeforeTTSRetry(ctx context.Context, attempt int) error {
+	delay := time.Duration(250*(attempt+1)) * time.Millisecond
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func joinTTSURL(apiURL string, path string) string {

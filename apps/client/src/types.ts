@@ -41,6 +41,18 @@ export interface TheaterQuizQuestion {
   question: string;
   options?: string[];
   answerKey?: string;
+  type?: string;
+  paragraphRef?: string;
+  evidence?: string;
+  headings?: string[];
+  statements?: {
+    id?: string;
+    text: string;
+    answer: string;
+  }[];
+  summaryText?: string;
+  wordBank?: string[];
+  answers?: string[];
 }
 
 export interface Character {
@@ -112,6 +124,12 @@ export interface ReadingMaterial {
   language: string;
   level: string;
   topic: string;
+  band?: number;
+  stage?: string;
+  section?: string;
+  skillFocus?: string;
+  questionType?: string;
+  scenarioFamily?: string;
   title: string;
   passage: string;
   vocabulary: string[];
