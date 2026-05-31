@@ -550,9 +550,6 @@ export function ProfilePage() {
                             ))}
                           </select>
                         </label>
-                        <p style={{ margin: "-4px 0 0", color: "var(--ink-700)" }}>
-                          选择 <code>mimo_default</code> 时，中国集群默认是冰糖，其他集群默认是 Mia。
-                        </p>
                       </>
                     ) : null}
                   </>
