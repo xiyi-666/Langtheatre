@@ -5,6 +5,12 @@ env:
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_latest:
+        description: "Tag Docker images as latest from the selected ref."
+        required: true
+        type: boolean
+        default: true
 
 jobs:
   publish-images:
@@ -30,7 +36,7 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-server
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event.inputs.publish_latest == 'true' }}
             type=sha
             type=ref,event=tag
 
@@ -49,7 +55,7 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-client
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event.inputs.publish_latest == 'true' }}
             type=sha
             type=ref,event=tag
 

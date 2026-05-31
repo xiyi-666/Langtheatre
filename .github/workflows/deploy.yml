@@ -7,6 +7,12 @@ env:
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_latest:
+        description: "Tag Docker images as latest from the selected ref before deploying."
+        required: true
+        type: boolean
+        default: true
   push:
     branches: [main]
     paths:
@@ -39,7 +45,7 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-server
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event.inputs.publish_latest == 'true' }}
             type=sha,format=short,prefix=sha-
 
       - name: Build and push server image
@@ -57,7 +63,7 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-client
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event.inputs.publish_latest == 'true' }}
             type=sha,format=short,prefix=sha-
 
       - name: Build and push client image
