@@ -855,11 +855,12 @@ function segmentPassage(passage: string): string[] {
   if (bySingleLine.length > 1) return bySingleLine;
 
   // Strategy 3: fallback to sentence-based chunking for one long paragraph.
+  // Some generated English arrives without spaces after punctuation, so do not require whitespace.
   const sentences = normalized
-    .split(/(?<=[。！？.!?])\s+/)
+    .split(/(?<=[。！？.!?])(?=\s|["'“”‘’(]?[A-Za-z0-9\u4e00-\u9fff]|$)/)
     .map((s) => s.trim())
     .filter(Boolean);
-  if (sentences.length <= 1) return [normalized];
+  if (sentences.length <= 1) return splitLongText(normalized, 180);
 
   const chunks: string[] = [];
   const targetLength = 180;
@@ -868,7 +869,7 @@ function segmentPassage(passage: string): string[] {
   for (const sentence of sentences) {
     const next = current ? `${current} ${sentence}` : sentence;
     if (next.length > targetLength && current) {
-      chunks.push(current);
+      chunks.push(...splitLongText(current, targetLength));
       current = sentence;
       continue;
     }
@@ -876,10 +877,29 @@ function segmentPassage(passage: string): string[] {
   }
 
   if (current) {
-    chunks.push(current);
+    chunks.push(...splitLongText(current, targetLength));
   }
 
   return chunks.length > 0 ? chunks : [normalized];
+}
+
+function splitLongText(text: string, targetLength: number): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  if (trimmed.length <= targetLength) return [trimmed];
+
+  const chunks: string[] = [];
+  let rest = trimmed;
+  while (rest.length > targetLength) {
+    const searchStart = Math.max(40, Math.floor(targetLength * 0.55));
+    const windowText = rest.slice(searchStart, targetLength + 1);
+    const whitespaceOffset = windowText.search(/\s(?!.*\s)/);
+    const cut = whitespaceOffset >= 0 ? searchStart + whitespaceOffset + 1 : targetLength;
+    chunks.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
 }
 
 function buildLearningVocabulary(sourceVocabulary: string[], passage: string, topic: string): VocabLearningItem[] {

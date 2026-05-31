@@ -60,6 +60,7 @@ body {
   border-radius: var(--radius-xl);
   padding: 24px;
   width: min(1180px, 100%);
+  min-width: 0;
   margin-inline: auto;
   display: flex;
   flex-direction: column;
@@ -69,6 +70,20 @@ body {
   position: relative;
   overflow: hidden;
   backdrop-filter: blur(4px);
+}
+
+.card > *,
+.route-header,
+.route-header h2,
+.card h1,
+.card h2,
+.card h3,
+.card p,
+.card li {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .card::before {
@@ -170,6 +185,8 @@ button:hover,
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .dialogue {
@@ -177,6 +194,18 @@ button:hover,
   border-radius: var(--radius-md);
   background: #f7efe4;
   border: 1px solid #ead6bd;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.dialogue p,
+.dialogue strong,
+.dialogue small {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .dialogue.active {
@@ -666,6 +695,19 @@ button:hover,
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   padding: 14px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.stage-banner p,
+.stage-banner li,
+.stage-banner strong,
+.stage-banner small {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .profile-section-banner {
@@ -764,10 +806,28 @@ button:hover,
 .speaker-left,
 .speaker-right {
   max-width: 86%;
+  min-width: 0;
   border-radius: 16px;
   padding: 12px;
   border: 1px solid;
   position: relative;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+.speaker-left p,
+.speaker-right p,
+.speaker-left strong,
+.speaker-right strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.speaker-left p,
+.speaker-right p {
+  white-space: pre-wrap;
 }
 
 .speaker-left {
@@ -846,6 +906,14 @@ button:hover,
   margin-bottom: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
 }
 
 .option-item:hover {
@@ -917,6 +985,8 @@ button:hover,
   max-height: min(75vh, 880px);
   overflow: auto;
   padding-right: 4px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .reading-article {
@@ -927,6 +997,10 @@ button:hover,
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .reading-article p {
@@ -934,12 +1008,16 @@ button:hover,
   line-height: 1.85;
   color: #2f3d42;
   font-size: clamp(15px, 1.25vw, 18px);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 
 .reading-article.en p {
   font-family: "Merriweather", "Georgia", "Times New Roman", serif;
   line-height: 1.95;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
 }
 
 .reading-article .reading-reference-item {
@@ -973,6 +1051,8 @@ button:hover,
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .reading-reference-header {
@@ -988,6 +1068,8 @@ button:hover,
   gap: 8px;
   align-items: stretch;
   touch-action: pan-y;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .swipe-arrow {
@@ -1018,12 +1100,20 @@ button:hover,
   border-radius: var(--radius-md);
   background: #fff;
   padding: 10px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .reading-reference-item p {
   margin: 8px 0 0;
   line-height: 1.7;
   color: #344349;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 
 .reading-index-dots {
