@@ -33,7 +33,10 @@ func (g *OpenAIGenerator) RoleplayTurn(ctx context.Context, theater domain.Theat
 		maxTurns = len(transcript)
 	}
 	history := transcript[len(transcript)-maxTurns:]
-	historyBytes, _ := json.Marshal(history)
+	historyBytes, err := json.Marshal(history)
+	if err != nil {
+		return domain.RoleplayTurnEval{}, fmt.Errorf("failed to marshal roleplay history: %w", err)
+	}
 	prompt := fmt.Sprintf(`Theater topic: %s
 Scene: %s
 Language: %s
@@ -95,7 +98,10 @@ JSON format:
 
 func (g *OpenAIGenerator) RoleplaySummary(ctx context.Context, theater domain.Theater, transcript []domain.Dialogue, currentScore int) (string, error) {
 	sys := "你是角色扮演总结教练。总结必须使用简体中文。仅返回JSON。"
-	historyBytes, _ := json.Marshal(transcript)
+	historyBytes, err := json.Marshal(transcript)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal roleplay transcript: %w", err)
+	}
 	prompt := fmt.Sprintf(`Topic: %s
 Language: %s
 Current score: %d

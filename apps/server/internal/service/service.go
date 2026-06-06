@@ -120,10 +120,15 @@ func (s *Service) Register(email string, password string) (string, error) {
 		return "", err
 	}
 	accessToken, err := auth.CreateAccessToken(s.jwtSecret, user.ID, user.Email)
-	if err == nil && s.session != nil {
-		_ = s.session.SetRefreshToken(context.Background(), user.ID, accessToken)
+	if err != nil {
+		return "", err
 	}
-	return accessToken, err
+	if s.session != nil {
+		if storeErr := s.session.SetRefreshToken(context.Background(), user.ID, accessToken); storeErr != nil {
+			log.Printf("failed to store refresh token for user=%s: %v", user.ID, storeErr)
+		}
+	}
+	return accessToken, nil
 }
 
 func (s *Service) Login(email string, password string) (string, error) {
@@ -135,10 +140,15 @@ func (s *Service) Login(email string, password string) (string, error) {
 		return "", errors.New("invalid credentials")
 	}
 	accessToken, err := auth.CreateAccessToken(s.jwtSecret, user.ID, user.Email)
-	if err == nil && s.session != nil {
-		_ = s.session.SetRefreshToken(context.Background(), user.ID, accessToken)
+	if err != nil {
+		return "", err
 	}
-	return accessToken, err
+	if s.session != nil {
+		if storeErr := s.session.SetRefreshToken(context.Background(), user.ID, accessToken); storeErr != nil {
+			log.Printf("failed to store refresh token for user=%s: %v", user.ID, storeErr)
+		}
+	}
+	return accessToken, nil
 }
 
 func (s *Service) Refresh(accessToken string) (string, error) {
@@ -1534,7 +1544,10 @@ func (s *Service) StartRoleplay(userID string, theaterID string, userRole string
 		openingZh = "你好，我们开始角色扮演。请先用一句话介绍你的立场。"
 	}
 	if engine, ok := any(s.generator).(roleplayEngine); ok {
-		if eval, e := engine.RoleplayTurn(context.Background(), theater, userRole, session.Transcript, ""); e == nil && strings.TrimSpace(eval.AssistantReply) != "" {
+		eval, e := engine.RoleplayTurn(context.Background(), theater, userRole, session.Transcript, "")
+		if e != nil {
+			log.Printf("roleplay opening ai failed theater_id=%s err=%v, using fallback", theater.ID, e)
+		} else if strings.TrimSpace(eval.AssistantReply) != "" {
 			opening = eval.AssistantReply
 			if strings.TrimSpace(eval.AssistantZhSub) != "" {
 				openingZh = eval.AssistantZhSub
@@ -1579,7 +1592,10 @@ func (s *Service) SubmitRoleplayReply(userID string, sessionID string, text stri
 
 	eval := fallbackRoleplayTurn(theater.Language, cleanText)
 	if engine, ok := any(s.generator).(roleplayEngine); ok {
-		if generated, e := engine.RoleplayTurn(context.Background(), theater, session.UserRole, session.Transcript, cleanText); e == nil {
+		generated, e := engine.RoleplayTurn(context.Background(), theater, session.UserRole, session.Transcript, cleanText)
+		if e != nil {
+			log.Printf("roleplay turn ai failed session_id=%s turn=%d err=%v, using fallback", session.ID, session.TurnIndex, e)
+		} else {
 			eval = generated
 		}
 	}
@@ -1620,7 +1636,10 @@ func (s *Service) EndRoleplay(userID string, sessionID string) (domain.RoleplayS
 		return domain.RoleplaySession{}, terr
 	}
 	if engine, ok := any(s.generator).(roleplayEngine); ok {
-		if summary, e := engine.RoleplaySummary(context.Background(), th, session.Transcript, session.CurrentScore); e == nil && strings.TrimSpace(summary) != "" {
+		summary, e := engine.RoleplaySummary(context.Background(), th, session.Transcript, session.CurrentScore)
+		if e != nil {
+			log.Printf("roleplay summary ai failed session_id=%s err=%v, using fallback", session.ID, e)
+		} else if strings.TrimSpace(summary) != "" {
 			session.FinalFeedback = summary
 		}
 	}

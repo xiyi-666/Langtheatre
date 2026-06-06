@@ -315,7 +315,10 @@ func shouldRetryModelStatus(status int) bool {
 }
 
 func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[string]any) (string, error) {
-	raw, _ := json.Marshal(payload)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal model API payload: %w", err)
+	}
 	chatURL := g.chatCompletionsURL()
 	apiKey := g.apiKey()
 	var lastErr error

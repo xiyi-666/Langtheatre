@@ -73,6 +73,8 @@ func main() {
 	if savedModelConfig, err := dataStore.GetModelConfig(); err == nil {
 		generator.UpdateModelConfig(savedModelConfig)
 		log.Printf("loaded persisted model config provider=%s model=%s", savedModelConfig.Provider, savedModelConfig.Model)
+	} else {
+		log.Printf("no persisted model config found, using defaults: %v", err)
 	}
 	tts := ai.NewAPITTS(
 		cfg.TTSProvider,
@@ -90,6 +92,8 @@ func main() {
 	if savedTTSConfig, err := dataStore.GetTTSConfig(); err == nil {
 		tts.UpdateTTSConfig(savedTTSConfig)
 		log.Printf("loaded persisted tts config provider=%s model=%s voice=%s", savedTTSConfig.Provider, savedTTSConfig.Model, savedTTSConfig.Voice)
+	} else {
+		log.Printf("no persisted tts config found, using defaults: %v", err)
 	}
 	svc := service.New(dataStore, redisClient, generator, tts, cfg.JWTSecret)
 	schema, err := graph.NewSchema(svc)
