@@ -576,14 +576,19 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 						return nil, errors.New("unauthorized")
 					}
 					input := p.Args["input"].(map[string]any)
-					raw, _ := json.Marshal(input)
+					raw, err := json.Marshal(input)
+					if err != nil {
+						return nil, errors.New("failed to encode theater input")
+					}
 					var payload struct {
 						Language   string  `json:"language"`
 						Topic      string  `json:"topic"`
 						Difficulty float64 `json:"difficulty"`
 						Mode       string  `json:"mode"`
 					}
-					_ = json.Unmarshal(raw, &payload)
+					if err := json.Unmarshal(raw, &payload); err != nil {
+						return nil, errors.New("invalid theater input format")
+					}
 					return svc.GenerateTheater(userID, payload.Language, payload.Topic, payload.Difficulty, payload.Mode)
 				},
 			},

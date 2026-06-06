@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -90,7 +91,9 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 			Context:        ctx,
 		})
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(result)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			log.Printf("failed to encode graphql response: %v", err)
+		}
 	})
 	mux.HandleFunc("/media-proxy", func(w http.ResponseWriter, r *http.Request) {
 		setCORSHeaders(w, r)
@@ -146,7 +149,7 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 		}
 		w.Header().Set("Cache-Control", "public, max-age=300")
 		if _, err = io.Copy(w, resp.Body); err != nil {
-			http.Error(w, "failed to stream media", http.StatusBadGateway)
+			log.Printf("media-proxy stream copy failed url=%s: %v", rawURL, err)
 			return
 		}
 	})
