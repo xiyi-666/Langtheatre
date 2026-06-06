@@ -888,15 +888,23 @@ function splitLongText(text: string, targetLength: number): string[] {
   if (!trimmed) return [];
   if (trimmed.length <= targetLength) return [trimmed];
 
+  const effectiveTarget = Math.max(targetLength, 50);
   const chunks: string[] = [];
   let rest = trimmed;
-  while (rest.length > targetLength) {
-    const searchStart = Math.max(40, Math.floor(targetLength * 0.55));
-    const windowText = rest.slice(searchStart, targetLength + 1);
+  while (rest.length > effectiveTarget) {
+    const searchStart = Math.max(40, Math.floor(effectiveTarget * 0.55));
+    const windowText = rest.slice(searchStart, effectiveTarget + 1);
     const whitespaceOffset = windowText.search(/\s(?!.*\s)/);
-    const cut = whitespaceOffset >= 0 ? searchStart + whitespaceOffset + 1 : targetLength;
-    chunks.push(rest.slice(0, cut).trim());
-    rest = rest.slice(cut).trim();
+    const cut = whitespaceOffset >= 0 ? searchStart + whitespaceOffset + 1 : effectiveTarget;
+    const chunk = rest.slice(0, cut).trim();
+    const nextRest = rest.slice(cut).trim();
+    if (!chunk || nextRest === rest) {
+      chunks.push(rest);
+      rest = "";
+      break;
+    }
+    chunks.push(chunk);
+    rest = nextRest;
   }
   if (rest) chunks.push(rest);
   return chunks;
