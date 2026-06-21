@@ -231,9 +231,13 @@ Rules for quiz:
 			questionInstruction,
 		)
 	} else {
-		scenarioBrief, scenarioErr := g.expandConversationScenario(ctx, language, topic, difficulty, mode)
+		cleanTopic := ielts.CleanTopic(topic)
+		if cleanTopic == "" {
+			cleanTopic = strings.TrimSpace(topic)
+		}
+		scenarioBrief, scenarioErr := g.expandConversationScenario(ctx, language, cleanTopic, difficulty, mode)
 		if scenarioErr != nil {
-			scenarioBrief = strings.TrimSpace(topic)
+			scenarioBrief = cleanTopic
 		}
 		user = fmt.Sprintf(
 			`Learning language code: %s. Topic: %s. Scenario brief: %s. Difficulty: %.1f. Mode: %s.
@@ -260,19 +264,23 @@ Rules for quiz:
 4) For CANTONESE, dialogue stays Traditional Chinese, but quiz question and options must use Simplified Chinese.
 5) Avoid generic/meta questions like "主题是什么" unless anchored by concrete dialogue details.
 6) Prefer realistic detail questions: numbers, time, location, preference, constraints, next-step decisions.`,
-			language, topic, scenarioBrief, difficulty, mode, listeningProfile.PromptBlock(), quizCount,
+			language, cleanTopic, scenarioBrief, difficulty, mode, listeningProfile.PromptBlock(), quizCount,
 		)
 	}
 	model := g.modelName()
-	attempts := 1
+	attempts := 2
 	if readingMode {
-		attempts = 2
+		attempts = 3
 	}
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptUser := user
 		if attempt > 0 {
-			attemptUser += readingRegenerationInstruction(quizCount, topic)
+			if readingMode {
+				attemptUser += readingRegenerationInstruction(quizCount, topic)
+			} else {
+				attemptUser += listeningRegenerationInstruction(quizCount)
+			}
 		}
 		payload := map[string]any{
 			"model": model,
@@ -284,6 +292,8 @@ Rules for quiz:
 		}
 		if readingMode {
 			payload["max_tokens"] = 6000
+		} else {
+			payload["max_tokens"] = 4000
 		}
 		content, err := g.callModelJSONPayload(ctx, payload)
 		if err != nil && strings.Contains(err.Error(), "no parsable text") && !strings.EqualFold(model, defaultModelName) {
@@ -300,12 +310,45 @@ Rules for quiz:
 			}
 			lastErr = parseErr
 		}
-		if readingMode && attempt+1 < attempts {
-			log.Printf("reading model output failed quality gate, retrying attempt=%d err=%v", attempt+1, lastErr)
+		if attempt+1 < attempts {
+			if readingMode {
+				log.Printf("reading model output failed quality gate, retrying attempt=%d err=%v", attempt+1, lastErr)
+				if isTransientModelError(lastErr) {
+					time.Sleep(time.Duration(attempt+1) * 1200 * time.Millisecond)
+				}
+			} else {
+				log.Printf("listening model output failed quality gate, retrying attempt=%d err=%v", attempt+1, lastErr)
+			}
 			continue
 		}
 	}
 	return nil, nil, lastErr
+}
+
+func isTransientModelError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "502") ||
+		strings.Contains(message, "503") ||
+		strings.Contains(message, "504") ||
+		strings.Contains(message, "bad gateway") ||
+		strings.Contains(message, "timeout") ||
+		strings.Contains(message, "unexpected eof")
+}
+
+func listeningRegenerationInstruction(quizCount int) string {
+	return fmt.Sprintf(`
+
+Regenerate the full JSON object because the previous listening response failed validation.
+Critical requirements for this retry:
+- Return one complete JSON object with BOTH "dialogues" and "quiz" at the top level.
+- Return exactly 8 dialogue turns and exactly %d quiz items.
+- Keep each dialogue turn compact, usually 18-34 English words for Section 1-3 or 25-45 words for Section 4.
+- Do not quote or mention IELTS, Band, Section, Focus, Task design, metadata, prompt text, or the topic string.
+- Start directly inside the scene; no welcome message, no "today's topic", and no mini-theater narration.
+- Keep the same difficulty by using corrections, delayed answers, competing details, and paraphrased quiz wording.`, quizCount)
 }
 
 func readingRegenerationInstruction(quizCount int, topic string) string {
@@ -332,6 +375,9 @@ func parseAndValidateModelContent(language string, topic string, readingMode boo
 	if readingMode {
 		metadata := ielts.ReadingMetadataFromTopic(readingExamFromTopic(topic), topic, "")
 		quiz = applyReadingQuestionDefaults(metadata.QuestionType, quiz)
+	} else {
+		profile := ielts.ListeningProfileFromTopic(topic, 0)
+		quiz = applyListeningQuestionDefaults(profile.Section, quiz)
 	}
 	if len(dialogues) == 0 {
 		log.Printf("model output parse failed snippet=%q", modelOutputSnippet(content))
@@ -368,6 +414,29 @@ func parseAndValidateModelContent(language string, topic string, readingMode boo
 		}
 	}
 	return dialogues, quiz, nil
+}
+
+func applyListeningQuestionDefaults(section int, quiz []domain.QuizQuestion) []domain.QuizQuestion {
+	defaultType := listeningQuestionType(section)
+	for i := range quiz {
+		if strings.TrimSpace(quiz[i].Type) == "" {
+			quiz[i].Type = defaultType
+		}
+	}
+	return quiz
+}
+
+func listeningQuestionType(section int) string {
+	switch section {
+	case 1:
+		return "Form/Table Completion"
+	case 2:
+		return "Map/Instruction Detail"
+	case 3:
+		return "Opinion Matching"
+	default:
+		return "Note/Summary Completion"
+	}
 }
 
 func modelOutputSnippet(content string) string {

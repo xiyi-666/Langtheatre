@@ -20,6 +20,11 @@ var promptLeakMarkers = []string{
 	"json shape:",
 	"rules for quiz:",
 	"rules for dialogues",
+	"welcome to today's mini-theater",
+	"welcome to mini theater",
+	"today's topic is",
+	"our topic is [ielts",
+	"[ielts listening]",
 }
 
 var fusedEnglishPhrases = map[string]string{

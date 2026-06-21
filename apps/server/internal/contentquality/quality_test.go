@@ -15,6 +15,9 @@ func TestPromptLeakDetection(t *testing.T) {
 	if !ContainsPromptLeak("[IELTS Academic Stage 01]\nTask design\nCreate an IELTS Academic reading drill") {
 		t.Fatal("expected prompt leak to be detected")
 	}
+	if !ContainsPromptLeak("Welcome to today's mini-theater. Our topic is [IELTS Listening][Stage 09].") {
+		t.Fatal("expected listening prompt leak to be detected")
+	}
 	if ContainsPromptLeak("Researchers compare several urban planning policies across regions.") {
 		t.Fatal("did not expect clean passage to be flagged")
 	}

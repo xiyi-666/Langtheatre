@@ -21,6 +21,7 @@ type ListeningProfile struct {
 	DistractorDensity   string
 	QuestionInstruction string
 	InteractionFormat   string
+	TurnGuidance        string
 }
 
 type ReadingMetadata struct {
@@ -80,6 +81,7 @@ func ListeningProfileFromTopic(topic string, difficulty float64) ListeningProfil
 	}
 	profile.QuestionInstruction = listeningSectionInstruction(section)
 	profile.InteractionFormat = listeningInteractionFormat(section)
+	profile.TurnGuidance = listeningTurnGuidance(section, band)
 	if profile.SkillFocus == "" {
 		profile.SkillFocus = defaultListeningFocus(section)
 	}
@@ -96,8 +98,10 @@ func (p ListeningProfile) PromptBlock() string {
 - Distractors: %s.
 - Section %d task: %s.
 - Interaction format: %s.
+- Turn design: %s.
 - Focus: %s.
 - Task design: %s.
+- These controls are invisible planning constraints; never mention IELTS, Band, Section, Focus, Task design, metadata, prompt text, or the topic string in the dialogue.
 - Questions must follow the Section task type, not generic main-idea questions.`,
 		p.Band,
 		p.Pace,
@@ -108,6 +112,7 @@ func (p ListeningProfile) PromptBlock() string {
 		p.Section,
 		p.QuestionInstruction,
 		p.InteractionFormat,
+		p.TurnGuidance,
 		p.SkillFocus,
 		p.TaskDesign,
 	)
@@ -280,6 +285,8 @@ func extractTaskDesign(topic string) string {
 func extractQuestionType(topic string) string {
 	lower := strings.ToLower(topic)
 	switch {
+	case strings.Contains(lower, "mixed question set"):
+		return "Mixed Question Set"
 	case strings.Contains(lower, "matching headings"):
 		return "Matching Headings"
 	case strings.Contains(lower, "matching information"):
@@ -288,8 +295,6 @@ func extractQuestionType(topic string) string {
 		return "TFNG"
 	case strings.Contains(lower, "summary completion") || strings.Contains(lower, "complex summary"):
 		return "Summary Completion"
-	case strings.Contains(lower, "mixed question set"):
-		return "Mixed Question Set"
 	case strings.Contains(lower, "multiple choice"):
 		return "Multiple Choice"
 	default:
@@ -328,6 +333,22 @@ func listeningInteractionFormat(section int) string {
 	default:
 		return `single-speaker academic monologue split into 8 consecutive lecture chunks; every dialogue item must use speaker "Lecturer"; no students, interruptions, interviews, receptionist/caller exchanges, Q&A turns, recording/upload logistics, timers, or worksheets`
 	}
+}
+
+func listeningTurnGuidance(section int, band float64) string {
+	if section == 4 {
+		if band >= 7.0 {
+			return "8 compact lecture chunks, each usually 25-45 words, with cause/effect, contrast, examples, and note-completion signals"
+		}
+		return "8 short lecture chunks, each usually 18-35 words, with clear signposting and one main point per chunk"
+	}
+	if band >= 7.0 {
+		return "8 compact turns, each usually 18-34 words, carrying 1-2 useful facts plus corrections, delayed answers, or competing details"
+	}
+	if band >= 6.0 {
+		return "8 natural turns, each usually 14-28 words, with occasional clarification and one correction"
+	}
+	return "8 short turns, each usually 8-20 words, with direct factual information"
 }
 
 func defaultListeningFocus(section int) string {

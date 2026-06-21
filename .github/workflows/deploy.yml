@@ -4,6 +4,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   DEPLOY_HOST: 61.244.24.7
   DEPLOY_DIR: /opt/linguaquest
+  DOCKER_PLATFORMS: linux/amd64,linux/arm64
 
 on:
   workflow_dispatch:
@@ -53,7 +54,10 @@ jobs:
         with:
           context: ./apps/server
           file: ./apps/server/Dockerfile
+          platforms: ${{ env.DOCKER_PLATFORMS }}
           push: true
+          cache-from: type=gha,scope=linguaquest-server
+          cache-to: type=gha,mode=max,scope=linguaquest-server
           tags: ${{ steps.meta-server.outputs.tags }}
           labels: ${{ steps.meta-server.outputs.labels }}
 
@@ -71,10 +75,13 @@ jobs:
         with:
           context: ./apps/client
           file: ./apps/client/Dockerfile
+          platforms: ${{ env.DOCKER_PLATFORMS }}
           push: true
           build-args: |
             VITE_API_URL=/graphql
             VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
+          cache-from: type=gha,scope=linguaquest-client
+          cache-to: type=gha,mode=max,scope=linguaquest-client
           tags: ${{ steps.meta-client.outputs.tags }}
           labels: ${{ steps.meta-client.outputs.labels }}
 

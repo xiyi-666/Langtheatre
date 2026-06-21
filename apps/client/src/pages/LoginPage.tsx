@@ -9,6 +9,7 @@ export function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isRegister, setIsRegister] = useState(false);
+  const [authError, setAuthError] = useState("");
   const setUser = useAppStore((s) => s.setUser);
   const setLoading = useAppStore((s) => s.setLoading);
   const loading = useAppStore((s) => s.loading);
@@ -16,6 +17,7 @@ export function LoginPage() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    setAuthError("");
     setLoading(true);
     try {
       const token = isRegister ? await register(email, password) : await login(email, password);
@@ -24,7 +26,10 @@ export function LoginPage() {
       setUser(profile);
       navigate("/courses");
     } catch (e) {
-      console.error("auth submit failed", e);
+      if (!isExpectedAuthError(e)) {
+        console.error("auth submit failed", e);
+      }
+      setAuthError(formatAuthError(e, isRegister));
     } finally {
       setLoading(false);
     }
@@ -39,7 +44,14 @@ export function LoginPage() {
 
           <label>
             <span><Mail size={14} /> 邮箱</span>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="请输入你的邮箱" />
+            <input
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setAuthError("");
+              }}
+              placeholder="请输入你的邮箱"
+            />
           </label>
 
           <label>
@@ -47,10 +59,15 @@ export function LoginPage() {
             <input
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setAuthError("");
+              }}
               placeholder="请输入你的密码"
             />
           </label>
+
+          {authError ? <p className="error" role="alert">{authError}</p> : null}
 
           <button disabled={loading} type="submit">
             {loading ? "处理中..." : isRegister ? "注册并进入" : "登录"}
@@ -58,7 +75,10 @@ export function LoginPage() {
           <button
             type="button"
             className="btn-ghost"
-            onClick={() => setIsRegister((value) => !value)}
+            onClick={() => {
+              setIsRegister((value) => !value);
+              setAuthError("");
+            }}
           >
             {isRegister ? "已有账号，去登录" : "没有账号，去注册"}
           </button>
@@ -76,4 +96,23 @@ export function LoginPage() {
       </motion.section>
     </main>
   );
+}
+
+function isExpectedAuthError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return message.includes("email already exists") || message.includes("invalid credentials");
+}
+
+function formatAuthError(error: unknown, isRegister: boolean): string {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("email already exists")) {
+    return "该邮箱已注册，请直接登录。";
+  }
+  if (message.includes("invalid credentials")) {
+    return "邮箱或密码不正确，请检查后重试。";
+  }
+  if (message.includes("database is locked")) {
+    return "服务正在处理其他请求，请稍后再试。";
+  }
+  return isRegister ? "注册失败，请稍后再试。" : "登录失败，请稍后再试。";
 }

@@ -283,9 +283,6 @@ func (t *APITTS) synthesizeCustom(ctx context.Context, config domain.TTSConfig, 
 }
 
 func (t *APITTS) synthesizeXiaomi(ctx context.Context, config domain.TTSConfig, text string, language string, requestedVoice string) (string, error) {
-	if shouldUseXiaomiDesignedCloneFlow(requestedVoice) {
-		return t.synthesizeXiaomiWithDesignedClone(ctx, config, text, language, requestedVoice)
-	}
 	model := normalizeTTSModel(ttsProviderXiaomi, config.Model)
 	messages, audio, buildErr := buildXiaomiMessagesAndAudio(model, config.Voice, config.AudioFormat, text, language, requestedVoice)
 	if buildErr != nil {
@@ -529,7 +526,7 @@ func buildXiaomiMessagesAndAudio(model string, configuredVoice string, format st
 				{"role": "user", "content": voiceDescription},
 				{"role": "assistant", "content": synthesisText},
 			},
-			map[string]any{"format": audioFormat}, nil
+			map[string]any{"format": audioFormat, "optimize_text_preview": true}, nil
 	case isXiaomiVoiceCloneModel(model):
 		cloneSample := strings.TrimSpace(configuredVoice)
 		if cloneSample == "" {
@@ -573,12 +570,12 @@ func xiaomiVoiceDesignPrompt(style string, language string) string {
 	if normalizedStyle == "" {
 		normalizedStyle = "温柔女生"
 	}
-	base := fmt.Sprintf("请设计一个%s的声音，音色真实自然，情绪稳定，吐字清晰，语速自然，不要播报腔，适合语言学习场景。", normalizedStyle)
+	base := fmt.Sprintf("请设计一个%s的声音，音色真实自然，情绪稳定，吐字清晰，保持中速偏自然的稳定语速，不要忽快忽慢，不要拖长句尾，不要播报腔，适合语言学习场景。", normalizedStyle)
 	switch strings.ToUpper(strings.TrimSpace(language)) {
 	case "CANTONESE":
-		return base + "这个声音要自然适配广东话口语，接近香港日常生活对话。"
+		return base + "這個聲音必須自然適配香港粵語口語，只用粵語/廣東話發音，不要使用普通話或國語腔；每句按標點作短停頓，整段保持一致節奏，接近香港日常生活對話。"
 	case "ENGLISH":
-		return base + "This voice should also sound warm and clear for English learning dialogues."
+		return base + "This voice should also sound warm and clear for English learning dialogues, with steady pacing and no sudden speed changes."
 	default:
 		return base
 	}
@@ -587,7 +584,7 @@ func xiaomiVoiceDesignPrompt(style string, language string) string {
 func xiaomiVoiceDesignSampleText(language string) string {
 	switch strings.ToUpper(strings.TrimSpace(language)) {
 	case "CANTONESE":
-		return "你好，欢迎来到 LinguaQuest，我会陪你练习真实自然的日常对话。"
+		return "唔該，我想問下今日個課程幾點開始？如果而家報名，係咪可以即刻收到確認訊息？我想你講得自然啲，速度穩定啲，唔好突然快或者突然慢。"
 	case "ENGLISH":
 		return "Hello, welcome to LinguaQuest. Let's practice natural everyday conversation together."
 	default:
@@ -717,7 +714,7 @@ func xiaomiSynthesisText(text string, language string) string {
 	if !strings.EqualFold(strings.TrimSpace(language), "CANTONESE") {
 		return trimmed
 	}
-	if strings.HasPrefix(trimmed, "(粤语)") {
+	if strings.HasPrefix(trimmed, "(粤语)") || strings.HasPrefix(trimmed, "(粵語)") {
 		return trimmed
 	}
 	return "(粤语)" + trimmed
@@ -994,10 +991,10 @@ func buildInstruction(text string, language string, voiceStyle string) string {
 	if style == "" {
 		style = "温柔女生"
 	}
-	base := voiceStyleInstruction(style) + "，语速自然，像真实生活场景中的对话，不要播报腔。"
+	base := voiceStyleInstruction(style) + "，保持中速偏自然的稳定语速，按标点做短停顿，不要忽快忽慢，不要拖长句尾，像真实生活场景中的对话，不要播报腔。"
 	lang := strings.ToUpper(strings.TrimSpace(language))
-	if lang == "CANTONESE" && !englishLetter.MatchString(text) {
-		return "请用广东话说，" + base
+	if lang == "CANTONESE" {
+		return "請用香港粵語/廣東話朗讀，只可用粵語發音，不要使用普通話或國語腔；即使文本包含英文地名、人名或品牌名，也保持港式粵語語流。全段用一致節奏朗讀，中速偏自然，每句只作短停頓，不要突然加速、突然放慢或刻意拉長尾音。" + base
 	}
 	return base
 }

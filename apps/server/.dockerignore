@@ -1,0 +1,11 @@
+.env
+.env.*
+linguaquest.db
+*.db
+*.sqlite
+*.sqlite3
+linguaquest-api
+tmp/
+dist/
+coverage/
+*.log

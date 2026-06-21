@@ -33,19 +33,35 @@ type GraphQLResponse<T> = {
   errors?: { message: string }[];
 };
 
+type RequestOptions = {
+  retryWithGuest?: boolean;
+};
+
+let guestTokenPromise: Promise<string> | undefined;
+
 async function ensureAccessToken(): Promise<string> {
   const existing = localStorage.getItem("accessToken");
   if (existing) {
     return existing;
   }
+  if (guestTokenPromise) {
+    return guestTokenPromise;
+  }
   const seed = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
   const email = `guest_${seed}@linguaquest.local`;
-  const token = await register(email, "guest1234");
-  localStorage.setItem("accessToken", token);
-  return token;
+  guestTokenPromise = register(email, "guest1234")
+    .then((token) => {
+      localStorage.setItem("accessToken", token);
+      return token;
+    })
+    .finally(() => {
+      guestTokenPromise = undefined;
+    });
+  return guestTokenPromise;
 }
 
-async function request<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+async function request<T>(query: string, variables?: Record<string, unknown>, options: RequestOptions = {}): Promise<T> {
+  const retryWithGuest = options.retryWithGuest ?? true;
   async function sendRequest(token?: string | null): Promise<GraphQLResponse<T>> {
     const response = await fetch(API_URL, {
       method: "POST",
@@ -64,8 +80,10 @@ async function request<T>(query: string, variables?: Record<string, unknown>): P
   // Token may be stale after backend JWT secret rotation; refresh once automatically.
   if (result.errors?.[0]?.message?.toLowerCase().includes("unauthorized") && currentToken) {
     localStorage.removeItem("accessToken");
-    const renewedToken = await ensureAccessToken();
-    result = await sendRequest(renewedToken);
+    if (retryWithGuest) {
+      const renewedToken = await ensureAccessToken();
+      result = await sendRequest(renewedToken);
+    }
   }
 
   if (result.errors?.length) {
@@ -119,7 +137,9 @@ export async function login(email: string, password: string): Promise<string> {
 
 export async function me(): Promise<User> {
   const data = await request<{ me: User }>(
-    `query Me { me { id email nickname avatarUrl bio totalXP } }`
+    `query Me { me { id email nickname avatarUrl bio totalXP } }`,
+    undefined,
+    { retryWithGuest: false }
   );
   return data.me;
 }

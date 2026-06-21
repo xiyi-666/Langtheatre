@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/linguaquest/server/internal/domain"
@@ -90,6 +91,29 @@ func TestNormalizeQuizAcceptsSummaryCompletionWithWordBankOnly(t *testing.T) {
 	}
 }
 
+func TestApplyListeningQuestionDefaultsAddsSectionType(t *testing.T) {
+	quiz := applyListeningQuestionDefaults(3, []domain.QuizQuestion{{
+		Question:  "Which concern does the student raise?",
+		Options:   []string{"Sample size", "Room booking", "Ticket price", "Start date"},
+		AnswerKey: "Sample size",
+	}})
+	if quiz[0].Type != "Opinion Matching" {
+		t.Fatalf("Type = %q, want Opinion Matching", quiz[0].Type)
+	}
+}
+
+func TestApplyListeningQuestionDefaultsPreservesModelType(t *testing.T) {
+	quiz := applyListeningQuestionDefaults(1, []domain.QuizQuestion{{
+		Question:  "What is the corrected booking reference?",
+		Options:   []string{"A", "B", "C", "D"},
+		AnswerKey: "B",
+		Type:      "Spelling",
+	}})
+	if quiz[0].Type != "Spelling" {
+		t.Fatalf("Type = %q, want model-provided type", quiz[0].Type)
+	}
+}
+
 func TestParseModelOutputKeepsMixedQuizWhenSummaryHasNoOptions(t *testing.T) {
 	content := `{
 		"dialogues":[{"speaker":"Passage","text":"Paragraph text.","zhSubtitle":"段落说明"}],
@@ -153,5 +177,21 @@ func TestModelPayloadWithStreamingDoesNotMutateInput(t *testing.T) {
 	}
 	if _, ok := payload["stream"]; ok {
 		t.Fatal("modelPayloadWithStreaming mutated input")
+	}
+}
+
+func TestListeningRegenerationInstructionRequiresCompleteCompactJSON(t *testing.T) {
+	got := listeningRegenerationInstruction(3)
+	for _, want := range []string{
+		`BOTH "dialogues" and "quiz"`,
+		"exactly 8 dialogue turns",
+		"exactly 3 quiz items",
+		"18-34 English words",
+		"Do not quote or mention IELTS",
+		"no mini-theater narration",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("listeningRegenerationInstruction() = %q, want %q", got, want)
+		}
 	}
 }

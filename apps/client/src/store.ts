@@ -37,6 +37,12 @@ export const useAppStore = create<AppState>((set) => ({
       set({ user: profile });
       return profile;
     } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : "";
+      if (message.includes("unauthorized")) {
+        localStorage.removeItem("accessToken");
+        set({ user: undefined });
+        return undefined;
+      }
       console.error("refresh user xp failed", error);
       return undefined;
     }

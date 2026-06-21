@@ -27,6 +27,8 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if err = applySQLiteSchema(db); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -41,6 +43,7 @@ func (s *SQLiteStore) Close() error {
 func applySQLiteSchema(db *sql.DB) error {
 	stmts := []string{
 		"PRAGMA foreign_keys = ON",
+		"PRAGMA busy_timeout = 5000",
 		`CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
             email TEXT NOT NULL UNIQUE,

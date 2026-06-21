@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/linguaquest/server/internal/auth"
@@ -83,7 +85,16 @@ type Service struct {
 	tokenExpiry      time.Duration
 	readingMu        sync.RWMutex
 	readingMaterials map[string]domain.ReadingMaterial
+	readingAudioJobs map[string]bool
+	readingAudioKick map[string]time.Time
+	readingListKick  map[string]time.Time
 }
+
+const (
+	maxReadingAudioListRetries = 2
+	readingAudioRetryCooldown  = 15 * time.Minute
+	readingListRetryCooldown   = 2 * time.Minute
+)
 
 type roleplayEngine interface {
 	RoleplayTurn(ctx context.Context, theater domain.Theater, userRole string, transcript []domain.Dialogue, userReply string) (domain.RoleplayTurnEval, error)
@@ -109,6 +120,9 @@ func New(store Store, session SessionStore, generator TheaterGenerator, tts Spee
 		jwtSecret:        jwtSecret,
 		tokenExpiry:      2 * time.Hour,
 		readingMaterials: map[string]domain.ReadingMaterial{},
+		readingAudioJobs: map[string]bool{},
+		readingAudioKick: map[string]time.Time{},
+		readingListKick:  map[string]time.Time{},
 	}
 }
 
@@ -557,20 +571,25 @@ func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic str
 	} else {
 		generated, q, err := s.generator.Generate(context.Background(), theater.Language, preparedTopic, theater.Difficulty, theater.Mode)
 		if err != nil {
-			log.Printf("model generate failed theater_id=%s err=%v", theater.ID, err)
-			theater.Status = "FAILED"
-			current, getErr := s.store.GetTheater(theater.ID)
-			if getErr != nil {
-				log.Printf("skip failed theater persist theater_id=%s err=%v", theater.ID, getErr)
+			if shouldUseGeneratedContentFallback(err) {
+				log.Printf("model generated invalid content, use fallback content theater_id=%s err=%v", theater.ID, err)
+				dialogues, quiz = fallbackGeneratedContent(theater.Language, theater.Topic, requiredQuiz)
+			} else {
+				log.Printf("model generate failed theater_id=%s err=%v", theater.ID, err)
+				theater.Status = "FAILED"
+				current, getErr := s.store.GetTheater(theater.ID)
+				if getErr != nil {
+					log.Printf("skip failed theater persist theater_id=%s err=%v", theater.ID, getErr)
+					return
+				}
+				theater.IsFavorite = current.IsFavorite
+				theater.ShareCode = current.ShareCode
+				theater.CreatedAt = current.CreatedAt
+				if _, saveErr := s.store.SaveTheater(theater); saveErr != nil {
+					log.Printf("persist failed theater status failed theater_id=%s err=%v", theater.ID, saveErr)
+				}
 				return
 			}
-			theater.IsFavorite = current.IsFavorite
-			theater.ShareCode = current.ShareCode
-			theater.CreatedAt = current.CreatedAt
-			if _, saveErr := s.store.SaveTheater(theater); saveErr != nil {
-				log.Printf("persist failed theater status failed theater_id=%s err=%v", theater.ID, saveErr)
-			}
-			return
 		} else {
 			if len(generated) == 0 || dialogueLooksTemplated(generated) {
 				log.Printf("model returned empty or templated content, use fallback content theater_id=%s dialogues=%d quiz=%d", theater.ID, len(generated), len(q))
@@ -649,6 +668,17 @@ func prepareTheaterTopic(language string, topic string) string {
 	}
 	converted := simplifiedToTraditionalHK(clean)
 	return converted + "；请先把这个主题落成一个香港生活中的具体情境，再生成真实对话。"
+}
+
+func shouldUseGeneratedContentFallback(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "model output") ||
+		strings.Contains(lower, "contains prompt leak") ||
+		strings.Contains(lower, "contains collapsed english spacing") ||
+		strings.Contains(lower, "too many generic questions")
 }
 
 func selectDialogueVoicePair(topic string) [2]string {
@@ -1038,7 +1068,7 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 		SkillFocus:           metadata.SkillFocus,
 		QuestionType:         metadata.QuestionType,
 		ScenarioFamily:       metadata.ScenarioFamily,
-		Title:                fmt.Sprintf("%s Reading Drill: %s", exam, topic),
+		Title:                readingMaterialTitle(exam, topic, metadata),
 		Passage:              passage,
 		Vocabulary:           vocabulary,
 		Questions:            q,
@@ -1058,7 +1088,7 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 	}
 	s.cacheReadingMaterial(saved)
 
-	go s.generateReadingAudio(saved.ID, saved.Passage, saved.Language)
+	s.queueReadingAudioGeneration(saved.ID, saved.Passage, saved.Language)
 
 	return saved, nil
 }
@@ -1073,6 +1103,18 @@ func readingGenerationNote(usedFallback bool) string {
 		return "Generated via structured fallback after AI generation was unavailable or failed quality validation."
 	}
 	return "Generated via AI chain with source-category constraints."
+}
+
+func readingMaterialTitle(exam string, topic string, metadata ielts.ReadingMetadata) string {
+	cleanTopic := ielts.CleanTopic(topic)
+	if cleanTopic == "" {
+		cleanTopic = strings.TrimSpace(metadata.QuestionType)
+	}
+	if cleanTopic == "" {
+		cleanTopic = "Reading Practice"
+	}
+	cleanTopic = sentenceSubject(cleanTopic)
+	return fmt.Sprintf("%s Reading Drill: %s", strings.TrimSpace(exam), cleanTopic)
 }
 
 func readingGenerationTopic(exam string, topic string, metadata ielts.ReadingMetadata) string {
@@ -1434,6 +1476,7 @@ var readingMeaningDict = map[string][]string{
 }
 
 func (s *Service) generateReadingAudio(materialID string, text string, language string) {
+	defer s.finishReadingAudioJob(materialID)
 	if s.tts == nil || strings.TrimSpace(text) == "" {
 		if err := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
 			m.AudioStatus = "FAILED"
@@ -1487,6 +1530,22 @@ func (s *Service) generateReadingAudio(materialID string, text string, language 
 			return
 		}
 		audioURLs = append(audioURLs, strings.TrimSpace(audioURL))
+		latestIndex := index
+		if persistErr := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
+			m.AudioURLs = append([]string(nil), audioURLs...)
+			m.AudioURL = audioURLs[0]
+			if len(audioURLs) >= len(chunks) {
+				m.AudioStatus = "READY"
+			} else {
+				m.AudioStatus = "PENDING"
+			}
+			m.GenerationNote = trimReadingAudioProgressNote(m.GenerationNote)
+			if len(audioURLs) < len(chunks) {
+				m.GenerationNote = strings.TrimSpace(m.GenerationNote + fmt.Sprintf(" | audio chunk %d/%d ready", latestIndex+1, len(chunks)))
+			}
+		}); persistErr != nil {
+			log.Printf("reading audio progress persist failed material_id=%s chunk=%d/%d err=%v", materialID, latestIndex+1, len(chunks), persistErr)
+		}
 	}
 
 	if err := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
@@ -1498,6 +1557,22 @@ func (s *Service) generateReadingAudio(materialID string, text string, language 
 	}); err != nil {
 		log.Printf("reading audio ready state persist failed material_id=%s err=%v", materialID, err)
 	}
+}
+
+func trimReadingAudioProgressNote(note string) string {
+	parts := strings.Split(note, "|")
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		piece := strings.TrimSpace(part)
+		if piece == "" {
+			continue
+		}
+		if strings.HasPrefix(piece, "audio chunk ") && strings.HasSuffix(piece, " ready") {
+			continue
+		}
+		kept = append(kept, piece)
+	}
+	return strings.Join(kept, " | ")
 }
 
 func (s *Service) RetryReadingAudio(userID string, materialID string) (domain.ReadingMaterial, error) {
@@ -1515,7 +1590,7 @@ func (s *Service) RetryReadingAudio(userID string, materialID string) (domain.Re
 		return domain.ReadingMaterial{}, err
 	}
 	s.cacheReadingMaterial(saved)
-	go s.generateReadingAudio(saved.ID, saved.Passage, saved.Language)
+	s.queueReadingAudioGeneration(saved.ID, saved.Passage, saved.Language)
 	return saved, nil
 }
 
@@ -1573,9 +1648,14 @@ func (s *Service) ReadingMaterials(userID string, exam string) ([]domain.Reading
 	if err != nil {
 		return nil, err
 	}
+	queued := 0
+	allowListRetry := s.allowReadingListAudioRetry(userID, exam, readingListRetryCooldown)
 	for i := range result {
 		ensureReadingMetadata(&result[i])
 		s.cacheReadingMaterial(result[i])
+		if allowListRetry && queued < maxReadingAudioListRetries && shouldRetryFallbackReadingAudio(result[i]) && s.queueReadingAudioGenerationWithCooldown(result[i].ID, result[i].Passage, result[i].Language, readingAudioRetryCooldown) {
+			queued++
+		}
 	}
 	return result, nil
 }
@@ -1609,7 +1689,71 @@ func (s *Service) ReadingMaterial(userID string, materialID string) (domain.Read
 		s.cacheReadingMaterial(saved)
 		item = saved
 	}
+	if shouldRetryFallbackReadingAudio(item) {
+		s.queueReadingAudioGenerationWithCooldown(item.ID, item.Passage, item.Language, 0)
+	}
 	return item, nil
+}
+
+func (s *Service) queueReadingAudioGeneration(materialID string, text string, language string) bool {
+	return s.queueReadingAudioGenerationWithCooldown(materialID, text, language, 0)
+}
+
+func (s *Service) queueReadingAudioGenerationWithCooldown(materialID string, text string, language string, cooldown time.Duration) bool {
+	if !s.startReadingAudioJob(materialID, cooldown) {
+		return false
+	}
+	go s.generateReadingAudio(materialID, text, language)
+	return true
+}
+
+func (s *Service) startReadingAudioJob(materialID string, cooldown time.Duration) bool {
+	s.readingMu.Lock()
+	defer s.readingMu.Unlock()
+	if s.readingAudioJobs[materialID] {
+		return false
+	}
+	if cooldown > 0 {
+		if lastKick, ok := s.readingAudioKick[materialID]; ok && time.Since(lastKick) < cooldown {
+			return false
+		}
+	}
+	s.readingAudioJobs[materialID] = true
+	s.readingAudioKick[materialID] = time.Now()
+	return true
+}
+
+func (s *Service) finishReadingAudioJob(materialID string) {
+	s.readingMu.Lock()
+	defer s.readingMu.Unlock()
+	delete(s.readingAudioJobs, materialID)
+}
+
+func shouldRetryFallbackReadingAudio(item domain.ReadingMaterial) bool {
+	if strings.TrimSpace(item.Passage) == "" {
+		return false
+	}
+	if !strings.Contains(strings.ToLower(item.GenerationNote), "structured fallback") {
+		return false
+	}
+	if item.AudioStatus == "READY" {
+		return false
+	}
+	return true
+}
+
+func (s *Service) allowReadingListAudioRetry(userID string, exam string, cooldown time.Duration) bool {
+	if cooldown <= 0 {
+		return true
+	}
+	key := strings.TrimSpace(userID) + "|" + strings.TrimSpace(strings.ToUpper(exam))
+	s.readingMu.Lock()
+	defer s.readingMu.Unlock()
+	if lastKick, ok := s.readingListKick[key]; ok && time.Since(lastKick) < cooldown {
+		return false
+	}
+	s.readingListKick[key] = time.Now()
+	return true
 }
 
 func ensureReadingMetadata(material *domain.ReadingMaterial) {
@@ -1964,6 +2108,7 @@ func fallbackReadingContentWithMetadata(topic string, metadata ielts.ReadingMeta
 	if cleanTopic == "" {
 		cleanTopic = strings.TrimSpace(topic)
 	}
+	frame := fallbackReadingFrameForTopic(cleanTopic)
 	limits := ielts.ReadingLengthLimitsFromMetadata("IELTS", topic, metadata)
 	segmentCount := fallbackReadingSegmentCount(limits)
 	segments := []struct {
@@ -1971,31 +2116,31 @@ func fallbackReadingContentWithMetadata(topic string, metadata ielts.ReadingMeta
 		zh   string
 	}{
 		{
-			text: fmt.Sprintf("Public discussion of %s often begins with a simple promise: a new policy, design, or technology will make everyday systems work better. In practice, the subject is rarely that simple. Local authorities, businesses and residents usually approach the same proposal with different expectations, because each group notices a different cost or benefit. Supporters may focus on efficiency and wider access, while critics ask who maintains the system, who pays for it, and who is left out. This tension gives the issue its real significance.", cleanTopic),
+			text: fmt.Sprintf("Debates about %s often begin with a straightforward promise: a visible problem can be solved by a better system, policy, or design. Yet the evidence behind that promise is more layered than the public slogan suggests. %s usually describe the issue through different expectations: some emphasise immediate gains, while others notice maintenance, access, and the groups who remain poorly served. This matters because the most persuasive early claims about %s tend to simplify trade-offs that only become clear after ordinary use begins.", frame.ShortSubject, frame.Actors, frame.ShortSubject),
 			zh:   "该段引入主题，说明不同群体会从成本、维护和公平等角度看待同一方案。",
 		},
 		{
-			text: "The first practical question is whether the proposal fits existing routines. A scheme that looks impressive in a report can fail if it asks people to change too many habits at once. Successful projects usually begin with familiar behaviour and then make a small part of that behaviour easier. For example, a service may be placed near a bus stop, a workplace entrance, or a community building so that users meet it during an ordinary journey. Convenience does not guarantee success, but it lowers the first barrier to participation.",
+			text: fmt.Sprintf("The first practical question is whether the response fits existing routines in %s. A scheme that looks impressive in a report can fail if it asks people to change too many habits at once. Successful projects usually begin with familiar behaviour and then make a small part of that behaviour easier. In the case of %s, this may mean changing the timing, location, or presentation of support rather than expecting users to adopt an entirely new system. Convenience does not guarantee success, but it lowers the first barrier to participation.", frame.Setting, frame.ShortSubject),
 			zh:   "该段说明方案是否贴近日常习惯会影响参与度。",
 		},
 		{
-			text: "A second issue is maintenance. Early descriptions of new initiatives often emphasise opening dates, user numbers and public enthusiasm, but long-term performance depends on quieter work. Equipment must be repaired, staff must answer questions, and data must be checked for errors. If these tasks are not planned from the beginning, the project can appear successful for a few months and then gradually lose reliability. Maintenance is therefore not a minor technical detail; it is part of the social contract between organisers and users.",
+			text: fmt.Sprintf("A second issue is maintenance. Early descriptions of %s often emphasise launch dates, participation numbers, or dramatic early results, but long-term performance depends on quieter work. %s must be checked, explained, repaired, or revised when conditions change. If these tasks are not planned from the beginning, the project can appear successful for a few months and then gradually lose reliability. Maintenance is therefore not a minor technical detail; it is part of the social contract between organisers and users.", frame.ShortSubject, frame.OperationalDetail),
 			zh:   "该段强调维护工作决定项目能否长期可靠运行。",
 		},
 		{
-			text: "Evidence from pilot projects is useful, but it needs careful interpretation. A small trial may attract motivated participants who already support the idea, so its results can look stronger than those of a later city-wide programme. Short trials also tend to measure visible outcomes, such as attendance, travel time or energy use, while missing slower changes in trust and confidence. For this reason, researchers increasingly compare early results with follow-up interviews and administrative records collected after the initial publicity has faded.",
+			text: fmt.Sprintf("Evidence from pilot projects is useful, but it needs careful interpretation. A small trial may attract motivated participants who already support the idea, especially when the trial concerns %s, so its results can look stronger than those of a later wider programme. Short trials also tend to measure visible outcomes, such as attendance, movement, cost, or compliance, while missing slower changes in trust and confidence. For this reason, researchers increasingly compare early results with follow-up interviews and administrative records collected after the initial publicity has faded.", frame.ShortSubject),
 			zh:   "该段说明试点数据有价值，但需要结合后续证据谨慎解读。",
 		},
 		{
-			text: "Equity is another recurring concern. Average figures may suggest improvement even when benefits are unevenly distributed. A project can reduce waiting times overall while still serving central districts better than outer neighbourhoods. It can also help confident users more than people who need guidance, translation or flexible opening hours. Stronger evaluations therefore separate results by location, income, age or previous experience. This does not make the analysis unnecessarily complicated; it shows whether a public solution is genuinely public.",
+			text: fmt.Sprintf("Equity is another recurring concern. Average figures may suggest improvement even when benefits are unevenly distributed. In %s, a positive overall result can conceal weaker outcomes for people or places with fewer resources, less information, or more exposure to risk. It can also help confident users more than people who need guidance, translation, or flexible access. Stronger evaluations therefore separate results by location, income, age, habitat, or previous experience. This does not make the analysis unnecessarily complicated; it shows whether a public solution is genuinely public.", frame.Setting),
 			zh:   "该段指出平均数据可能掩盖不同群体之间的受益差异。",
 		},
 		{
-			text: "There is also a communication problem. Organisers often describe a new system using broad words such as innovation, access or sustainability, but these labels do not tell residents what will change on Monday morning. Clear communication links the general aim to specific actions: where to go, what to bring, how long it takes, and what support is available if something goes wrong. When instructions are vague, people may blame themselves for confusion and stop using the service, even if the underlying design is sound.",
+			text: fmt.Sprintf("There is also a communication problem. Organisers often describe %s using broad words such as innovation, access, resilience, or sustainability, but these labels do not tell affected groups what will change in practical terms. Clear communication links the general aim to specific actions: where to go, what to bring, how long it takes, what is being measured, who is responsible, and what support is available if something goes wrong. When instructions are vague, people may blame themselves for confusion and stop cooperating, even if the underlying design is sound.", frame.ShortSubject),
 			zh:   "该段强调清晰说明具体操作比抽象口号更有用。",
 		},
 		{
-			text: fmt.Sprintf("The future of %s is likely to depend on adaptive management rather than a single final design. Adaptive management means testing a limited version, collecting evidence, changing the weak parts and explaining those changes openly. This approach is slower than announcing a complete solution, but it is more honest about uncertainty. It also allows different forms of expertise to interact: technical knowledge can identify what is possible, while local experience can reveal what is practical, trusted and worth repeating.", cleanTopic),
+			text: fmt.Sprintf("The future of %s is likely to depend on adaptive management rather than a single final design. Adaptive management means testing a limited version, collecting evidence, changing the weak parts and explaining those changes openly. This approach is slower than announcing a complete solution, but it is more honest about uncertainty. It also allows different forms of expertise to interact: technical knowledge can identify what is possible, while %s can reveal what is practical, trusted and worth repeating.", frame.ShortSubject, frame.LocalKnowledge),
 			zh:   "该段说明未来更可能依赖持续调整和多方证据，而不是一次性方案。",
 		},
 		{
@@ -2009,7 +2154,7 @@ func fallbackReadingContentWithMetadata(topic string, metadata ielts.ReadingMeta
 	}
 	dialogues := make([]domain.Dialogue, 0, len(segments))
 	for i, seg := range segments[:segmentCount] {
-		text := fallbackReadingSegmentText(seg.text, cleanTopic, metadata.Band, i)
+		text := fallbackReadingSegmentText(seg.text, frame.ShortSubject, metadata.Band, i)
 		dialogues = append(dialogues, domain.Dialogue{
 			Speaker:    "Passage",
 			Text:       text,
@@ -2018,9 +2163,9 @@ func fallbackReadingContentWithMetadata(topic string, metadata ielts.ReadingMeta
 		})
 	}
 
-	quiz := fallbackReadingQuiz(metadata, requiredQuiz)
+	quiz := fallbackReadingQuiz(metadata, requiredQuiz, frame)
 	for len(quiz) < requiredQuiz {
-		quiz = append(quiz, fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Multiple Choice"}, 1)[0])
+		quiz = append(quiz, fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Multiple Choice"}, 1, frame)[0])
 	}
 	return dialogues, quiz[:min(requiredQuiz, len(quiz))]
 }
@@ -2034,6 +2179,102 @@ func fallbackReadingSegmentText(base string, topic string, band float64, index i
 		text += " " + fallbackReadingAdvancedSentence(topic, index)
 	}
 	return text
+}
+
+type fallbackReadingFrame struct {
+	Subject           string
+	ShortSubject      string
+	Actors            string
+	Setting           string
+	OperationalDetail string
+	LocalKnowledge    string
+}
+
+func fallbackReadingFrameForTopic(topic string) fallbackReadingFrame {
+	clean := strings.TrimSpace(topic)
+	if clean == "" {
+		clean = "a public planning initiative"
+	}
+	lower := strings.ToLower(clean)
+	frame := fallbackReadingFrame{
+		Subject:           sentenceSubject(shortReadingSubject(clean)),
+		ShortSubject:      shortReadingSubject(clean),
+		Actors:            "Researchers, officials and local users",
+		Setting:           "this field",
+		OperationalDetail: "records, equipment and staff guidance",
+		LocalKnowledge:    "local experience",
+	}
+	switch {
+	case strings.Contains(lower, "bird") || strings.Contains(lower, "migratory"):
+		frame.Subject = "Changes in migratory bird routes"
+		frame.ShortSubject = "migratory bird route changes"
+		frame.Actors = "Ecologists, farmers and conservation planners"
+		frame.Setting = "agricultural landscapes affected by artificial lighting"
+		frame.OperationalDetail = "lighting schedules, field observations and seasonal route data"
+		frame.LocalKnowledge = "farmers' observations and long-term ecological monitoring"
+	case strings.Contains(lower, "library") || strings.Contains(lower, "digital"):
+		frame.Subject = "Digital change in neighbourhood libraries"
+		frame.ShortSubject = "library service adaptation"
+		frame.Actors = "Librarians, residents and local education teams"
+		frame.Setting = "neighbourhood library services"
+		frame.OperationalDetail = "devices, opening hours and one-to-one support sessions"
+		frame.LocalKnowledge = "staff knowledge of residents' daily needs"
+	case strings.Contains(lower, "wetland") || strings.Contains(lower, "suburb"):
+		frame.Subject = "Urban wetland restoration"
+		frame.ShortSubject = "wetland restoration"
+		frame.Actors = "Ecologists, planners and residents near the restoration zone"
+		frame.Setting = "urban wetland restoration near expanding suburbs"
+		frame.OperationalDetail = "water levels, access paths and maintenance records"
+		frame.LocalKnowledge = "residents' observations of flooding, access and wildlife"
+	case strings.Contains(lower, "congestion") || strings.Contains(lower, "commuter"):
+		frame.Subject = "Congestion pricing"
+		frame.ShortSubject = "congestion pricing"
+		frame.Actors = "Transport economists, commuters and local business owners"
+		frame.Setting = "urban transport corridors affected by congestion pricing"
+		frame.OperationalDetail = "pricing rules, travel data and business footfall records"
+		frame.LocalKnowledge = "commuters' route choices and traders' daily sales experience"
+	case strings.Contains(lower, "algorithm") || strings.Contains(lower, "decision"):
+		frame.Subject = "Algorithmic decision systems"
+		frame.ShortSubject = "algorithmic decision systems"
+		frame.Actors = "Policy analysts, data scientists and affected communities"
+		frame.Setting = "climate adaptation, public health triage and infrastructure planning"
+		frame.OperationalDetail = "datasets, scoring rules and appeal procedures"
+		frame.LocalKnowledge = "frontline judgement and lived experience"
+	case strings.Contains(lower, "public health") || strings.Contains(lower, "triage"):
+		frame.Subject = "Public health triage systems"
+		frame.ShortSubject = "health triage systems"
+		frame.Actors = "Clinicians, public health teams and community organisations"
+		frame.Setting = "health services under resource pressure"
+		frame.OperationalDetail = "patient records, referral rules and follow-up capacity"
+		frame.LocalKnowledge = "clinical judgement and community health experience"
+	}
+	return frame
+}
+
+func shortReadingSubject(topic string) string {
+	words := strings.Fields(strings.TrimSpace(topic))
+	if len(words) == 0 {
+		return "a public planning initiative"
+	}
+	if len(words) <= 8 {
+		return strings.Join(words, " ")
+	}
+	if strings.EqualFold(words[0], "the") && len(words) > 1 {
+		words = words[1:]
+	}
+	return strings.Join(words[:min(8, len(words))], " ")
+}
+
+func sentenceSubject(topic string) string {
+	clean := strings.TrimSpace(topic)
+	if clean == "" {
+		return "A public planning initiative"
+	}
+	first, _ := utf8.DecodeRuneInString(clean)
+	if first == utf8.RuneError {
+		return clean
+	}
+	return string(unicode.ToUpper(first)) + clean[len(string(first)):]
 }
 
 func fallbackReadingEvidenceSentence(topic string, index int) string {
@@ -2178,7 +2419,7 @@ func fallbackEnglishListeningQuiz(profile ielts.ListeningProfile) []domain.QuizQ
 	}
 }
 
-func fallbackReadingQuiz(metadata ielts.ReadingMetadata, requiredQuiz int) []domain.QuizQuestion {
+func fallbackReadingQuiz(metadata ielts.ReadingMetadata, requiredQuiz int, frame fallbackReadingFrame) []domain.QuizQuestion {
 	switch ielts.QuestionTypeKey(metadata.QuestionType) {
 	case "matching_headings":
 		headings := []string{
@@ -2201,7 +2442,7 @@ func fallbackReadingQuiz(metadata ielts.ReadingMetadata, requiredQuiz int) []dom
 	case "matching_information":
 		options := []string{"Paragraph 3", "Paragraph 4", "Paragraph 5", "Paragraph 6", "Paragraph 7"}
 		quiz := []domain.QuizQuestion{
-			{Type: "Matching Information", Question: "Which paragraph explains that residents need concrete details before using a service?", Options: options, AnswerKey: "Paragraph 6", ParagraphRef: "Paragraph 6", Evidence: "where to go, what to bring, how long it takes"},
+			{Type: "Matching Information", Question: "Which paragraph explains that affected groups need concrete details before using or trusting a system?", Options: options, AnswerKey: "Paragraph 6", ParagraphRef: "Paragraph 6", Evidence: "where to go, what to bring, how long it takes"},
 			{Type: "Matching Information", Question: "Which paragraph warns that small trials may overstate later performance?", Options: options, AnswerKey: "Paragraph 4", ParagraphRef: "Paragraph 4", Evidence: "A small trial may attract motivated participants"},
 			{Type: "Matching Information", Question: "Which paragraph says average figures can hide uneven benefits?", Options: options, AnswerKey: "Paragraph 5", ParagraphRef: "Paragraph 5", Evidence: "benefits are unevenly distributed"},
 			{Type: "Matching Information", Question: "Which paragraph describes adaptive management as testing and revising a limited version?", Options: options, AnswerKey: "Paragraph 7", ParagraphRef: "Paragraph 7", Evidence: "testing a limited version, collecting evidence, changing the weak parts"},
@@ -2229,10 +2470,10 @@ func fallbackReadingQuiz(metadata ielts.ReadingMetadata, requiredQuiz int) []dom
 		}
 		return quiz[:min(requiredQuiz, len(quiz))]
 	case "mixed":
-		multipleChoice := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Multiple Choice"}, 5)
-		matchingInformation := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Matching Information"}, 5)
-		tfng := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "TFNG"}, 5)
-		summaryCompletion := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Summary Completion"}, 5)
+		multipleChoice := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Multiple Choice"}, 5, frame)
+		matchingInformation := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Matching Information"}, 5, frame)
+		tfng := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "TFNG"}, 5, frame)
+		summaryCompletion := fallbackReadingQuiz(ielts.ReadingMetadata{QuestionType: "Summary Completion"}, 5, frame)
 		quiz := []domain.QuizQuestion{
 			multipleChoice[0],
 			matchingInformation[0],
@@ -2246,7 +2487,7 @@ func fallbackReadingQuiz(metadata ielts.ReadingMetadata, requiredQuiz int) []dom
 			{Type: "Multiple Choice", Question: "According to paragraph 4, why can a small trial look stronger than a later city-wide programme?", ParagraphRef: "Paragraph 4", Evidence: "A small trial may attract motivated participants", Options: []string{"It may attract participants who already support the idea", "It always measures every long-term outcome", "It excludes administrative records by design", "It is usually conducted after publicity has faded"}, AnswerKey: "It may attract participants who already support the idea"},
 			{Type: "Multiple Choice", Question: "What problem with average figures is identified in paragraph 5?", ParagraphRef: "Paragraph 5", Evidence: "benefits are unevenly distributed", Options: []string{"They can hide unequal benefits across groups", "They make local evidence impossible to collect", "They always exaggerate the cost of services", "They prove that central districts receive no support"}, AnswerKey: "They can hide unequal benefits across groups"},
 			{Type: "Multiple Choice", Question: "What may happen if maintenance is not planned from the beginning?", ParagraphRef: "Paragraph 3", Evidence: "gradually lose reliability", Options: []string{"The project may gradually lose reliability", "The opening date will become more popular", "User questions will disappear immediately", "Data checking will become unnecessary"}, AnswerKey: "The project may gradually lose reliability"},
-			{Type: "Multiple Choice", Question: "Why are broad labels such as innovation or sustainability insufficient?", ParagraphRef: "Paragraph 6", Evidence: "do not tell residents what will change on Monday morning", Options: []string{"They do not explain the specific actions users must take", "They provide too many exact operating instructions", "They remove the need for user support", "They make the underlying design unsound"}, AnswerKey: "They do not explain the specific actions users must take"},
+			{Type: "Multiple Choice", Question: "Why are broad labels such as innovation or sustainability insufficient?", ParagraphRef: "Paragraph 6", Evidence: "do not tell affected groups what will change in practical terms", Options: []string{"They do not explain the specific actions users must take", "They provide too many exact operating instructions", "They remove the need for user support", "They make the underlying design unsound"}, AnswerKey: "They do not explain the specific actions users must take"},
 			{Type: "Multiple Choice", Question: "What does paragraph 7 say adaptive management involves?", ParagraphRef: "Paragraph 7", Evidence: "testing a limited version, collecting evidence, changing the weak parts", Options: []string{"Testing a limited version and revising weak parts", "Announcing a complete solution without revision", "Replacing local experience with technical knowledge", "Avoiding evidence until public trust declines"}, AnswerKey: "Testing a limited version and revising weak parts"},
 		}
 		return quiz[:min(requiredQuiz, len(quiz))]
