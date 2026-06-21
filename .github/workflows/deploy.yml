@@ -73,7 +73,7 @@ jobs:
       - name: Build and push client image
         uses: docker/build-push-action@v6
         with:
-          context: ./apps/client
+          context: .
           file: ./apps/client/Dockerfile
           platforms: ${{ env.DOCKER_PLATFORMS }}
           push: true
