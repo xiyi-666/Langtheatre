@@ -566,37 +566,31 @@ func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic str
 	var quiz []domain.QuizQuestion
 
 	if s.generator == nil {
-		log.Printf("generator is nil, use fallback content language=%s topic=%s theater_id=%s", theater.Language, theater.Topic, theater.ID)
-		dialogues, quiz = fallbackGeneratedContent(theater.Language, theater.Topic, requiredQuiz)
+		err := errors.New("content generator is not configured")
+		log.Printf("model generate failed theater_id=%s err=%v", theater.ID, err)
+		s.markTheaterGenerationFailed(theater, err)
+		return
 	} else {
 		generated, q, err := s.generator.Generate(context.Background(), theater.Language, preparedTopic, theater.Difficulty, theater.Mode)
 		if err != nil {
-			if shouldUseGeneratedContentFallback(err) {
-				log.Printf("model generated invalid content, use fallback content theater_id=%s err=%v", theater.ID, err)
-				dialogues, quiz = fallbackGeneratedContent(theater.Language, theater.Topic, requiredQuiz)
-			} else {
-				log.Printf("model generate failed theater_id=%s err=%v", theater.ID, err)
-				theater.Status = "FAILED"
-				current, getErr := s.store.GetTheater(theater.ID)
-				if getErr != nil {
-					log.Printf("skip failed theater persist theater_id=%s err=%v", theater.ID, getErr)
-					return
-				}
-				theater.IsFavorite = current.IsFavorite
-				theater.ShareCode = current.ShareCode
-				theater.CreatedAt = current.CreatedAt
-				if _, saveErr := s.store.SaveTheater(theater); saveErr != nil {
-					log.Printf("persist failed theater status failed theater_id=%s err=%v", theater.ID, saveErr)
-				}
-				return
-			}
+			log.Printf("model generate failed theater_id=%s err=%v", theater.ID, err)
+			s.markTheaterGenerationFailed(theater, err)
+			return
 		} else {
 			if len(generated) == 0 || dialogueLooksTemplated(generated) {
-				log.Printf("model returned empty or templated content, use fallback content theater_id=%s dialogues=%d quiz=%d", theater.ID, len(generated), len(q))
-				dialogues, quiz = fallbackGeneratedContent(theater.Language, theater.Topic, requiredQuiz)
+				err := fmt.Errorf("model returned empty or templated content: dialogues=%d quiz=%d", len(generated), len(q))
+				log.Printf("model generate failed theater_id=%s err=%v", theater.ID, err)
+				s.markTheaterGenerationFailed(theater, err)
+				return
+			}
+			if len(q) < requiredQuiz {
+				err := fmt.Errorf("model returned too few quiz questions: got %d want %d", len(q), requiredQuiz)
+				log.Printf("model generate failed theater_id=%s err=%v", theater.ID, err)
+				s.markTheaterGenerationFailed(theater, err)
+				return
 			} else {
 				dialogues = generated
-				quiz = completeQuizSet(theater.Language, theater.Topic, q, requiredQuiz)
+				quiz = q[:requiredQuiz]
 			}
 		}
 	}
@@ -604,25 +598,8 @@ func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic str
 	quiz = normalizeGeneratedQuizForDelivery(theater.Language, quiz)
 	if err := validateGeneratedPracticeForDelivery(theater.Language, false, dialogues, quiz); err != nil {
 		log.Printf("generated theater quality guard failed theater_id=%s err=%v", theater.ID, err)
-		dialogues, quiz = fallbackGeneratedContent(theater.Language, theater.Topic, requiredQuiz)
-		dialogues = normalizeGeneratedDialoguesForDelivery(theater.Language, dialogues)
-		quiz = normalizeGeneratedQuizForDelivery(theater.Language, quiz)
-		if fallbackErr := validateGeneratedPracticeForDelivery(theater.Language, false, dialogues, quiz); fallbackErr != nil {
-			log.Printf("fallback theater quality guard failed theater_id=%s err=%v", theater.ID, fallbackErr)
-			theater.Status = "FAILED"
-			current, getErr := s.store.GetTheater(theater.ID)
-			if getErr != nil {
-				log.Printf("skip failed theater persist theater_id=%s err=%v", theater.ID, getErr)
-				return
-			}
-			theater.IsFavorite = current.IsFavorite
-			theater.ShareCode = current.ShareCode
-			theater.CreatedAt = current.CreatedAt
-			if _, saveErr := s.store.SaveTheater(theater); saveErr != nil {
-				log.Printf("persist failed theater status failed theater_id=%s err=%v", theater.ID, saveErr)
-			}
-			return
-		}
+		s.markTheaterGenerationFailed(theater, err)
+		return
 	}
 	if s.tts != nil {
 		voicePair := selectDialogueVoicePair(theater.Topic)
@@ -658,6 +635,21 @@ func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic str
 	}
 }
 
+func (s *Service) markTheaterGenerationFailed(theater domain.Theater, reason error) {
+	theater.Status = "FAILED"
+	current, err := s.store.GetTheater(theater.ID)
+	if err != nil {
+		log.Printf("skip failed theater persist theater_id=%s err=%v", theater.ID, err)
+		return
+	}
+	theater.IsFavorite = current.IsFavorite
+	theater.ShareCode = current.ShareCode
+	theater.CreatedAt = current.CreatedAt
+	if _, err := s.store.SaveTheater(theater); err != nil {
+		log.Printf("persist failed theater status failed theater_id=%s reason=%v err=%v", theater.ID, reason, err)
+	}
+}
+
 func prepareTheaterTopic(language string, topic string) string {
 	clean := strings.TrimSpace(topic)
 	if clean == "" {
@@ -668,17 +660,6 @@ func prepareTheaterTopic(language string, topic string) string {
 	}
 	converted := simplifiedToTraditionalHK(clean)
 	return converted + "；请先把这个主题落成一个香港生活中的具体情境，再生成真实对话。"
-}
-
-func shouldUseGeneratedContentFallback(err error) bool {
-	if err == nil {
-		return false
-	}
-	lower := strings.ToLower(err.Error())
-	return strings.Contains(lower, "model output") ||
-		strings.Contains(lower, "contains prompt leak") ||
-		strings.Contains(lower, "contains collapsed english spacing") ||
-		strings.Contains(lower, "too many generic questions")
 }
 
 func selectDialogueVoicePair(topic string) [2]string {
@@ -980,29 +961,22 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 	// Reading generation should not pollute theater library.
 	quizCount := 5
 	generationTopic := readingGenerationTopic(exam, topic, metadata)
-	usedFallback := false
 	var generated []domain.Dialogue
 	var q []domain.QuizQuestion
 	if s.generator == nil {
-		log.Printf("reading generator is nil, use fallback content topic=%s", topic)
-		generated, q = fallbackReadingContentWithMetadata(topic, metadata, quizCount)
-		usedFallback = true
+		return domain.ReadingMaterial{}, errors.New("reading content generator is not configured")
 	} else {
 		var err error
 		generated, q, err = s.generator.Generate(context.Background(), language, generationTopic, difficulty, "APPRECIATION")
 		if err != nil {
-			log.Printf("reading ai generation failed, use fallback err=%v", err)
-			generated, q = fallbackReadingContentWithMetadata(topic, metadata, quizCount)
-			usedFallback = true
+			return domain.ReadingMaterial{}, fmt.Errorf("reading ai generation failed: %w", err)
 		}
 	}
 	if len(generated) == 0 {
-		generated, q = fallbackReadingContentWithMetadata(topic, metadata, quizCount)
-		usedFallback = true
+		return domain.ReadingMaterial{}, errors.New("reading generation returned no passage segments")
 	}
 	if len(q) < quizCount {
-		generated, q = fallbackReadingContentWithMetadata(topic, metadata, quizCount)
-		usedFallback = true
+		return domain.ReadingMaterial{}, fmt.Errorf("reading generation returned too few quiz questions: got %d want %d", len(q), quizCount)
 	}
 	if len(q) > quizCount {
 		q = q[:quizCount]
@@ -1073,7 +1047,7 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 		Vocabulary:           vocabulary,
 		Questions:            q,
 		SourceIDs:            sourceIDs,
-		GenerationNote:       readingGenerationNote(usedFallback),
+		GenerationNote:       readingGenerationNote(false),
 		AudioStatus:          "PENDING",
 		VocabularyItems:      analysis.VocabularyItems,
 		AssociationSentences: analysis.AssociationSentences,

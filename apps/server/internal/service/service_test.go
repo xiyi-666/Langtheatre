@@ -32,6 +32,60 @@ func (s *sequenceTTS) Synthesize(_ context.Context, _ string, _ string, _ string
 	return "", nil
 }
 
+type failingGenerator struct {
+	err error
+}
+
+func (f failingGenerator) Generate(context.Context, string, string, float64, string) ([]domain.Dialogue, []domain.QuizQuestion, error) {
+	return nil, nil, f.err
+}
+
+func TestGenerateTheaterMarksFailedWhenAIGenerationFails(t *testing.T) {
+	mem := store.NewMemoryStore()
+	svc := New(mem, nil, failingGenerator{err: errors.New("upstream unavailable")}, nil, "secret")
+
+	theater, err := svc.GenerateTheater("user-1", "ENGLISH", "[IELTS Listening][Band 7.0][Section 3] seminar scheduling dispute", 7.0, "DIALOGUE")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		current, err := mem.GetTheater(theater.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.Status == "FAILED" {
+			if len(current.Dialogues) != 0 || len(current.QuizQuestions) != 0 {
+				t.Fatalf("failed theater should not contain fallback content: dialogues=%d quiz=%d", len(current.Dialogues), len(current.QuizQuestions))
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("theater did not reach FAILED after AI generation error")
+}
+
+func TestGenerateReadingMaterialReturnsErrorWhenAIGenerationFails(t *testing.T) {
+	mem := store.NewMemoryStore()
+	svc := New(mem, nil, failingGenerator{err: errors.New("upstream unavailable")}, nil, "secret")
+
+	_, err := svc.GenerateReadingMaterial("user-1", "IELTS", "[Band 7.0][Matching Headings] urban transport resilience", "advanced", nil)
+	if err == nil {
+		t.Fatal("expected reading generation error")
+	}
+	if !strings.Contains(err.Error(), "reading ai generation failed") {
+		t.Fatalf("error = %q, want reading ai generation failed", err.Error())
+	}
+	items, listErr := mem.ListReadingMaterialsByUser("user-1", "IELTS")
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(items) != 0 {
+		t.Fatalf("reading material should not be saved after AI failure, got %d", len(items))
+	}
+}
+
 func TestFallbackReadingContentMatchesQuestionType(t *testing.T) {
 	meta := ielts.ReadingMetadataFromTopic("IELTS", "[Band 7.0][Matching Headings] urban transport", "advanced")
 	dialogues, quiz := fallbackReadingContentWithMetadata("urban transport", meta, 5)
