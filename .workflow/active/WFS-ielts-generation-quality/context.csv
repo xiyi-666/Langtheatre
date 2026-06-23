@@ -1,5 +1,0 @@
-"key","type","value","source"
-"tech_stack","array","Go server;GraphQL;SQLite;Postgres;React 18;Tauri;TypeScript","local inspection"
-"context_package_path","path",".process/context-package.json","session"
-"plan_path","path","IMPL_PLAN.md","session"
-"quality_gate","string","BLOCK_EXPANSION_UNTIL_SMALL_SAMPLE_PASSES","plan.json"
