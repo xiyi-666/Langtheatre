@@ -116,6 +116,35 @@ func TestReadingMaterialCacheDropsAudioURLs(t *testing.T) {
 	}
 }
 
+func TestReadingMaterialFallsBackToIDWhenUserTokenChanges(t *testing.T) {
+	mem := store.NewMemoryStore()
+	material := domain.ReadingMaterial{
+		ID:          "reading-cross-user",
+		UserID:      "original-user",
+		Exam:        "IELTS",
+		Language:    "ENGLISH",
+		Level:       "advanced",
+		Topic:       "urban transport resilience",
+		Title:       "Urban transport resilience",
+		Passage:     longAudioPassage(),
+		Questions:   []domain.QuizQuestion{},
+		AudioStatus: "PENDING",
+		CreatedAt:   time.Now(),
+	}
+	if _, err := mem.SaveReadingMaterial(material); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(mem, nil, nil, nil, "secret")
+
+	got, err := svc.ReadingMaterial("new-guest-user", material.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != material.ID {
+		t.Fatalf("ReadingMaterial ID = %q, want %q", got.ID, material.ID)
+	}
+}
+
 func TestFallbackReadingContentMatchesQuestionType(t *testing.T) {
 	meta := ielts.ReadingMetadataFromTopic("IELTS", "[Band 7.0][Matching Headings] urban transport", "advanced")
 	dialogues, quiz := fallbackReadingContentWithMetadata("urban transport", meta, 5)

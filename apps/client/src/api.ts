@@ -1,6 +1,7 @@
 import type { ContentSource, Course, ModelConfig, PracticeResult, ReadingMaterial, RoleplaySession, TTSConfig, Theater, User } from "./types";
 
 const DEFAULT_REMOTE_API_URL = "http://61.244.24.7/graphql";
+const API_REQUEST_TIMEOUT_MS = 320000;
 
 function resolveApiUrl(): string {
   const envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
@@ -63,15 +64,27 @@ async function ensureAccessToken(): Promise<string> {
 async function request<T>(query: string, variables?: Record<string, unknown>, options: RequestOptions = {}): Promise<T> {
   const retryWithGuest = options.retryWithGuest ?? true;
   async function sendRequest(token?: string | null): Promise<GraphQLResponse<T>> {
-    const response = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      },
-      body: JSON.stringify({ query, variables })
-    });
-    return response.json();
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ query, variables }),
+        signal: controller.signal
+      });
+      return response.json();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error("request timeout");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
   }
 
   const currentToken = localStorage.getItem("accessToken");

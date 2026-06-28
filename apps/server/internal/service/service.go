@@ -1858,7 +1858,14 @@ func (s *Service) ReadingMaterials(userID string, exam string) ([]domain.Reading
 func (s *Service) ReadingMaterial(userID string, materialID string) (domain.ReadingMaterial, error) {
 	item, err := s.store.GetReadingMaterial(materialID, userID)
 	if err != nil {
-		return domain.ReadingMaterial{}, err
+		if !strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return domain.ReadingMaterial{}, err
+		}
+		item, err = s.store.GetReadingMaterial(materialID, "")
+		if err != nil {
+			return domain.ReadingMaterial{}, err
+		}
+		log.Printf("reading material loaded by id fallback material_id=%s user_id=%s", materialID, userID)
 	}
 	ensureReadingMetadata(&item)
 	if migrated, migrateErr := s.migrateReadingAudioDataURLs(item); migrateErr == nil {
