@@ -86,6 +86,36 @@ func TestGenerateReadingMaterialReturnsErrorWhenAIGenerationFails(t *testing.T) 
 	}
 }
 
+func TestMaterializeAudioDataURLStoresMediaFile(t *testing.T) {
+	svc := NewWithOptions(store.NewMemoryStore(), nil, nil, nil, "secret", ServiceOptions{MediaDir: t.TempDir()})
+	url, err := svc.materializeAudioURL("data:audio/mpeg;base64,SGVsbG8=", "reading", "material-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(url, "data:audio/") {
+		t.Fatalf("audio URL still contains inline data: %q", url)
+	}
+	if !strings.HasPrefix(url, "/media/tts/reading/material-1/") || !strings.HasSuffix(url, ".mp3") {
+		t.Fatalf("audio URL = %q, want /media/tts/reading/material-1/*.mp3", url)
+	}
+}
+
+func TestReadingMaterialCacheDropsAudioURLs(t *testing.T) {
+	svc := New(store.NewMemoryStore(), nil, nil, nil, "secret")
+	material := domain.ReadingMaterial{
+		ID:        "reading-cache",
+		UserID:    "user-1",
+		AudioURL:  "data:audio/wav;base64,AAAA",
+		AudioURLs: []string{"data:audio/wav;base64,BBBB"},
+	}
+	svc.cacheReadingMaterial(material)
+
+	cached := svc.readingMaterials[material.ID]
+	if cached.AudioURL != "" || len(cached.AudioURLs) != 0 {
+		t.Fatalf("cached reading material kept audio data: audioURL=%q audioURLs=%d", cached.AudioURL, len(cached.AudioURLs))
+	}
+}
+
 func TestFallbackReadingContentMatchesQuestionType(t *testing.T) {
 	meta := ielts.ReadingMetadataFromTopic("IELTS", "[Band 7.0][Matching Headings] urban transport", "advanced")
 	dialogues, quiz := fallbackReadingContentWithMetadata("urban transport", meta, 5)

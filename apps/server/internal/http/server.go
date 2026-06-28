@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -36,7 +37,7 @@ func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
-func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Context) HealthResult) *http.ServeMux {
+func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Context) HealthResult, mediaDir string) *http.ServeMux {
 	mux := http.NewServeMux()
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		setCORSHeaders(w, r)
@@ -67,6 +68,24 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 	}
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/readyz", healthHandler)
+	mediaDir = strings.TrimSpace(mediaDir)
+	if mediaDir != "" {
+		_ = os.MkdirAll(mediaDir, 0o755)
+		mediaHandler := http.StripPrefix("/media/", http.FileServer(http.Dir(mediaDir)))
+		mux.HandleFunc("/media/", func(w http.ResponseWriter, r *http.Request) {
+			setCORSHeaders(w, r)
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				http.Error(w, "only GET and HEAD are supported", http.StatusMethodNotAllowed)
+				return
+			}
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			mediaHandler.ServeHTTP(w, r)
+		})
+	}
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
 		setCORSHeaders(w, r)
 		if r.Method == http.MethodOptions {

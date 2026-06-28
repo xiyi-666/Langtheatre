@@ -69,7 +69,7 @@ func applySQLiteSchema(db *sql.DB) error {
             base_url TEXT NOT NULL DEFAULT 'https://api.xiaomimimo.com/v1',
             api_key TEXT NOT NULL DEFAULT '',
             voice TEXT NOT NULL DEFAULT 'mimo_default',
-            audio_format TEXT NOT NULL DEFAULT 'wav',
+            audio_format TEXT NOT NULL DEFAULT 'mp3',
             updated_at TEXT NOT NULL
         )`,
 		`CREATE TABLE IF NOT EXISTS theaters (

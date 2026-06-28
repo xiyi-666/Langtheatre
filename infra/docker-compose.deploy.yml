@@ -26,7 +26,9 @@ services:
       TTS_API_KEY: ${TTS_API_KEY:-}
       TTS_VOICE: ${TTS_VOICE:-mimo_default}
       TTS_MODEL: ${TTS_MODEL:-mimo-v2.5-tts}
-      TTS_AUDIO_FORMAT: ${TTS_AUDIO_FORMAT:-wav}
+      TTS_AUDIO_FORMAT: ${TTS_AUDIO_FORMAT:-mp3}
+      TTS_MAX_CONCURRENCY: ${TTS_MAX_CONCURRENCY:-2}
+      MEDIA_DIR: ${MEDIA_DIR:-/srv/media}
       TTS_USE_UPLOAD_PROMPT: ${TTS_USE_UPLOAD_PROMPT:-false}
       TTS_PROMPT_AUDIO_PATH: ${TTS_PROMPT_AUDIO_PATH:-~/autodl-tmp/CosyVoice/test/test.225.wav}
       TTS_RETURN_JSON: ${TTS_RETURN_JSON:-true}
@@ -36,6 +38,8 @@ services:
     depends_on:
       - redis
       - rabbitmq
+    volumes:
+      - server-media:/srv/media
 
   redis:
     image: redis:7-alpine
@@ -56,3 +60,4 @@ services:
 volumes:
   redis-data:
   rabbitmq-data:
+  server-media:

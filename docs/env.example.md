@@ -16,7 +16,9 @@
 - `TTS_API_KEY=`
 - `TTS_VOICE=mimo_default`（也可切换为 `冰糖` / `Chloe` 等官方音色）
 - `TTS_MODEL=mimo-v2.5-tts`
-- `TTS_AUDIO_FORMAT=wav`
+- `TTS_AUDIO_FORMAT=mp3`
+- `TTS_MAX_CONCURRENCY=2`
+- `MEDIA_DIR=media`
 - `TTS_TIMEOUT_SECONDS=300`
 - `TTS_MAX_RETRIES=1`
 - `R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`

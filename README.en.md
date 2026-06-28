@@ -71,7 +71,7 @@ TTS_API_URL=https://api.xiaomimimo.com/v1
 TTS_API_KEY=
 TTS_VOICE=mimo_default
 TTS_MODEL=mimo-v2.5-tts
-TTS_AUDIO_FORMAT=wav
+TTS_AUDIO_FORMAT=mp3
 ```
 
 For XiaoMi MiMo TTS:
@@ -81,7 +81,7 @@ TTS_PROVIDER=XIAOMI
 TTS_API_URL=https://api.xiaomimimo.com/v1
 TTS_MODEL=mimo-v2.5-tts
 TTS_VOICE=Chloe
-TTS_AUDIO_FORMAT=wav
+TTS_AUDIO_FORMAT=mp3
 ```
 
 Frontend env example:

@@ -30,6 +30,8 @@ type Config struct {
 	TTSReturnJSON      bool
 	TTSTimeoutSeconds  int
 	TTSMaxRetries      int
+	TTSMaxConcurrency  int
+	MediaDir           string
 }
 
 func Load() Config {
@@ -57,12 +59,14 @@ func Load() Config {
 	ttsModel := getenv("TTS_MODEL", defaultTTSModel(ttsProvider))
 	defaultTTSVoice := defaultTTSVoiceForProviderAndModel(ttsProvider, ttsModel)
 	ttsVoice := getenv("TTS_VOICE", defaultTTSVoice)
-	ttsAudioFormat := getenv("TTS_AUDIO_FORMAT", "wav")
+	ttsAudioFormat := getenv("TTS_AUDIO_FORMAT", "mp3")
 	ttsUseUploadPrompt := getenvBool("TTS_USE_UPLOAD_PROMPT", false)
 	ttsPromptAudioPath := getenv("TTS_PROMPT_AUDIO_PATH", "~/autodl-tmp/CosyVoice/test/test.225.wav")
 	ttsReturnJSON := getenvBool("TTS_RETURN_JSON", true)
 	ttsTimeoutSeconds := getenvInt("TTS_TIMEOUT_SECONDS", 300)
 	ttsMaxRetries := getenvInt("TTS_MAX_RETRIES", 1)
+	ttsMaxConcurrency := getenvInt("TTS_MAX_CONCURRENCY", 2)
+	mediaDir := getenv("MEDIA_DIR", "media")
 	return Config{
 		Port:               port,
 		JWTSecret:          secret,
@@ -85,6 +89,8 @@ func Load() Config {
 		TTSReturnJSON:      ttsReturnJSON,
 		TTSTimeoutSeconds:  ttsTimeoutSeconds,
 		TTSMaxRetries:      ttsMaxRetries,
+		TTSMaxConcurrency:  ttsMaxConcurrency,
+		MediaDir:           mediaDir,
 	}
 }
 

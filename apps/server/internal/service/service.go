@@ -2,9 +2,14 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -88,12 +93,15 @@ type Service struct {
 	readingAudioJobs map[string]bool
 	readingAudioKick map[string]time.Time
 	readingListKick  map[string]time.Time
+	mediaDir         string
+	ttsSem           chan struct{}
 }
 
 const (
 	maxReadingAudioListRetries = 2
 	readingAudioRetryCooldown  = 15 * time.Minute
 	readingListRetryCooldown   = 2 * time.Minute
+	defaultTTSMaxConcurrency   = 2
 )
 
 type roleplayEngine interface {
@@ -102,6 +110,15 @@ type roleplayEngine interface {
 }
 
 func New(store Store, session SessionStore, generator TheaterGenerator, tts SpeechSynthesizer, jwtSecret string) *Service {
+	return NewWithOptions(store, session, generator, tts, jwtSecret, ServiceOptions{})
+}
+
+type ServiceOptions struct {
+	MediaDir          string
+	TTSMaxConcurrency int
+}
+
+func NewWithOptions(store Store, session SessionStore, generator TheaterGenerator, tts SpeechSynthesizer, jwtSecret string, options ServiceOptions) *Service {
 	var modelConfigManager ModelConfigManager
 	if manager, ok := any(generator).(ModelConfigManager); ok {
 		modelConfigManager = manager
@@ -109,6 +126,14 @@ func New(store Store, session SessionStore, generator TheaterGenerator, tts Spee
 	var ttsConfigManager TTSConfigManager
 	if manager, ok := any(tts).(TTSConfigManager); ok {
 		ttsConfigManager = manager
+	}
+	mediaDir := strings.TrimSpace(options.MediaDir)
+	if mediaDir == "" {
+		mediaDir = "media"
+	}
+	ttsMaxConcurrency := options.TTSMaxConcurrency
+	if ttsMaxConcurrency <= 0 {
+		ttsMaxConcurrency = defaultTTSMaxConcurrency
 	}
 	return &Service{
 		store:            store,
@@ -123,6 +148,8 @@ func New(store Store, session SessionStore, generator TheaterGenerator, tts Spee
 		readingAudioJobs: map[string]bool{},
 		readingAudioKick: map[string]time.Time{},
 		readingListKick:  map[string]time.Time{},
+		mediaDir:         mediaDir,
+		ttsSem:           make(chan struct{}, ttsMaxConcurrency),
 	}
 }
 
@@ -415,7 +442,10 @@ func (s *Service) UpdateTTSConfig(input domain.TTSConfigUpdate) (domain.TTSConfi
 	next.Model = model
 	next.BaseURL = strings.TrimRight(baseURL, "/")
 	next.Voice = voice
-	next.AudioFormat = "wav"
+	next.AudioFormat = strings.TrimSpace(current.AudioFormat)
+	if next.AudioFormat == "" || next.AudioFormat == "wav" {
+		next.AudioFormat = "mp3"
+	}
 	switch {
 	case strings.TrimSpace(input.APIKey) != "":
 		next.APIKey = strings.TrimSpace(input.APIKey)
@@ -605,7 +635,7 @@ func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic str
 		voicePair := selectDialogueVoicePair(theater.Topic)
 		for i := range dialogues {
 			voiceStyle := voicePair[i%2]
-			audioURL, err := s.tts.Synthesize(context.Background(), dialogues[i].Text, theater.Language, voiceStyle)
+			audioURL, err := s.synthesizeAudio(context.Background(), dialogues[i].Text, theater.Language, voiceStyle, "theater", theater.ID)
 			if err != nil {
 				log.Printf("tts failed theater_id=%s index=%d err=%v", theater.ID, i, err)
 				continue
@@ -648,6 +678,165 @@ func (s *Service) markTheaterGenerationFailed(theater domain.Theater, reason err
 	if _, err := s.store.SaveTheater(theater); err != nil {
 		log.Printf("persist failed theater status failed theater_id=%s reason=%v err=%v", theater.ID, reason, err)
 	}
+}
+
+func (s *Service) synthesizeAudio(ctx context.Context, text string, language string, voice string, scope string, ownerID string) (string, error) {
+	if s.tts == nil {
+		return "", errors.New("tts synthesizer is nil")
+	}
+	if s.ttsSem != nil {
+		select {
+		case s.ttsSem <- struct{}{}:
+			defer func() { <-s.ttsSem }()
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	audioURL, err := s.tts.Synthesize(ctx, text, language, voice)
+	if err != nil {
+		return "", err
+	}
+	return s.materializeAudioURL(audioURL, scope, ownerID)
+}
+
+func (s *Service) materializeAudioURL(rawURL string, scope string, ownerID string) (string, error) {
+	clean := strings.TrimSpace(rawURL)
+	if clean == "" || !strings.HasPrefix(strings.ToLower(clean), "data:audio/") {
+		return clean, nil
+	}
+	payload, mime, err := decodeAudioDataURL(clean)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(payload)
+	hash := hex.EncodeToString(sum[:])
+	ext := audioExtensionForMIME(mime)
+	cleanScope := safeMediaPathPart(scope, "tts")
+	cleanOwner := safeMediaPathPart(ownerID, "general")
+	dir := filepath.Join(s.mediaDir, "tts", cleanScope, cleanOwner)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	name := hash + ext
+	path := filepath.Join(dir, name)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(path, payload, 0o644); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+	return "/media/tts/" + cleanScope + "/" + cleanOwner + "/" + name, nil
+}
+
+func (s *Service) migrateTheaterAudioDataURLs(theater domain.Theater) (domain.Theater, error) {
+	changed := false
+	for i := range theater.Dialogues {
+		materialized, err := s.materializeAudioURL(theater.Dialogues[i].AudioURL, "theater", theater.ID)
+		if err != nil {
+			return theater, err
+		}
+		if materialized != theater.Dialogues[i].AudioURL {
+			theater.Dialogues[i].AudioURL = materialized
+			changed = true
+		}
+	}
+	if !changed {
+		return theater, nil
+	}
+	saved, err := s.store.SaveTheater(theater)
+	if err != nil {
+		return theater, err
+	}
+	return saved, nil
+}
+
+func (s *Service) migrateReadingAudioDataURLs(material domain.ReadingMaterial) (domain.ReadingMaterial, error) {
+	changed := false
+	if material.AudioURL != "" {
+		materialized, err := s.materializeAudioURL(material.AudioURL, "reading", material.ID)
+		if err != nil {
+			return material, err
+		}
+		if materialized != material.AudioURL {
+			material.AudioURL = materialized
+			changed = true
+		}
+	}
+	for i := range material.AudioURLs {
+		materialized, err := s.materializeAudioURL(material.AudioURLs[i], "reading", material.ID)
+		if err != nil {
+			return material, err
+		}
+		if materialized != material.AudioURLs[i] {
+			material.AudioURLs[i] = materialized
+			changed = true
+		}
+	}
+	if !changed {
+		return material, nil
+	}
+	saved, err := s.store.SaveReadingMaterial(material)
+	if err != nil {
+		return material, err
+	}
+	return saved, nil
+}
+
+func decodeAudioDataURL(value string) ([]byte, string, error) {
+	meta, encoded, ok := strings.Cut(strings.TrimSpace(value), ",")
+	if !ok {
+		return nil, "", errors.New("invalid audio data url")
+	}
+	meta = strings.TrimSpace(meta)
+	if !strings.HasPrefix(strings.ToLower(meta), "data:audio/") || !strings.Contains(strings.ToLower(meta), ";base64") {
+		return nil, "", errors.New("unsupported audio data url")
+	}
+	mime := strings.TrimPrefix(strings.Split(meta, ";")[0], "data:")
+	payload, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(payload) == 0 {
+		return nil, "", errors.New("empty audio data payload")
+	}
+	return payload, mime, nil
+}
+
+func audioExtensionForMIME(mime string) string {
+	switch strings.ToLower(strings.TrimSpace(mime)) {
+	case "audio/mpeg", "audio/mp3":
+		return ".mp3"
+	case "audio/ogg", "audio/opus":
+		return ".ogg"
+	case "audio/wav", "audio/x-wav", "audio/wave":
+		return ".wav"
+	default:
+		return ".bin"
+	}
+}
+
+func safeMediaPathPart(value string, fallback string) string {
+	clean := strings.ToLower(strings.TrimSpace(value))
+	if clean == "" {
+		clean = fallback
+	}
+	var b strings.Builder
+	for _, r := range clean {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	result := strings.Trim(b.String(), "-")
+	if result == "" {
+		return fallback
+	}
+	if len(result) > 80 {
+		return result[:80]
+	}
+	return result
 }
 
 func prepareTheaterTopic(language string, topic string) string {
@@ -758,7 +947,11 @@ func simplifiedToTraditionalHK(input string) string {
 }
 
 func (s *Service) Theater(id string) (domain.Theater, error) {
-	return s.store.GetTheater(id)
+	theater, err := s.store.GetTheater(id)
+	if err != nil {
+		return domain.Theater{}, err
+	}
+	return s.migrateTheaterAudioDataURLs(theater)
 }
 
 func (s *Service) SharedTheater(shareCode string) (domain.Theater, error) {
@@ -766,11 +959,27 @@ func (s *Service) SharedTheater(shareCode string) (domain.Theater, error) {
 	if code == "" {
 		return domain.Theater{}, errors.New("share code is required")
 	}
-	return s.store.GetTheaterByShareCode(code)
+	theater, err := s.store.GetTheaterByShareCode(code)
+	if err != nil {
+		return domain.Theater{}, err
+	}
+	return s.migrateTheaterAudioDataURLs(theater)
 }
 
 func (s *Service) MyTheaters(userID string, language string, status string, favorite *bool) ([]domain.Theater, error) {
-	return s.store.ListTheatersByUser(userID, language, status, favorite)
+	items, err := s.store.ListTheatersByUser(userID, language, status, favorite)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		migrated, migrateErr := s.migrateTheaterAudioDataURLs(items[i])
+		if migrateErr != nil {
+			log.Printf("theater audio data migration failed theater_id=%s err=%v", items[i].ID, migrateErr)
+			continue
+		}
+		items[i] = migrated
+	}
+	return items, nil
 }
 
 func (s *Service) ToggleFavorite(userID string, theaterID string, favorite bool) error {
@@ -1463,6 +1672,13 @@ func (s *Service) generateReadingAudio(materialID string, text string, language 
 
 	chunks := splitTextChunks(text, 420)
 	existing, existingErr := s.store.GetReadingMaterial(materialID, "")
+	if existingErr == nil {
+		if migrated, migrateErr := s.migrateReadingAudioDataURLs(existing); migrateErr == nil {
+			existing = migrated
+		} else {
+			log.Printf("reading audio data migration failed material_id=%s err=%v", materialID, migrateErr)
+		}
+	}
 	audioURLs := make([]string, 0, len(chunks))
 	if existingErr == nil && len(existing.AudioURLs) > 0 {
 		audioURLs = append(audioURLs, existing.AudioURLs...)
@@ -1482,7 +1698,7 @@ func (s *Service) generateReadingAudio(materialID string, text string, language 
 	}
 	for index := len(audioURLs); index < len(chunks); index++ {
 		chunk := chunks[index]
-		audioURL, err := s.tts.Synthesize(context.Background(), chunk, language, "")
+		audioURL, err := s.synthesizeAudio(context.Background(), chunk, language, "", "reading", materialID)
 		if err != nil || strings.TrimSpace(audioURL) == "" {
 			updateErr := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
 				m.AudioURLs = audioURLs
@@ -1626,6 +1842,11 @@ func (s *Service) ReadingMaterials(userID string, exam string) ([]domain.Reading
 	allowListRetry := s.allowReadingListAudioRetry(userID, exam, readingListRetryCooldown)
 	for i := range result {
 		ensureReadingMetadata(&result[i])
+		if migrated, migrateErr := s.migrateReadingAudioDataURLs(result[i]); migrateErr == nil {
+			result[i] = migrated
+		} else {
+			log.Printf("reading list audio data migration failed material_id=%s err=%v", result[i].ID, migrateErr)
+		}
 		s.cacheReadingMaterial(result[i])
 		if allowListRetry && queued < maxReadingAudioListRetries && shouldRetryFallbackReadingAudio(result[i]) && s.queueReadingAudioGenerationWithCooldown(result[i].ID, result[i].Passage, result[i].Language, readingAudioRetryCooldown) {
 			queued++
@@ -1640,6 +1861,11 @@ func (s *Service) ReadingMaterial(userID string, materialID string) (domain.Read
 		return domain.ReadingMaterial{}, err
 	}
 	ensureReadingMetadata(&item)
+	if migrated, migrateErr := s.migrateReadingAudioDataURLs(item); migrateErr == nil {
+		item = migrated
+	} else {
+		log.Printf("reading detail audio data migration failed material_id=%s err=%v", item.ID, migrateErr)
+	}
 	s.cacheReadingMaterial(item)
 
 	if needsReadingAnalysis(item) {
@@ -1758,7 +1984,14 @@ func ensureReadingMetadata(material *domain.ReadingMaterial) {
 func (s *Service) cacheReadingMaterial(material domain.ReadingMaterial) {
 	s.readingMu.Lock()
 	defer s.readingMu.Unlock()
-	s.readingMaterials[material.ID] = material
+	s.readingMaterials[material.ID] = readingMaterialCacheCopy(material)
+}
+
+func readingMaterialCacheCopy(material domain.ReadingMaterial) domain.ReadingMaterial {
+	cached := material
+	cached.AudioURL = ""
+	cached.AudioURLs = nil
+	return cached
 }
 
 func (s *Service) updateReadingMaterial(materialID string, userID string, mutate func(*domain.ReadingMaterial)) error {

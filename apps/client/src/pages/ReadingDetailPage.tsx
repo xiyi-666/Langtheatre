@@ -743,6 +743,9 @@ function buildAudioFetchURL(raw: string): string {
   if (url.startsWith("blob:") || url.startsWith("data:")) {
     return url;
   }
+  if (url.startsWith("/media/")) {
+    return `${getApiBaseUrl()}${url}`;
+  }
 
   const resolved = new URL(url, window.location.origin);
   if (resolved.origin === window.location.origin) {

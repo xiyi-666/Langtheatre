@@ -88,10 +88,16 @@ func main() {
 		cfg.TTSMaxRetries,
 	)
 	if savedTTSConfig, err := dataStore.GetTTSConfig(); err == nil {
+		if savedTTSConfig.AudioFormat == "wav" && cfg.TTSAudioFormat != "" {
+			savedTTSConfig.AudioFormat = cfg.TTSAudioFormat
+		}
 		tts.UpdateTTSConfig(savedTTSConfig)
 		log.Printf("loaded persisted tts config provider=%s model=%s voice=%s", savedTTSConfig.Provider, savedTTSConfig.Model, savedTTSConfig.Voice)
 	}
-	svc := service.New(dataStore, redisClient, generator, tts, cfg.JWTSecret)
+	svc := service.NewWithOptions(dataStore, redisClient, generator, tts, cfg.JWTSecret, service.ServiceOptions{
+		MediaDir:          cfg.MediaDir,
+		TTSMaxConcurrency: cfg.TTSMaxConcurrency,
+	})
 	schema, err := graph.NewSchema(svc)
 	if err != nil {
 		log.Fatalf("failed to build schema: %v", err)
@@ -108,7 +114,7 @@ func main() {
 			Timestamp: result.Timestamp,
 			Checks:    result.Checks,
 		}
-	})
+	}, cfg.MediaDir)
 	log.Printf("LinguaQuest API listening on :%s", cfg.Port)
 	if err = http.ListenAndServe(":"+cfg.Port, httpserver.WrapWithBaseMiddleware(mux)); err != nil {
 		log.Fatal(err)

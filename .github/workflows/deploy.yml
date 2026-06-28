@@ -115,6 +115,8 @@ jobs:
           TTS_VOICE=${{ vars.TTS_VOICE }}
           TTS_MODEL=${{ vars.TTS_MODEL }}
           TTS_AUDIO_FORMAT=${{ vars.TTS_AUDIO_FORMAT }}
+          TTS_MAX_CONCURRENCY=${{ vars.TTS_MAX_CONCURRENCY }}
+          MEDIA_DIR=${{ vars.MEDIA_DIR }}
           TTS_USE_UPLOAD_PROMPT=${{ vars.TTS_USE_UPLOAD_PROMPT }}
           TTS_PROMPT_AUDIO_PATH=${{ vars.TTS_PROMPT_AUDIO_PATH }}
           TTS_RETURN_JSON=${{ vars.TTS_RETURN_JSON }}

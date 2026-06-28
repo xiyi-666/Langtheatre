@@ -1,4 +1,5 @@
 import { Howl } from "howler";
+import { getApiBaseUrl } from "./api";
 
 let activeClip: Howl | null = null;
 
@@ -9,8 +10,9 @@ export function playClip(url: string, rate = 1): Promise<void> {
       activeClip.unload();
       activeClip = null;
     }
+    const resolvedUrl = resolveAudioUrl(url);
     const audio = new Howl({
-      src: [url],
+      src: [resolvedUrl],
       html5: true,
       rate,
       onend: () => {
@@ -38,6 +40,17 @@ export function playClip(url: string, rate = 1): Promise<void> {
     activeClip = audio;
     audio.play();
   });
+}
+
+function resolveAudioUrl(url: string): string {
+  const clean = (url ?? "").trim();
+  if (!clean || clean.startsWith("data:") || clean.startsWith("blob:")) {
+    return clean;
+  }
+  if (clean.startsWith("/media/")) {
+    return `${getApiBaseUrl()}${clean}`;
+  }
+  return clean;
 }
 
 export function speakText(text: string, rate = 1): Promise<void> {

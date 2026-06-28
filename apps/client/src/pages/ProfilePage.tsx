@@ -597,7 +597,7 @@ export function ProfilePage() {
                 <button type="submit">保存 TTS 配置</button>
                 {ttsMessage ? <p>{ttsMessage}</p> : null}
                 <p>当前 Key 状态：{ttsConfig?.hasApiKey ? `已配置（${ttsConfig.apiKeyPreview || "已隐藏"}）` : "未配置"}</p>
-                <p>当前音频格式：{ttsConfig?.audioFormat || "wav"}</p>
+                <p>当前音频格式：{ttsConfig?.audioFormat || "mp3"}</p>
                 <p>最近更新时间：{ttsConfig?.updatedAt || "暂无记录"}</p>
               </div>
             ) : null}

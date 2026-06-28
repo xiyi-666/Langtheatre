@@ -53,7 +53,7 @@ const (
 	defaultMiniMaxTTSVoice       = "Cantonese_GentleLady"
 	defaultAliyunTTSModel        = "cosyvoice-v3-flash"
 	defaultAliyunTTSVoice        = "longjiaxin_v3"
-	defaultTTSAudioFormat        = "wav"
+	defaultTTSAudioFormat        = "mp3"
 )
 
 var xiaomiPresetVoices = map[string]struct{}{
@@ -262,7 +262,7 @@ func (t *APITTS) synthesizeCustom(ctx context.Context, config domain.TTSConfig, 
 				mime = strings.TrimSpace(parsed.MimeType)
 			}
 			if mime == "" || !strings.HasPrefix(strings.ToLower(mime), "audio/") {
-				mime = "audio/wav"
+				mime = ttsAudioMIME(config.AudioFormat)
 			}
 			return "data:" + mime + ";base64," + inlineAudio, nil
 		}
@@ -855,19 +855,27 @@ func normalizeTTSAudioFormat(format string) string {
 	if cleaned == "" {
 		return defaultTTSAudioFormat
 	}
-	// Browser playback in this app expects a container format; keep PCM streaming out of the UI path.
-	if cleaned != "wav" {
+	switch cleaned {
+	case "mp3", "mpeg", "ogg", "opus", "wav":
+		if cleaned == "mpeg" {
+			return "mp3"
+		}
+		return cleaned
+	default:
 		return defaultTTSAudioFormat
 	}
-	return cleaned
 }
 
 func ttsAudioMIME(format string) string {
 	switch normalizeTTSAudioFormat(format) {
+	case "mp3":
+		return "audio/mpeg"
+	case "ogg", "opus":
+		return "audio/ogg"
 	case "wav":
 		return "audio/wav"
 	default:
-		return "audio/wav"
+		return "audio/mpeg"
 	}
 }
 
