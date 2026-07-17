@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -38,7 +39,11 @@ func Load() Config {
 	// In local development, prefer values in .env over inherited shell variables.
 	_ = godotenv.Overload()
 	port := getenv("PORT", "8177")
-	secret := getenv("JWT_SECRET", "dev-secret-change-me")
+	secret := getenv("JWT_SECRET", "")
+	if secret == "" {
+		secret = "dev-secret-change-me"
+		log.Println("WARNING: JWT_SECRET is not set — using insecure default. Set JWT_SECRET in production!")
+	}
 	redisAddr := getenv("REDIS_ADDR", "localhost:6379")
 	sentryDsn := getenv("SENTRY_DSN", "")
 	databaseURL := getenv("SUPABASE_DB_URL", "")

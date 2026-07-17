@@ -375,6 +375,10 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 					"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
 					id := p.Args["id"].(string)
 					return svc.Theater(id)
 				},
@@ -415,6 +419,10 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 					"language": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
 					language, _ := p.Args["language"].(string)
 					return svc.ListCourses(language)
 				},
@@ -426,6 +434,10 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 					"category": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
 					exam, _ := p.Args["exam"].(string)
 					category, _ := p.Args["category"].(string)
 					return svc.ListContentSources(exam, category)

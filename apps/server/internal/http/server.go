@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,13 +27,33 @@ type HealthResult struct {
 	Checks    map[string]string `json:"checks"`
 }
 
+// allowedOrigins defines the origins permitted to make cross-origin requests.
+// In production, set the ALLOWED_ORIGINS env var (comma-separated).
+var allowedOrigins = func() map[string]bool {
+	raw := os.Getenv("ALLOWED_ORIGINS")
+	origins := map[string]bool{
+		"http://localhost:1420":  true, // Tauri dev
+		"http://localhost:5173":  true, // Vite dev
+		"https://tauri.localhost": true,
+		"tauri://localhost":      true,
+	}
+	if raw != "" {
+		for _, o := range strings.Split(raw, ",") {
+			o = strings.TrimSpace(o)
+			if o != "" {
+				origins[o] = true
+			}
+		}
+	}
+	return origins
+}()
+
 func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if origin == "" {
-		origin = "*"
+	if origin != "" && allowedOrigins[origin] {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
 	}
-	w.Header().Set("Access-Control-Allow-Origin", origin)
-	w.Header().Set("Vary", "Origin")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
@@ -136,6 +157,10 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 			http.Error(w, "unsupported url scheme", http.StatusBadRequest)
 			return
 		}
+		if isPrivateHost(target.Host) {
+			http.Error(w, "requests to private/internal addresses are not allowed", http.StatusForbidden)
+			return
+		}
 
 		client := &http.Client{Timeout: 25 * time.Second}
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target.String(), nil)
@@ -183,4 +208,34 @@ func withAuth(ctx context.Context, authHeader string, jwtSecret string) context.
 		return ctx
 	}
 	return context.WithValue(ctx, graph.UserIDKey, claims.UserID)
+}
+
+// isPrivateHost returns true if the host resolves to a private, loopback, or
+// link-local address — blocking SSRF attempts against internal infrastructure.
+func isPrivateHost(host string) bool {
+	hostname := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostname = h
+	}
+	if strings.EqualFold(hostname, "localhost") {
+		return true
+	}
+	// AWS metadata endpoint
+	if hostname == "169.254.169.254" {
+		return true
+	}
+	ips, err := net.LookupIP(hostname)
+	if err != nil {
+		ip := net.ParseIP(hostname)
+		if ip == nil {
+			return false
+		}
+		ips = []net.IP{ip}
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return true
+		}
+	}
+	return false
 }
