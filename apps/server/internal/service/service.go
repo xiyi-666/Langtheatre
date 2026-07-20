@@ -33,6 +33,7 @@ type Store interface {
 	SaveModelConfig(config domain.ModelConfig) (domain.ModelConfig, error)
 	GetTTSConfig() (domain.TTSConfig, error)
 	SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, error)
+	ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error)
 	SaveTheater(theater domain.Theater) (domain.Theater, error)
 	GetTheater(id string) (domain.Theater, error)
 	GetTheaterByShareCode(shareCode string) (domain.Theater, error)
@@ -460,6 +461,25 @@ func (s *Service) UpdateTTSConfig(input domain.TTSConfigUpdate) (domain.TTSConfi
 	}
 	s.ttsConfig.UpdateTTSConfig(saved)
 	return buildTTSConfigView(saved), nil
+}
+
+func (s *Service) ExportOAuthAccounts(provider string) (string, error) {
+	accounts, err := s.store.ListOAuthAccounts(provider)
+	if err != nil {
+		return "", err
+	}
+	lines := make([]string, 0, len(accounts))
+	for _, account := range accounts {
+		email := strings.TrimSpace(account.Email)
+		provider := strings.TrimSpace(account.Provider)
+		clientID := strings.TrimSpace(account.ClientID)
+		refreshToken := strings.TrimSpace(account.RefreshToken)
+		if email == "" || provider == "" || clientID == "" || refreshToken == "" {
+			continue
+		}
+		lines = append(lines, strings.Join([]string{email, provider, clientID, refreshToken}, "----"))
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 func normalizeTTSProvider(input string, fallback string) string {

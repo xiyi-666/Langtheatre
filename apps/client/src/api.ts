@@ -228,6 +228,18 @@ export async function updateTTSConfig(input: {
   return data.updateTTSConfig;
 }
 
+export async function exportOAuthAccounts(provider?: string): Promise<string> {
+  await ensureAccessToken();
+  const normalizedProvider = provider?.trim() || undefined;
+  const data = await request<{ oauthAccountsExport: string }>(
+    `query OAuthAccountsExport($provider: String) {
+      oauthAccountsExport(provider: $provider)
+    }`,
+    { provider: normalizedProvider }
+  );
+  return data.oauthAccountsExport;
+}
+
 export async function generateTheater(input: {
   language: "CANTONESE" | "ENGLISH";
   topic: string;

@@ -72,6 +72,16 @@ func applySQLiteSchema(db *sql.DB) error {
             audio_format TEXT NOT NULL DEFAULT 'mp3',
             updated_at TEXT NOT NULL
         )`,
+		`CREATE TABLE IF NOT EXISTS oauth_accounts (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            client_id TEXT NOT NULL,
+            refresh_token TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )`,
+		`CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider_email ON oauth_accounts(provider, email)`,
 		`CREATE TABLE IF NOT EXISTS theaters (
             id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -298,6 +308,30 @@ func (s *SQLiteStore) SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, 
 		return domain.TTSConfig{}, err
 	}
 	return config, nil
+}
+
+func (s *SQLiteStore) ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error) {
+	query := `SELECT id, email, provider, client_id, refresh_token, created_at, updated_at FROM oauth_accounts`
+	args := []any{}
+	if strings.TrimSpace(provider) != "" {
+		query += ` WHERE LOWER(provider) = LOWER(?)`
+		args = append(args, strings.TrimSpace(provider))
+	}
+	query += ` ORDER BY LOWER(email), LOWER(provider), client_id`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]domain.OAuthAccount, 0)
+	for rows.Next() {
+		item, scanErr := scanOAuthAccount(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
 }
 
 func (s *SQLiteStore) GetUserByEmail(email string) (domain.User, error) {
@@ -685,6 +719,18 @@ func scanUser(scanner interface{ Scan(dest ...any) error }) (domain.User, error)
 	}
 	user.CreatedAt = parseSQLiteTime(createdAt)
 	return user, nil
+}
+
+func scanOAuthAccount(scanner interface{ Scan(dest ...any) error }) (domain.OAuthAccount, error) {
+	var account domain.OAuthAccount
+	var createdAt string
+	var updatedAt string
+	if err := scanner.Scan(&account.ID, &account.Email, &account.Provider, &account.ClientID, &account.RefreshToken, &createdAt, &updatedAt); err != nil {
+		return domain.OAuthAccount{}, err
+	}
+	account.CreatedAt = parseSQLiteTime(createdAt)
+	account.UpdatedAt = parseSQLiteTime(updatedAt)
+	return account, nil
 }
 
 func scanTheater(scanner interface{ Scan(dest ...any) error }) (domain.Theater, error) {

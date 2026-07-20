@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -200,6 +201,32 @@ func (s *PostgresStore) SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig
 		return domain.TTSConfig{}, err
 	}
 	return config, nil
+}
+
+func (s *PostgresStore) ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rows, err := s.pool.Query(
+		ctx,
+		`SELECT id::text, email, provider, client_id, refresh_token, created_at, updated_at
+		 FROM oauth_accounts
+		 WHERE ($1 = '' OR LOWER(provider) = LOWER($1))
+		 ORDER BY LOWER(email), LOWER(provider), client_id`,
+		strings.TrimSpace(provider),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]domain.OAuthAccount, 0)
+	for rows.Next() {
+		var account domain.OAuthAccount
+		if scanErr := rows.Scan(&account.ID, &account.Email, &account.Provider, &account.ClientID, &account.RefreshToken, &account.CreatedAt, &account.UpdatedAt); scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, account)
+	}
+	return result, rows.Err()
 }
 
 func (s *PostgresStore) SaveTheater(theater domain.Theater) (domain.Theater, error) {

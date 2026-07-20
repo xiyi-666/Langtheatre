@@ -114,7 +114,7 @@ func main() {
 			Timestamp: result.Timestamp,
 			Checks:    result.Checks,
 		}
-	}, cfg.MediaDir)
+	}, cfg.MediaDir, svc)
 	log.Printf("LinguaQuest API listening on :%s", cfg.Port)
 	if err = http.ListenAndServe(":"+cfg.Port, httpserver.WrapWithBaseMiddleware(mux)); err != nil {
 		log.Fatal(err)

@@ -68,6 +68,16 @@ type TTSConfigUpdate struct {
 	ClearAPIKey bool
 }
 
+type OAuthAccount struct {
+	ID           string
+	Email        string
+	Provider     string
+	ClientID     string
+	RefreshToken string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
 type Dialogue struct {
 	Speaker    string
 	Text       string

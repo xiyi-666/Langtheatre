@@ -18,6 +18,7 @@ type MemoryStore struct {
 	theater  map[string]domain.Theater
 	readings map[string]domain.ReadingMaterial
 	sessions map[string]domain.RoleplaySession
+	oauth    map[string]domain.OAuthAccount
 	model    domain.ModelConfig
 	tts      domain.TTSConfig
 }
@@ -29,6 +30,7 @@ func NewMemoryStore() *MemoryStore {
 		theater:  map[string]domain.Theater{},
 		readings: map[string]domain.ReadingMaterial{},
 		sessions: map[string]domain.RoleplaySession{},
+		oauth:    map[string]domain.OAuthAccount{},
 	}
 }
 
@@ -97,6 +99,30 @@ func (s *MemoryStore) SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, 
 	defer s.mu.Unlock()
 	s.tts = config
 	return s.tts, nil
+}
+
+func (s *MemoryStore) SaveOAuthAccount(account domain.OAuthAccount) domain.OAuthAccount {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if account.ID == "" {
+		account.ID = uuid.NewString()
+	}
+	s.oauth[account.ID] = account
+	return account
+}
+
+func (s *MemoryStore) ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
+	result := make([]domain.OAuthAccount, 0, len(s.oauth))
+	for _, account := range s.oauth {
+		if normalizedProvider != "" && strings.ToLower(strings.TrimSpace(account.Provider)) != normalizedProvider {
+			continue
+		}
+		result = append(result, account)
+	}
+	return result, nil
 }
 
 func (s *MemoryStore) GetUserByEmail(email string) (domain.User, error) {

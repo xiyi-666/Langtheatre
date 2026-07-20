@@ -145,6 +145,37 @@ func TestReadingMaterialFallsBackToIDWhenUserTokenChanges(t *testing.T) {
 	}
 }
 
+func TestExportOAuthAccountsUsesPlainTextImportFormat(t *testing.T) {
+	mem := store.NewMemoryStore()
+	mem.SaveOAuthAccount(domain.OAuthAccount{
+		Email:        "first@example.com",
+		Provider:     "microsoft",
+		ClientID:     "client-a",
+		RefreshToken: "refresh-token-a",
+	})
+	mem.SaveOAuthAccount(domain.OAuthAccount{
+		Email:        "second@example.com",
+		Provider:     "google",
+		ClientID:     "client-b",
+		RefreshToken: "refresh-token-b",
+	})
+	mem.SaveOAuthAccount(domain.OAuthAccount{
+		Email:        "skip@example.com",
+		Provider:     "microsoft",
+		ClientID:     "client-c",
+		RefreshToken: "",
+	})
+	svc := New(mem, nil, nil, nil, "secret")
+
+	text, err := svc.ExportOAuthAccounts("microsoft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "first@example.com----microsoft----client-a----refresh-token-a" {
+		t.Fatalf("export text = %q", text)
+	}
+}
+
 func TestFallbackReadingContentMatchesQuestionType(t *testing.T) {
 	meta := ielts.ReadingMetadataFromTopic("IELTS", "[Band 7.0][Matching Headings] urban transport", "advanced")
 	dialogues, quiz := fallbackReadingContentWithMetadata("urban transport", meta, 5)

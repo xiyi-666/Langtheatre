@@ -369,6 +369,20 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 					return svc.GetTTSConfig()
 				},
 			},
+			"oauthAccountsExport": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.String),
+				Args: graphql.FieldConfigArgument{
+					"provider": &graphql.ArgumentConfig{Type: graphql.String},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					userID, _ := p.Context.Value(UserIDKey).(string)
+					if userID == "" {
+						return nil, errors.New("unauthorized")
+					}
+					provider, _ := p.Args["provider"].(string)
+					return svc.ExportOAuthAccounts(provider)
+				},
+			},
 			"theater": &graphql.Field{
 				Type: theaterType,
 				Args: graphql.FieldConfigArgument{

@@ -26,6 +26,10 @@ type HealthResult struct {
 	Checks    map[string]string `json:"checks"`
 }
 
+type OAuthAccountExporter interface {
+	ExportOAuthAccounts(provider string) (string, error)
+}
+
 func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
@@ -37,7 +41,7 @@ func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
-func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Context) HealthResult, mediaDir string) *http.ServeMux {
+func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Context) HealthResult, mediaDir string, oauthExporter OAuthAccountExporter) *http.ServeMux {
 	mux := http.NewServeMux()
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		setCORSHeaders(w, r)
@@ -84,6 +88,34 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 			}
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			mediaHandler.ServeHTTP(w, r)
+		})
+	}
+	if oauthExporter != nil {
+		mux.HandleFunc("/admin/oauth-accounts/export.txt", func(w http.ResponseWriter, r *http.Request) {
+			setCORSHeaders(w, r)
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			if r.Method != http.MethodGet {
+				http.Error(w, "only GET is supported", http.StatusMethodNotAllowed)
+				return
+			}
+			ctx := withAuth(r.Context(), r.Header.Get("Authorization"), jwtSecret)
+			userID, _ := ctx.Value(graph.UserIDKey).(string)
+			if userID == "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			text, err := oauthExporter.ExportOAuthAccounts(r.URL.Query().Get("provider"))
+			if err != nil {
+				http.Error(w, "failed to export oauth accounts", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("Content-Disposition", `attachment; filename="oauth-accounts.txt"`)
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write([]byte(text))
 		})
 	}
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
