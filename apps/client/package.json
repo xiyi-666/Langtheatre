@@ -1,20 +1,24 @@
 {
   "name": "@linguaquest/client",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+	"build:open-source": "tsc -b && vite build --mode open-source",
+	"build:commercial": "tsc -b && vite build --mode commercial",
+	"build:mini-program": "tsc -b && vite build --mode mini-program",
     "preview": "vite preview",
     "lint": "eslint src --ext .ts,.tsx",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
+		"tauri:validate-api-url": "node scripts/validate-tauri-api-url.mjs",
+		"tauri:build": "npm run tauri:validate-api-url && tauri build",
     "tauri:android:dev": "tauri android dev",
-    "tauri:android:build": "tauri android build"
+		"tauri:android:build": "npm run tauri:validate-api-url && tauri android build"
   },
   "dependencies": {
     "@sentry/react": "^8.54.0",

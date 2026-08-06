@@ -1,4 +1,4 @@
-name: deploy
+name: deploy-mini-program
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -22,34 +22,65 @@ on:
       - infra/docker-compose.deploy.yml
       - .github/workflows/deploy.yml
 
+concurrency:
+  group: mini-program-production
+  cancel-in-progress: true
+
 jobs:
-  build-and-push-images:
+  quality-gate:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - name: Verify Mini Program client
+        run: |
+          npm ci
+          npm run lint --workspace apps/client
+          npm run typecheck --workspace apps/client
+          npm run build:mini-program --workspace apps/client
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: apps/server/go.sum
+
+      - name: Verify server
+        working-directory: apps/server
+        run: go test ./... -cover
+
+  build-and-push-images:
+    runs-on: ubuntu-latest
+    needs: [quality-gate]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker metadata (server)
+      - name: Docker metadata (Mini Program server)
         id: meta-server
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-server
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event.inputs.publish_latest == 'true' }}
-            type=sha,format=short,prefix=sha-
+            type=raw,value=mini-program
+            type=sha,format=short,prefix=mini-
 
-      - name: Build and push server image
+      - name: Build and push Mini Program server image
         uses: docker/build-push-action@v6
         with:
           context: ./apps/server
@@ -61,16 +92,16 @@ jobs:
           tags: ${{ steps.meta-server.outputs.tags }}
           labels: ${{ steps.meta-server.outputs.labels }}
 
-      - name: Docker metadata (client)
+      - name: Docker metadata (Mini Program client)
         id: meta-client
         uses: docker/metadata-action@v5
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-client
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event.inputs.publish_latest == 'true' }}
-            type=sha,format=short,prefix=sha-
+            type=raw,value=mini-program
+            type=sha,format=short,prefix=mini-
 
-      - name: Build and push client image
+      - name: Build and push Mini Program client image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -80,83 +111,107 @@ jobs:
           build-args: |
             VITE_API_URL=/graphql
             VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
+            VITE_APP_EDITION=MINI_PROGRAM
           cache-from: type=gha,scope=linguaquest-client
           cache-to: type=gha,mode=max,scope=linguaquest-client
           tags: ${{ steps.meta-client.outputs.tags }}
           labels: ${{ steps.meta-client.outputs.labels }}
 
-  prepare-deploy-bundle:
-    runs-on: ubuntu-latest
-    needs: [build-and-push-images]
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create deployment bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .deploy
-          cp infra/docker-compose.deploy.yml .deploy/docker-compose.deploy.yml
-          cat > .deploy/.env.production <<EOF
-          DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
-          CLIENT_IMAGE_TAG=sha-${GITHUB_SHA::7}
-          SERVER_IMAGE_TAG=sha-${GITHUB_SHA::7}
-          JWT_SECRET=${{ secrets.JWT_SECRET }}
-          SUPABASE_DB_URL=${{ secrets.SUPABASE_DB_URL }}
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL=${{ vars.OPENAI_MODEL }}
-          OPENAI_BASE_URL=${{ vars.OPENAI_BASE_URL }}
-          TTS_PROVIDER=${{ vars.TTS_PROVIDER }}
-          TTS_API_URL=${{ vars.TTS_API_URL }}
-          TTS_API_KEY=${{ secrets.TTS_API_KEY }}
-          TTS_VOICE=${{ vars.TTS_VOICE }}
-          TTS_MODEL=${{ vars.TTS_MODEL }}
-          TTS_AUDIO_FORMAT=${{ vars.TTS_AUDIO_FORMAT }}
-          TTS_MAX_CONCURRENCY=${{ vars.TTS_MAX_CONCURRENCY }}
-          MEDIA_DIR=${{ vars.MEDIA_DIR }}
-          TTS_USE_UPLOAD_PROMPT=${{ vars.TTS_USE_UPLOAD_PROMPT }}
-          TTS_PROMPT_AUDIO_PATH=${{ vars.TTS_PROMPT_AUDIO_PATH }}
-          TTS_RETURN_JSON=${{ vars.TTS_RETURN_JSON }}
-          TTS_TIMEOUT_SECONDS=${{ vars.TTS_TIMEOUT_SECONDS }}
-          TTS_MAX_RETRIES=${{ vars.TTS_MAX_RETRIES }}
-          SENTRY_DSN=${{ secrets.SENTRY_DSN }}
-          EOF
-          docker compose --env-file .deploy/.env.production -f .deploy/docker-compose.deploy.yml config > .deploy/docker-compose.rendered.yml
-
-      - name: Upload deploy bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: deploy-bundle
-          include-hidden-files: true
-          path: |
-            .deploy/.env.production
-            .deploy/docker-compose.deploy.yml
-            .deploy/docker-compose.rendered.yml
-
   deploy-to-server:
     runs-on: ubuntu-latest
-    needs: [prepare-deploy-bundle]
+    needs: [build-and-push-images]
     permissions:
       contents: read
     env:
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      TTS_API_KEY: ${{ secrets.TTS_API_KEY }}
+      ASR_API_KEY: ${{ secrets.ASR_API_KEY }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      ANALYTICS_ADMIN_TOKEN: ${{ secrets.ANALYTICS_ADMIN_TOKEN }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+      SMTP_HOST: ${{ vars.SMTP_HOST }}
+      SMTP_PORT: ${{ vars.SMTP_PORT }}
+      SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
+      SMTP_FROM: ${{ vars.SMTP_FROM }}
+      EMAIL_VERIFICATION_REQUIRED: ${{ vars.EMAIL_VERIFICATION_REQUIRED }}
     steps:
-      - name: Download deploy bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: deploy-bundle
-          path: .deploy
+      - uses: actions/checkout@v4
 
-      - name: Skip remote deploy when SSH secrets are missing
-        if: ${{ env.DEPLOY_USER == '' || env.DEPLOY_SSH_KEY == '' }}
-        run: echo "DEPLOY_USER or DEPLOY_SSH_KEY is not configured, skipping remote deployment."
+      - name: Validate production prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          require_value() {
+            if [ -z "${!1:-}" ]; then
+              echo "Missing required GitHub Actions secret or variable: $1" >&2
+              exit 1
+            fi
+          }
+          for name in DEPLOY_USER DEPLOY_SSH_KEY DOCKERHUB_USERNAME DOCKERHUB_TOKEN JWT_SECRET OPENAI_API_KEY TTS_API_KEY ASR_API_KEY SMTP_PASSWORD ANALYTICS_ADMIN_TOKEN PUBLIC_APP_URL OPENAI_MODEL OPENAI_BASE_URL SMTP_USERNAME SMTP_FROM EMAIL_VERIFICATION_REQUIRED; do
+            require_value "$name"
+          done
+          case "$PUBLIC_APP_URL" in
+            https://*) ;;
+            *) echo "PUBLIC_APP_URL must use an HTTPS domain before Mini Program deployment." >&2; exit 1 ;;
+          esac
 
-      - name: Upload deploy files to server
-        if: ${{ env.DEPLOY_USER != '' && env.DEPLOY_SSH_KEY != '' }}
+      - name: Prepare private deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .deploy
+          cp infra/docker-compose.deploy.yml .deploy/docker-compose.deploy.yml
+          IMAGE_TAG="mini-${GITHUB_SHA::7}"
+          write_env() { printf '%s=%s\n' "$1" "$2" >> .deploy/.env.production; }
+          : > .deploy/.env.production
+          write_env DOCKERHUB_USERNAME "$DOCKERHUB_USERNAME"
+          write_env CLIENT_IMAGE_TAG "$IMAGE_TAG"
+          write_env SERVER_IMAGE_TAG "$IMAGE_TAG"
+          write_env APP_EDITION MINI_PROGRAM
+          write_env JWT_SECRET "$JWT_SECRET"
+          write_env SUPABASE_DB_URL "$SUPABASE_DB_URL"
+          write_env SQLITE_PATH /srv/data/linguaquest.db
+          write_env REDIS_ADDR redis:6379
+          write_env PUBLIC_APP_URL "$PUBLIC_APP_URL"
+          write_env TRUST_PROXY_HEADERS true
+          write_env OPENAI_API_KEY "$OPENAI_API_KEY"
+          write_env OPENAI_MODEL "$OPENAI_MODEL"
+          write_env OPENAI_BASE_URL "$OPENAI_BASE_URL"
+          write_env TTS_API_KEY "$TTS_API_KEY"
+          write_env ASR_API_KEY "$ASR_API_KEY"
+          write_env SMTP_HOST "$SMTP_HOST"
+          write_env SMTP_PORT "$SMTP_PORT"
+          write_env SMTP_USERNAME "$SMTP_USERNAME"
+          write_env SMTP_PASSWORD "$SMTP_PASSWORD"
+          write_env SMTP_FROM "$SMTP_FROM"
+          write_env EMAIL_VERIFICATION_REQUIRED "$EMAIL_VERIFICATION_REQUIRED"
+          write_env GENERATION_CONCURRENCY 8
+          write_env BACKGROUND_TASK_TIMEOUT_SECONDS 1200
+          write_env HTTP_RATE_LIMIT_PER_MINUTE 120
+          write_env AUTH_RATE_LIMIT_PER_MINUTE 10
+          write_env AI_REQUEST_RATE_LIMIT_PER_MINUTE 12
+          write_env MINI_PROGRAM_DAILY_AI_USES 20
+          write_env MINI_PROGRAM_AI_COOLDOWN_SECONDS 12
+          write_env MINI_PROGRAM_MAX_ACTIVE_TASKS 2
+          write_env MINI_AD_FREE_DAILY_USES 999999
+          write_env BILLING_ENABLED false
+          write_env AD_PROVIDER NONE
+          write_env ANALYTICS_ENABLED true
+          write_env ANALYTICS_TIMEZONE Asia/Shanghai
+          write_env ANALYTICS_ADMIN_TOKEN "$ANALYTICS_ADMIN_TOKEN"
+          write_env SENTRY_DSN "$SENTRY_DSN"
+          docker compose --env-file .deploy/.env.production -f .deploy/docker-compose.deploy.yml config --quiet
+
+      - name: Upload private deployment configuration
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ env.DEPLOY_HOST }}
@@ -166,13 +221,12 @@ jobs:
           target: ${{ env.DEPLOY_DIR }}
           strip_components: 1
 
-      - name: Pull and restart containers
-        if: ${{ env.DEPLOY_USER != '' && env.DEPLOY_SSH_KEY != '' }}
+      - name: Pull and restart Mini Program services
         uses: appleboy/ssh-action@v1.2.0
         env:
           DEPLOY_DIR: ${{ env.DEPLOY_DIR }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ env.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ env.DOCKERHUB_TOKEN }}
         with:
           host: ${{ env.DEPLOY_HOST }}
           username: ${{ env.DEPLOY_USER }}

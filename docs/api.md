@@ -10,7 +10,7 @@ Endpoint: `POST /graphql`
 
 - `register(email, password) -> { accessToken }`
 - `login(email, password) -> { accessToken }`
-- `refresh(accessToken) -> { accessToken }`
+- `refresh(refreshToken) -> { accessToken, refreshToken }`（refresh token 会轮换；`accessToken` 参数仅用于一次发布周期的迁移兼容）
 - `logout() -> Boolean`
 - `updateProfile(nickname, avatarUrl, bio) -> User`
 - `updateModelConfig(model, baseURL, apiKey, clearApiKey) -> ModelConfig`

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { BookMarked, Filter, Sparkles } from "lucide-react";
 import { contentSources, generateReading, readingMaterials } from "../api";
+import { AICreditCostNotice } from "../components/AICreditCostNotice";
 import { useAppStore } from "../store";
 import type { ContentSource } from "../types";
 import { calculateStageProgress, getStageRequirement } from "../xp";
@@ -74,6 +75,14 @@ export function ReadingGeneratePage() {
     })();
   }, [safeExam, category]);
 
+  useEffect(() => {
+    if (!materials.some((item) => item.status === "GENERATING")) return;
+    const timer = window.setInterval(() => {
+      void readingMaterials(safeExam).then(setMaterials).catch(() => undefined);
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [materials, safeExam]);
+
   const visibleSources = sources;
   const currentSeeds = useMemo(() => stageSeeds[activeStage], [activeStage, stageSeeds]);
   const totalXP = user?.totalXP ?? 0;
@@ -105,8 +114,7 @@ export function ReadingGeneratePage() {
         level: safeExam === "IELTS" ? "upper-intermediate" : "intermediate",
         sourceIds: selectedSourceIds.length > 0 ? selectedSourceIds : visibleSources.slice(0, 5).map((s) => s.id)
       });
-      const latest = await readingMaterials(safeExam);
-      setMaterials(latest);
+		setMaterials((current) => [generated, ...current.filter((item) => item.id !== generated.id)]);
       navigate(`/reading/${generated.id}/article`);
     } catch (e) {
       console.error("reading generate failed", e);
@@ -144,6 +152,8 @@ export function ReadingGeneratePage() {
           <p>总经验：{totalXP}</p>
           {!stageUnlocked ? <p className="error">当前阶段尚未解锁，需要 {requiredXP} XP，当前仅有 {totalXP} XP。</p> : null}
         </article>
+
+        <AICreditCostNotice action="READING_GENERATION" />
 
         <div className="row" style={{ marginTop: 8 }}>
           <label style={{ minWidth: 220 }}>
@@ -211,12 +221,18 @@ export function ReadingGeneratePage() {
           {materials.length === 0 ? <p>暂无历史阅读材料。</p> : null}
           <ul className="dialogue-list">
             {materials.map((item) => (
-              <li key={item.id} className="dialogue" role="button" onClick={() => navigate(`/reading/${item.id}/article`)}>
+              <li key={item.id} className="dialogue">
                 <div className="row" style={{ justifyContent: "space-between" }}>
                   <strong>{item.title}</strong>
-                  <small>{item.audioStatus ?? "PENDING"}</small>
+                  <small>{item.status === "GENERATING" ? "生成中" : item.status === "FAILED" ? "生成失败" : item.audioStatus ?? "PENDING"}</small>
                 </div>
                 <p>{item.topic}</p>
+                {item.status === "GENERATING" ? <div className="task-progress" aria-live="polite"><div className="task-progress-head"><span>{item.generationMessage || "正在生成阅读材料"}</span><strong>{item.generationProgress ?? 0}%</strong></div><div className="progress-bar"><div className="progress-value" style={{ width: `${Math.max(4, item.generationProgress ?? 0)}%` }} /></div></div> : null}
+                <div className="dialogue-actions">
+                  <button type="button" className="btn-ghost" onClick={() => navigate(`/reading/${item.id}/article`)}>
+                    {item.status === "GENERATING" ? "查看生成进度" : item.status === "FAILED" ? "查看失败原因" : "查看材料"}
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

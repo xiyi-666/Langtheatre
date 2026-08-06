@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { BookOpenText, Clapperboard, Compass, ScrollText, UserRound } from "lucide-react";
-import { Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { BookOpenText, CircleAlert, Clapperboard, Compass, FilePenLine, ScrollText, UserRound } from "lucide-react";
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { LoginPage } from "./pages/LoginPage";
 import { GeneratePage } from "./pages/GeneratePage";
 import { TheaterPage } from "./pages/TheaterPage";
@@ -13,8 +13,19 @@ import { RoleplayPage } from "./pages/RoleplayPage";
 import { ReadingPage } from "./pages/ReadingPage";
 import { ReadingDetailPage } from "./pages/ReadingDetailPage";
 import { ReadingGeneratePage } from "./pages/ReadingGeneratePage";
+import { WritingPage } from "./pages/WritingPage";
+import { WritingDetailPage } from "./pages/WritingDetailPage";
+import { VoiceDesignPage } from "./pages/VoiceDesignPage";
+import { VoiceLibraryPage } from "./pages/VoiceLibraryPage";
+import { ReleaseNotesPage } from "./pages/ReleaseNotesPage";
+import { isCommercialEdition, isMiniProgramEdition } from "./edition";
 import { useAppStore } from "./store";
+import { CREDIT_INSUFFICIENT_EVENT, trackClick } from "./api";
+import { membershipRoutePaths } from "./membershipRoutes";
 
+const CommercialMembershipPage = __LINGUAQUEST_APP_EDITION__ === "COMMERCIAL"
+  ? lazy(() => import("./pages/MembershipPage").then((module) => ({ default: module.MembershipPage })))
+  : null;
 function MobileBottomNav() {
   const location = useLocation();
   const hideTimerRef = useRef<number | null>(null);
@@ -77,7 +88,7 @@ function MobileBottomNav() {
     };
   }, [desktopMode]);
 
-  if (location.pathname.startsWith("/login")) return null;
+  if (location.pathname.startsWith("/login") || location.pathname.startsWith("/updates")) return null;
   if (location.pathname.startsWith("/theater/shared/")) return null;
 
   const navClassName = [
@@ -105,23 +116,32 @@ function MobileBottomNav() {
     >
       <NavLink
         to="/courses"
-        className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
-        onFocus={() => setDesktopVisible(true)}
+		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
+		data-analytics-click="NAV_COURSES"
+		onClick={() => trackClick("NAV_COURSES")}
+		onFocus={() => setDesktopVisible(true)}
       >
         <Compass size={16} />
         <span>路线</span>
       </NavLink>
       <NavLink
         to="/reading"
-        className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
+		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
+		data-analytics-click="NAV_READING"
+		onClick={() => trackClick("NAV_READING")}
         onFocus={() => setDesktopVisible(true)}
       >
         <ScrollText size={16} />
         <span>阅读</span>
       </NavLink>
+	  <NavLink to="/writing" className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")} data-analytics-click="NAV_WRITING" onClick={() => trackClick("NAV_WRITING")} onFocus={() => setDesktopVisible(true)}>
+        <FilePenLine size={16} /><span>写作</span>
+      </NavLink>
       <NavLink
         to="/library"
-        className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
+		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
+		data-analytics-click="NAV_LIBRARY"
+		onClick={() => trackClick("NAV_LIBRARY")}
         onFocus={() => setDesktopVisible(true)}
       >
         <BookOpenText size={16} />
@@ -129,7 +149,9 @@ function MobileBottomNav() {
       </NavLink>
       <NavLink
         to="/generate"
-        className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
+		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
+		data-analytics-click="NAV_GENERATE"
+		onClick={() => trackClick("NAV_GENERATE")}
         onFocus={() => setDesktopVisible(true)}
       >
         <Clapperboard size={16} />
@@ -137,7 +159,9 @@ function MobileBottomNav() {
       </NavLink>
       <NavLink
         to="/profile"
-        className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
+		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
+		data-analytics-click="NAV_PROFILE"
+		onClick={() => trackClick("NAV_PROFILE")}
         onFocus={() => setDesktopVisible(true)}
       >
         <UserRound size={16} />
@@ -160,7 +184,8 @@ export function App() {
     <>
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
-        <Route path="/login" element={<LoginPage />} />
+		<Route path="/login" element={<LoginPage />} />
+		<Route path="/updates" element={<ReleaseNotesPage />} />
         <Route path="/generate" element={<GeneratePage />} />
         <Route path="/courses" element={<CoursesPage />} />
         <Route path="/theater/:id" element={<TheaterPage />} />
@@ -169,14 +194,58 @@ export function App() {
         <Route path="/result" element={<ResultPage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/reading" element={<ReadingPage />} />
+        <Route path="/reading/library" element={<ReadingPage />} />
         <Route path="/reading/generate/:exam/:stage" element={<ReadingGeneratePage />} />
         <Route path="/reading/:id" element={<ReadingDetailRedirect />} />
         <Route path="/reading/:id/:view" element={<ReadingDetailPage />} />
+        <Route path="/writing" element={<WritingPage />} />
+        <Route path="/writing/library" element={<WritingPage />} />
+        <Route path="/writing/:id" element={<WritingDetailPage />} />
+        <Route path="/voices" element={<VoiceLibraryPage />} />
+        <Route path="/voices/create" element={<VoiceDesignPage />} />
+        {isCommercialEdition && !isMiniProgramEdition && CommercialMembershipPage ? membershipRoutePaths.map((path) => <Route key={path} path={path} element={<Suspense fallback={<main className="page"><p>正在加载会员中心…</p></main>}><CommercialMembershipPage /></Suspense>} />) : null}
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/roleplay/:theaterId" element={<RoleplayPage />} />
       </Routes>
       <MobileBottomNav />
+      <AICreditInsufficientDialog />
     </>
+  );
+}
+
+function AICreditInsufficientDialog() {
+  const navigate = useNavigate();
+  const [message, setMessage] = useState("");
+  const canPurchaseCredits = isCommercialEdition && !isMiniProgramEdition;
+
+  useEffect(() => {
+    const showDialog = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      setMessage(detail?.message?.trim() || "AI 点数不足，请等待每日点数重置后再试。");
+    };
+    window.addEventListener(CREDIT_INSUFFICIENT_EVENT, showDialog);
+    return () => window.removeEventListener(CREDIT_INSUFFICIENT_EVENT, showDialog);
+  }, []);
+
+  if (!message) return null;
+
+  const close = () => setMessage("");
+  return (
+    <div className="credit-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+      <section className="credit-dialog" role="alertdialog" aria-modal="true" aria-labelledby="credit-dialog-title" aria-describedby="credit-dialog-description">
+        <span className="credit-dialog-icon"><CircleAlert size={22} /></span>
+        <div>
+          <p className="credit-dialog-kicker">本次任务未开始</p>
+          <h2 id="credit-dialog-title">AI 点数不足</h2>
+          <p id="credit-dialog-description">{message}</p>
+          <p>请等待每日点数重置后再试；本次请求不会扣除点数。</p>
+        </div>
+        <div className="credit-dialog-actions">
+          {canPurchaseCredits ? <button type="button" onClick={() => { close(); navigate("/membership"); }}>查看点数方案</button> : null}
+          <button type="button" className="btn-ghost" onClick={close}>我知道了</button>
+        </div>
+      </section>
+    </div>
   );
 }
 

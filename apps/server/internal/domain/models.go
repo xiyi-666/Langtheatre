@@ -3,14 +3,118 @@ package domain
 import "time"
 
 type User struct {
-	ID           string
-	Email        string
-	PasswordHash string
-	Nickname     string
-	AvatarURL    string
-	Bio          string
-	TotalXP      int
-	CreatedAt    time.Time
+	ID            string
+	Username      string
+	Email         string
+	EmailVerified bool
+	PasswordHash  string
+	Nickname      string
+	AvatarURL     string
+	Bio           string
+	TotalXP       int
+	Level         int
+	XPIntoLevel   int
+	XPToNextLevel int
+	LevelProgress int
+	RankCode      string
+	RankLabel     string
+	CreatedAt     time.Time
+}
+
+const MaxLevel = 999
+
+type LearningProgress struct {
+	Level         int
+	XPIntoLevel   int
+	XPToNextLevel int
+	LevelProgress int
+	RankCode      string
+	RankLabel     string
+}
+
+type XPEvent struct {
+	ID        string
+	UserID    string
+	Activity  string
+	SourceID  string
+	XPEarned  int
+	CreatedAt time.Time
+}
+
+type XPAward struct {
+	Event     XPEvent
+	GrantedXP int
+	Duplicate bool
+}
+
+type BillingProduct struct {
+	Code            string
+	Name            string
+	Kind            string
+	AmountCents     int
+	CreditAllowance int
+	PeriodDays      int
+	AdsFree         bool
+	Description     string
+}
+
+type BillingStatus struct {
+	ProductCode     string
+	ProductName     string
+	IsLifetime      bool
+	AdsFree         bool
+	CreditBalance   int
+	CreditAllowance int
+	CreditResetAt   time.Time
+	ExpiresAt       time.Time
+}
+
+type AICreditCost struct {
+	Action      string
+	Label       string
+	Credits     int
+	Description string
+}
+
+type PaymentOrder struct {
+	ID              string
+	UserID          string
+	ProductCode     string
+	AmountCents     int
+	PaymentChannel  string
+	Status          string
+	ProviderTradeNo string
+	CheckoutURL     string
+	CreatedAt       time.Time
+	PaidAt          time.Time
+}
+
+type AdPlacement struct {
+	Placement string
+	Provider  string
+	ScriptURL string
+	SlotID    string
+}
+
+type LoginCandidate struct {
+	ID       string
+	Username string
+	Email    string
+}
+
+type AuthResult struct {
+	AccessToken               string
+	RefreshToken              string
+	UserID                    string
+	EmailVerificationRequired bool
+	EmailSent                 bool
+	Message                   string
+}
+
+type EmailActionResult struct {
+	RequiresSelection bool
+	Candidates        []LoginCandidate
+	Message           string
 }
 
 type ModelConfig struct {
@@ -68,6 +172,7 @@ type TTSConfigUpdate struct {
 	ClearAPIKey bool
 }
 
+<<<<<<< HEAD
 type OAuthAccount struct {
 	ID           string
 	Email        string
@@ -76,6 +181,59 @@ type OAuthAccount struct {
 	RefreshToken string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+=======
+// ASRConfig is kept separately from TTS because providers often use different
+// credentials, request formats, and supported languages.
+type ASRConfig struct {
+	Provider  string
+	Model     string
+	BaseURL   string
+	APIKey    string
+	AppID     string
+	UpdatedAt time.Time
+}
+
+type ASRConfigView struct {
+	Provider      string
+	Model         string
+	BaseURL       string
+	HasAPIKey     bool
+	APIKeyPreview string
+	AppID         string
+	UpdatedAt     time.Time
+}
+
+type ASRConfigUpdate struct {
+	Provider    string
+	Model       string
+	BaseURL     string
+	APIKey      string
+	AppID       string
+	ClearAPIKey bool
+}
+
+type TranscriptResult struct {
+	Text              string
+	RequestedLanguage string
+	DetectedLanguage  string
+	DurationSeconds   int
+	Provider          string
+	Model             string
+}
+
+type VoiceProfile struct {
+	ID                string
+	UserID            string
+	Name              string
+	Prompt            string
+	Language          string
+	Provider          string
+	Model             string
+	PreviewAudioURL   string
+	Status            string
+	GenerationMessage string
+	CreatedAt         time.Time
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 type Dialogue struct {
@@ -114,20 +272,22 @@ type Character struct {
 }
 
 type Theater struct {
-	ID               string
-	UserID           string
-	Language         string
-	Topic            string
-	Difficulty       float64
-	Mode             string
-	Status           string
-	IsFavorite       bool
-	ShareCode        string
-	SceneDescription string
-	Characters       []Character
-	Dialogues        []Dialogue
-	QuizQuestions    []QuizQuestion
-	CreatedAt        time.Time
+	ID                 string
+	UserID             string
+	Language           string
+	Topic              string
+	Difficulty         float64
+	Mode               string
+	Status             string
+	GenerationProgress int
+	GenerationMessage  string
+	IsFavorite         bool
+	ShareCode          string
+	SceneDescription   string
+	Characters         []Character
+	Dialogues          []Dialogue
+	QuizQuestions      []QuizQuestion
+	CreatedAt          time.Time
 }
 
 type PracticeResult struct {
@@ -183,6 +343,9 @@ type ReadingMaterial struct {
 	AudioURL             string
 	AudioURLs            []string
 	AudioStatus          string
+	Status               string
+	GenerationProgress   int
+	GenerationMessage    string
 	VocabularyItems      []VocabularyItem
 	AssociationSentences []string
 	GrammarInsights      []GrammarInsight
@@ -208,17 +371,54 @@ type ReadingAnalysis struct {
 }
 
 type RoleplaySession struct {
-	ID            string
-	UserID        string
-	TheaterID     string
-	UserRole      string
-	TurnIndex     int
-	CurrentScore  int
-	Transcript    []Dialogue
-	Status        string
-	FinalFeedback string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                string
+	UserID            string
+	TheaterID         string
+	UserRole          string
+	TurnIndex         int
+	CurrentScore      int
+	Transcript        []Dialogue
+	Status            string
+	ProcessingMessage string
+	FinalFeedback     string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type WritingPrompt struct {
+	Title              string
+	Instructions       string
+	SuggestedWordCount int
+}
+
+type WritingEvaluation struct {
+	OverallScore      float64
+	GrammarScore      float64
+	VocabularyScore   float64
+	CoherenceScore    float64
+	TaskResponseScore float64
+	Strengths         []string
+	Issues            []string
+	Suggestions       []string
+	RevisedExcerpt    string
+	Summary           string
+}
+
+type WritingSession struct {
+	ID               string
+	UserID           string
+	Exam             string
+	TimeLimitSeconds int
+	Prompt           WritingPrompt
+	Essay            string
+	WordCount        int
+	Status           string
+	ProgressMessage  string
+	Evaluation       *WritingEvaluation
+	StartedAt        time.Time
+	SubmittedAt      time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type RoleplayTurnEval struct {

@@ -4,7 +4,8 @@ import { motion } from "framer-motion";
 import { Compass, Route, Scale, Sparkles } from "lucide-react";
 import { courses } from "../api";
 import { useAppStore } from "../store";
-import { calculateStageProgress } from "../xp";
+import { calculateLearningProgress, calculateStageProgress } from "../xp";
+import { AdSlot } from "../components/AdSlot";
 
 const stageModules = {
   CANTONESE: [
@@ -84,6 +85,10 @@ export function CoursesPage() {
     () => calculateStageProgress(totalXP, stageModules[language].length),
     [language, totalXP]
   );
+  const learningProgress = useMemo(
+    () => calculateLearningProgress(totalXP),
+    [totalXP]
+  );
 
   const learningStats = useMemo(() => {
     const completedCourses = list.filter((item) => item.isActive).length;
@@ -127,14 +132,14 @@ export function CoursesPage() {
 
             <div className="course-xp-panel">
               <div className="course-xp-headline">
-                <strong>Lv.{stageProgress.stageIndex + 1}</strong>
-                <small>总经验 {stageProgress.totalXP}</small>
+                <strong>Lv.{learningProgress.level}</strong>
+                <small>{learningProgress.rankLabel} · 总经验 {stageProgress.totalXP}</small>
               </div>
               <div className="course-progress-duo" aria-hidden>
                 <div>
                   <span>当前等级进度</span>
                   <div className="mini-progress">
-                    <motion.span initial={{ width: 0 }} animate={{ width: `${stageProgress.currentPercent}%` }} transition={{ duration: 0.7, ease: "easeOut" }} />
+                    <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.levelProgress}%` }} transition={{ duration: 0.7, ease: "easeOut" }} />
                   </div>
                 </div>
                 <div>
@@ -145,8 +150,8 @@ export function CoursesPage() {
                 </div>
               </div>
               <div className="course-xp-foot">
-                <small>当前阶段：{stageProgress.currentPercent}%</small>
-                <small>{stageProgress.stageIndex < stageModules[language].length - 1 ? `距下一阶段 ${stageProgress.nextLevelRemaining} XP` : "已达最高阶段"}</small>
+                <small>Lv.{learningProgress.level}：{learningProgress.levelProgress}%</small>
+                <small>{learningProgress.level < 999 ? `距下一等级 ${Math.max(0, learningProgress.xpToNextLevel - learningProgress.xpIntoLevel)} XP` : "已达最高等级"}</small>
               </div>
             </div>
           </div>
@@ -223,14 +228,16 @@ export function CoursesPage() {
               </div>
             </div>
             <div className="course-metric-card emphasis">
-              <small>统一 XP 阶段</small>
-              <strong>Lv.{stageProgress.stageIndex + 1}</strong>
+              <small>成长等级</small>
+              <strong>Lv.{learningProgress.level}</strong>
               <div className="mini-progress" aria-hidden>
-                <motion.span initial={{ width: 0 }} animate={{ width: `${stageProgress.currentPercent}%` }} transition={{ duration: 0.9, ease: "easeOut" }} />
+                <motion.span initial={{ width: 0 }} animate={{ width: `${learningProgress.levelProgress}%` }} transition={{ duration: 0.9, ease: "easeOut" }} />
               </div>
             </div>
           </div>
         </article>
+
+        <AdSlot placement="COURSES" />
 
         <div className="row">
           <button onClick={() => navigate("/generate")}>去生成剧场</button>

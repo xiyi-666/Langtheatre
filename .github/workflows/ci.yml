@@ -11,16 +11,20 @@ on:
 jobs:
   client:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: [commercial, open-source, mini-program]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm install
+      - run: npm ci
       - run: npm run lint --workspace apps/client
       - run: npm run typecheck --workspace apps/client
       # - run: npm run test --workspace apps/client  # 已无测试文件，暂时注释
-      - run: npm run build --workspace apps/client
+      - run: npm run build:${{ matrix.edition }} --workspace apps/client
 
   server:
     runs-on: ubuntu-latest

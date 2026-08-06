@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { Lightbulb, RotateCcw, Share2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAppStore } from "../store";
+import { AdSlot } from "../components/AdSlot";
 
 export function ResultPage() {
   const result = useAppStore((s) => s.result);
@@ -127,6 +128,8 @@ export function ResultPage() {
               <p>{result?.feedback ?? "你对场景上下文理解较稳定，建议继续进行角色扮演模式。"}</p>
               <p>说明：总经验统一以个人中心数据为准，页面学习指标仅用于过程反馈。</p>
             </article>
+
+            <AdSlot placement="RESULT" />
 
             {showMore ? (
               <motion.article

@@ -136,5 +136,5 @@ curl http://61.244.24.7/graphql
 
 检查桌面/移动端：
 
-- Windows / Linux / macOS / Android 构建产物默认请求 `http://61.244.24.7/graphql`
-- 若后续切换域名或 HTTPS，只需在 release workflow 或 `VITE_API_URL` 中统一修改
+- Windows / Linux / macOS / Android 构建必须显式设置 HTTPS 的 `VITE_API_URL`；缺失配置会在打包前失败
+- 发布工作流通过 `DESKTOP_API_URL` secret 注入受控 API 地址

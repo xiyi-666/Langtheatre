@@ -2,15 +2,23 @@ package httpserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+<<<<<<< HEAD
 	"os"
+=======
+	"strconv"
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	"strings"
 	"time"
 
 	"github.com/graphql-go/graphql"
+	"github.com/linguaquest/server/internal/analytics"
 	"github.com/linguaquest/server/internal/auth"
 	"github.com/linguaquest/server/internal/graph"
 )
@@ -26,8 +34,19 @@ type HealthResult struct {
 	Checks    map[string]string `json:"checks"`
 }
 
+<<<<<<< HEAD
 type OAuthAccountExporter interface {
 	ExportOAuthAccounts(provider string) (string, error)
+=======
+type PaymentNotifier interface {
+	HandleEpayNotification(values url.Values) error
+}
+
+type MuxOptions struct {
+	Security            SecurityOptions
+	Analytics           *analytics.Reporter
+	AnalyticsAdminToken string
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +60,22 @@ func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
+<<<<<<< HEAD
 func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Context) HealthResult, mediaDir string, oauthExporter OAuthAccountExporter) *http.ServeMux {
+=======
+func NewMux(schema graphql.Schema, jwtSecret string, paymentNotifier PaymentNotifier, healthFunc func(context.Context) HealthResult, optionValues ...SecurityOptions) *http.ServeMux {
+	security := SecurityOptions{}
+	if len(optionValues) > 0 {
+		security = optionValues[0]
+	}
+	return NewMuxWithOptions(schema, jwtSecret, paymentNotifier, healthFunc, MuxOptions{Security: security})
+}
+
+func NewMuxWithOptions(schema graphql.Schema, jwtSecret string, paymentNotifier PaymentNotifier, healthFunc func(context.Context) HealthResult, muxOptions MuxOptions) *http.ServeMux {
+	security := muxOptions.Security.normalized()
+	authLimiter := NewInMemoryRateLimiter(security.AuthRateLimitPerMinute, time.Minute)
+	aiLimiter := NewInMemoryRateLimiter(security.AIRequestRateLimitPerMinute, time.Minute)
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	mux := http.NewServeMux()
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		setCORSHeaders(w, r)
@@ -72,6 +106,7 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 	}
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/readyz", healthHandler)
+<<<<<<< HEAD
 	mediaDir = strings.TrimSpace(mediaDir)
 	if mediaDir != "" {
 		_ = os.MkdirAll(mediaDir, 0o755)
@@ -116,6 +151,28 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 			w.Header().Set("Content-Disposition", `attachment; filename="oauth-accounts.txt"`)
 			w.Header().Set("Cache-Control", "no-store")
 			_, _ = w.Write([]byte(text))
+=======
+	if paymentNotifier != nil {
+		mux.HandleFunc("/payments/easypay/notify", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet && r.Method != http.MethodPost {
+				http.Error(w, "only GET and POST are supported", http.StatusMethodNotAllowed)
+				return
+			}
+			if paymentNotifier == nil {
+				http.Error(w, "payment is unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "invalid payment callback", http.StatusBadRequest)
+				return
+			}
+			if err := paymentNotifier.HandleEpayNotification(r.Form); err != nil {
+				http.Error(w, "fail", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte("success"))
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 		})
 	}
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
@@ -128,9 +185,32 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 			http.Error(w, "only POST is supported", http.StatusMethodNotAllowed)
 			return
 		}
+		defer r.Body.Close()
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, security.GraphQLMaxBodyBytes))
+		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				http.Error(w, "request body is too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(w, "failed to read request body", http.StatusBadRequest)
+			return
+		}
 		var payload GraphQLRequest
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		if err := json.Unmarshal(body, &payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if len(payload.Query) > 64*1024 || strings.Count(payload.Query, "{") > 24 {
+			http.Error(w, "graphql query is too complex", http.StatusBadRequest)
+			return
+		}
+		if isSensitiveAuthOperation(payload.Query) && !authLimiter.Allow(clientIPFromRequest(r, security.TrustProxyHeaders)) {
+			http.Error(w, "authentication rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		if isAIRequestOperation(payload.Query) && !aiLimiter.Allow(clientIPFromRequest(r, security.TrustProxyHeaders)) {
+			http.Error(w, "AI request rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
 		ctx := withAuth(r.Context(), r.Header.Get("Authorization"), jwtSecret)
@@ -143,6 +223,66 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(result)
 	})
+	if muxOptions.Analytics != nil {
+		mux.HandleFunc("/telemetry/event", func(w http.ResponseWriter, r *http.Request) {
+			setCORSHeaders(w, r)
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			if r.Method != http.MethodPost {
+				http.Error(w, "only POST is supported", http.StatusMethodNotAllowed)
+				return
+			}
+			ctx := withAuth(r.Context(), r.Header.Get("Authorization"), jwtSecret)
+			if userID, _ := ctx.Value(graph.UserIDKey).(string); userID == "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			defer r.Body.Close()
+			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4096))
+			if err != nil {
+				http.Error(w, "invalid telemetry event", http.StatusBadRequest)
+				return
+			}
+			var event struct {
+				Category string `json:"category"`
+				Name     string `json:"name"`
+			}
+			if err = json.Unmarshal(body, &event); err != nil || !isAllowedTelemetryEvent(event.Category, event.Name) {
+				http.Error(w, "invalid telemetry event", http.StatusBadRequest)
+				return
+			}
+			event.Category = strings.ToUpper(strings.TrimSpace(event.Category))
+			event.Name = strings.TrimSpace(event.Name)
+			muxOptions.Analytics.RecordProductMetric(event.Category, event.Name)
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
+	if muxOptions.Analytics != nil && strings.TrimSpace(muxOptions.AnalyticsAdminToken) != "" {
+		mux.HandleFunc("/internal/analytics/daily", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.Error(w, "only GET is supported", http.StatusMethodNotAllowed)
+				return
+			}
+			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Analytics-Token")), []byte(muxOptions.AnalyticsAdminToken)) != 1 {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			fromDay, toDay, err := analyticsDateRange(muxOptions.Analytics.CurrentDay(), r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			report, err := muxOptions.Analytics.DailyReport(fromDay, toDay)
+			if err != nil {
+				http.Error(w, "failed to load analytics", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(report)
+		})
+	}
 	mux.HandleFunc("/media-proxy", func(w http.ResponseWriter, r *http.Request) {
 		setCORSHeaders(w, r)
 		if r.Method == http.MethodOptions {
@@ -168,8 +308,12 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 			http.Error(w, "unsupported url scheme", http.StatusBadRequest)
 			return
 		}
+		if err := validatePublicURL(r.Context(), target); err != nil {
+			http.Error(w, "upstream url is not allowed", http.StatusForbidden)
+			return
+		}
 
-		client := &http.Client{Timeout: 25 * time.Second}
+		client := newSafeMediaClient()
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target.String(), nil)
 		if err != nil {
 			http.Error(w, "failed to build upstream request", http.StatusBadGateway)
@@ -186,22 +330,164 @@ func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Con
 			http.Error(w, "upstream media unavailable", http.StatusBadGateway)
 			return
 		}
+		if resp.ContentLength > security.MediaProxyMaxBytes {
+			http.Error(w, "upstream media is too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, security.MediaProxyMaxBytes+1))
+		if err != nil {
+			http.Error(w, "failed to read upstream media", http.StatusBadGateway)
+			return
+		}
+		if int64(len(body)) > security.MediaProxyMaxBytes {
+			http.Error(w, "upstream media is too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 
 		contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 		if contentType == "" {
 			contentType = "application/octet-stream"
 		}
 		w.Header().Set("Content-Type", contentType)
-		if contentLength := strings.TrimSpace(resp.Header.Get("Content-Length")); contentLength != "" {
-			w.Header().Set("Content-Length", contentLength)
-		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		w.Header().Set("Cache-Control", "public, max-age=300")
-		if _, err = io.Copy(w, resp.Body); err != nil {
+		if _, err = w.Write(body); err != nil {
 			http.Error(w, "failed to stream media", http.StatusBadGateway)
 			return
 		}
 	})
 	return mux
+}
+
+func isSensitiveAuthOperation(query string) bool {
+	query = strings.ToLower(query)
+	for _, operation := range []string{
+		"logincandidates", "register", "login", "requestemailverification",
+		"verifyemail", "requestpasswordreset", "resetpassword", "requestusernamerecovery",
+	} {
+		if strings.Contains(query, operation) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAIRequestOperation(query string) bool {
+	query = strings.ToLower(query)
+	for _, operation := range []string{
+		"generatetheater", "generatereading", "createvoiceprofile", "startwritingsession",
+		"submitwritingsession", "startroleplay", "submitroleplayreply", "submitroleplayaudio", "endroleplay",
+	} {
+		if strings.Contains(query, operation) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowedTelemetryEvent(category string, name string) bool {
+	category = strings.ToUpper(strings.TrimSpace(category))
+	if category != analytics.MetricCategoryFeature && category != analytics.MetricCategoryClick {
+		return false
+	}
+	name = strings.TrimSpace(name)
+	if len(name) < 3 || len(name) > 64 {
+		return false
+	}
+	for _, char := range name {
+		if (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func analyticsDateRange(today string, fromValue string, toValue string) (string, string, error) {
+	fromDay := strings.TrimSpace(fromValue)
+	toDay := strings.TrimSpace(toValue)
+	if toDay == "" {
+		toDay = today
+	}
+	if fromDay == "" {
+		fromDay = toDay
+	}
+	from, err := time.Parse("2006-01-02", fromDay)
+	if err != nil {
+		return "", "", errors.New("from must use YYYY-MM-DD")
+	}
+	to, err := time.Parse("2006-01-02", toDay)
+	if err != nil {
+		return "", "", errors.New("to must use YYYY-MM-DD")
+	}
+	if from.After(to) || to.Sub(from) > 366*24*time.Hour {
+		return "", "", errors.New("date range must be ordered and within 366 days")
+	}
+	return fromDay, toDay, nil
+}
+
+func newSafeMediaClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		ip, err := resolvePublicHost(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+	}
+	return &http.Client{
+		Timeout:   25 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			return validatePublicURL(req.Context(), req.URL)
+		},
+	}
+}
+
+func validatePublicURL(ctx context.Context, target *url.URL) error {
+	if target == nil || target.Hostname() == "" {
+		return errors.New("missing upstream host")
+	}
+	_, err := resolvePublicHost(ctx, target.Hostname())
+	return err
+}
+
+func resolvePublicHost(ctx context.Context, host string) (net.IP, error) {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return nil, errors.New("local host is not allowed")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !isPublicIP(ip) {
+			return nil, errors.New("private address is not allowed")
+		}
+		return ip, nil
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil || len(addresses) == 0 {
+		return nil, errors.New("unable to resolve upstream host")
+	}
+	for _, address := range addresses {
+		if !isPublicIP(address.IP) {
+			return nil, errors.New("private address is not allowed")
+		}
+	}
+	return addresses[0].IP, nil
+}
+
+func isPublicIP(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	if ipv4 := ip.To4(); ipv4 != nil {
+		return !(ipv4[0] == 0 || ipv4[0] >= 224 || (ipv4[0] == 100 && ipv4[1]&0xc0 == 0x40) || (ipv4[0] == 192 && ipv4[1] == 0 && ipv4[2] == 0) || (ipv4[0] == 198 && (ipv4[1] == 18 || ipv4[1] == 19)) || (ipv4[0] == 192 && ipv4[1] == 0 && ipv4[2] == 2) || (ipv4[0] == 198 && ipv4[1] == 51 && ipv4[2] == 100) || (ipv4[0] == 203 && ipv4[1] == 0 && ipv4[2] == 113))
+	}
+	return true
 }
 
 func withAuth(ctx context.Context, authHeader string, jwtSecret string) context.Context {

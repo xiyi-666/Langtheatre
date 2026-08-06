@@ -41,15 +41,30 @@ go.work.sum
 
 # Local tool metadata
 .cursor/
+.codex/
+.ccw/
+.playwright-cli/
+.workflow/
 .spec-workflow/
 .playwright-mcp/
 .dev-logs/
 .workflow/
 tmp/
 profile-*.png
+output/
+
+# Generated local state
+**/*.tsbuildinfo
+**/*.db
+apps/server.env
 
 # Product requirement drafts (local only)
 demand/
 
 # Do not publish local GitHub automation/config
 .github/agents/
+.env
+apps/server/.env
+
+# Keep the payment redirect route contract test in version control.
+!apps/client/src/membershipRoutes.spec.ts

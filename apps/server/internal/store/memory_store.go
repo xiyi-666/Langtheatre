@@ -3,15 +3,18 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/linguaquest/server/internal/analytics"
 	"github.com/linguaquest/server/internal/domain"
 )
 
 type MemoryStore struct {
+<<<<<<< HEAD
 	mu       sync.RWMutex
 	users    map[string]domain.User
 	byEmail  map[string]string
@@ -21,35 +24,97 @@ type MemoryStore struct {
 	oauth    map[string]domain.OAuthAccount
 	model    domain.ModelConfig
 	tts      domain.TTSConfig
+=======
+	mu                  sync.RWMutex
+	users               map[string]domain.User
+	byEmail             map[string][]string
+	byUsername          map[string]string
+	authTokens          map[string]memoryAuthToken
+	theater             map[string]domain.Theater
+	readings            map[string]domain.ReadingMaterial
+	voices              map[string]domain.VoiceProfile
+	sessions            map[string]domain.RoleplaySession
+	writings            map[string]domain.WritingSession
+	orders              map[string]domain.PaymentOrder
+	billing             map[string]domain.BillingStatus
+	creditUses          map[string]memoryCreditUse
+	xpEvents            map[string]domain.XPEvent
+	modelUsageDaily     map[string]analytics.ModelUsage
+	productMetricsDaily map[string]analytics.ProductMetric
+	model               domain.ModelConfig
+	tts                 domain.TTSConfig
+	asr                 domain.ASRConfig
+}
+
+type memoryAuthToken struct {
+	UserID    string
+	Purpose   string
+	ExpiresAt time.Time
+}
+
+type memoryCreditUse struct {
+	UserID    string
+	Activity  string
+	SourceID  string
+	Amount    int
+	IsFree    bool
+	CreatedAt time.Time
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
+<<<<<<< HEAD
 		users:    map[string]domain.User{},
 		byEmail:  map[string]string{},
 		theater:  map[string]domain.Theater{},
 		readings: map[string]domain.ReadingMaterial{},
 		sessions: map[string]domain.RoleplaySession{},
 		oauth:    map[string]domain.OAuthAccount{},
+=======
+		users:               map[string]domain.User{},
+		byEmail:             map[string][]string{},
+		byUsername:          map[string]string{},
+		authTokens:          map[string]memoryAuthToken{},
+		theater:             map[string]domain.Theater{},
+		readings:            map[string]domain.ReadingMaterial{},
+		voices:              map[string]domain.VoiceProfile{},
+		sessions:            map[string]domain.RoleplaySession{},
+		writings:            map[string]domain.WritingSession{},
+		orders:              map[string]domain.PaymentOrder{},
+		billing:             map[string]domain.BillingStatus{},
+		creditUses:          map[string]memoryCreditUse{},
+		xpEvents:            map[string]domain.XPEvent{},
+		modelUsageDaily:     map[string]analytics.ModelUsage{},
+		productMetricsDaily: map[string]analytics.ProductMetric{},
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	}
 }
 
-func (s *MemoryStore) CreateUser(email string, passwordHash string) (domain.User, error) {
+func (s *MemoryStore) CreateUser(username string, email string, passwordHash string, emailVerified bool) (domain.User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.byEmail[email]; exists {
-		return domain.User{}, errors.New("email already exists")
+	email = strings.ToLower(strings.TrimSpace(email))
+	usernameKey := strings.ToLower(strings.TrimSpace(username))
+	if _, exists := s.byUsername[usernameKey]; exists {
+		return domain.User{}, errors.New("username already exists")
+	}
+	if len(s.byEmail[email]) >= 3 {
+		return domain.User{}, errors.New("email account limit reached")
 	}
 	id := uuid.NewString()
 	user := domain.User{
-		ID:           id,
-		Email:        email,
-		PasswordHash: passwordHash,
-		TotalXP:      0,
-		CreatedAt:    time.Now(),
+		ID:            id,
+		Username:      username,
+		Email:         email,
+		EmailVerified: emailVerified,
+		PasswordHash:  passwordHash,
+		TotalXP:       0,
+		CreatedAt:     time.Now(),
 	}
 	s.users[id] = user
-	s.byEmail[email] = id
+	s.byEmail[email] = append(s.byEmail[email], id)
+	s.byUsername[usernameKey] = id
 	return user, nil
 }
 
@@ -101,6 +166,7 @@ func (s *MemoryStore) SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, 
 	return s.tts, nil
 }
 
+<<<<<<< HEAD
 func (s *MemoryStore) SaveOAuthAccount(account domain.OAuthAccount) domain.OAuthAccount {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -123,12 +189,49 @@ func (s *MemoryStore) ListOAuthAccounts(provider string) ([]domain.OAuthAccount,
 		result = append(result, account)
 	}
 	return result, nil
+=======
+func (s *MemoryStore) GetASRConfig() (domain.ASRConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.asr.Provider == "" && s.asr.BaseURL == "" && s.asr.APIKey == "" {
+		return domain.ASRConfig{}, errors.New("asr config not found")
+	}
+	return s.asr, nil
+}
+
+func (s *MemoryStore) SaveASRConfig(config domain.ASRConfig) (domain.ASRConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.asr = config
+	return s.asr, nil
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func (s *MemoryStore) GetUserByEmail(email string) (domain.User, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	id, ok := s.byEmail[email]
+	ids := s.byEmail[strings.ToLower(strings.TrimSpace(email))]
+	if len(ids) == 0 {
+		return domain.User{}, errors.New("user not found")
+	}
+	return s.users[ids[0]], nil
+}
+
+func (s *MemoryStore) ListUsersByEmail(email string) ([]domain.User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := s.byEmail[strings.ToLower(strings.TrimSpace(email))]
+	users := make([]domain.User, 0, len(ids))
+	for _, id := range ids {
+		users = append(users, s.users[id])
+	}
+	return users, nil
+}
+
+func (s *MemoryStore) GetUserByUsername(username string) (domain.User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, ok := s.byUsername[strings.ToLower(strings.TrimSpace(username))]
 	if !ok {
 		return domain.User{}, errors.New("user not found")
 	}
@@ -143,6 +246,90 @@ func (s *MemoryStore) GetUserByID(id string) (domain.User, error) {
 		return domain.User{}, errors.New("user not found")
 	}
 	return user, nil
+}
+
+func (s *MemoryStore) UpdateUserPassword(userID string, passwordHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[userID]
+	if !ok {
+		return errors.New("user not found")
+	}
+	user.PasswordHash = passwordHash
+	s.users[userID] = user
+	return nil
+}
+
+func (s *MemoryStore) SetUserEmailVerified(userID string, verified bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.users[userID]
+	if !ok {
+		return errors.New("user not found")
+	}
+	user.EmailVerified = verified
+	s.users[userID] = user
+	return nil
+}
+
+func (s *MemoryStore) CreateAuthToken(userID string, purpose string, tokenHash string, expiresAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hash, token := range s.authTokens {
+		if token.UserID == userID && token.Purpose == purpose {
+			delete(s.authTokens, hash)
+		}
+	}
+	s.authTokens[tokenHash] = memoryAuthToken{UserID: userID, Purpose: purpose, ExpiresAt: expiresAt}
+	return nil
+}
+
+func (s *MemoryStore) ConsumeAuthToken(tokenHash string, purpose string, now time.Time) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	token, ok := s.authTokens[tokenHash]
+	if !ok || token.Purpose != purpose || !token.ExpiresAt.After(now) {
+		return "", errors.New("token not found")
+	}
+	delete(s.authTokens, tokenHash)
+	return token.UserID, nil
+}
+
+func (s *MemoryStore) SaveVoiceProfile(profile domain.VoiceProfile) (domain.VoiceProfile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if strings.TrimSpace(profile.ID) == "" || strings.TrimSpace(profile.UserID) == "" {
+		return domain.VoiceProfile{}, errors.New("voice profile id and user id are required")
+	}
+	if profile.CreatedAt.IsZero() {
+		profile.CreatedAt = time.Now()
+	}
+	s.voices[profile.ID] = profile
+	return profile, nil
+}
+
+func (s *MemoryStore) ListVoiceProfiles(userID string) ([]domain.VoiceProfile, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	profiles := make([]domain.VoiceProfile, 0)
+	for _, profile := range s.voices {
+		if profile.UserID == userID {
+			profiles = append(profiles, profile)
+		}
+	}
+	sort.Slice(profiles, func(i int, j int) bool { return profiles[i].CreatedAt.After(profiles[j].CreatedAt) })
+	return profiles, nil
+}
+
+func (s *MemoryStore) DeleteVoiceProfile(userID string, profileID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	profile, ok := s.voices[profileID]
+	if !ok || profile.UserID != userID {
+		return errors.New("voice profile not found")
+	}
+	delete(s.voices, profileID)
+	return nil
 }
 
 func (s *MemoryStore) SaveTheater(theater domain.Theater) (domain.Theater, error) {
@@ -279,6 +466,17 @@ func (s *MemoryStore) SaveReadingMaterial(material domain.ReadingMaterial) (doma
 	return material, nil
 }
 
+func (s *MemoryStore) UpdateReadingMaterialExisting(material domain.ReadingMaterial) (domain.ReadingMaterial, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.readings[material.ID]
+	if !ok || current.UserID != material.UserID {
+		return domain.ReadingMaterial{}, errors.New("reading material not found")
+	}
+	s.readings[material.ID] = material
+	return material, nil
+}
+
 func (s *MemoryStore) GetReadingMaterial(id string, userID string) (domain.ReadingMaterial, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -305,6 +503,17 @@ func (s *MemoryStore) ListReadingMaterialsByUser(userID string, exam string) ([]
 	return result, nil
 }
 
+func (s *MemoryStore) DeleteReadingMaterial(userID string, materialID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	material, ok := s.readings[materialID]
+	if !ok || material.UserID != userID {
+		return errors.New("reading material not found")
+	}
+	delete(s.readings, materialID)
+	return nil
+}
+
 func (s *MemoryStore) CreateRoleplaySession(session domain.RoleplaySession) (domain.RoleplaySession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -327,4 +536,59 @@ func (s *MemoryStore) UpdateRoleplaySession(session domain.RoleplaySession) (dom
 	defer s.mu.Unlock()
 	s.sessions[session.ID] = session
 	return session, nil
+}
+
+func (s *MemoryStore) SaveWritingSession(session domain.WritingSession) (domain.WritingSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if session.ID == "" || session.UserID == "" {
+		return domain.WritingSession{}, errors.New("writing session id and user id are required")
+	}
+	s.writings[session.ID] = session
+	return session, nil
+}
+
+func (s *MemoryStore) UpdateWritingSessionExisting(session domain.WritingSession) (domain.WritingSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, ok := s.writings[session.ID]
+	if !ok || current.UserID != session.UserID {
+		return domain.WritingSession{}, errors.New("writing session not found")
+	}
+	s.writings[session.ID] = session
+	return session, nil
+}
+
+func (s *MemoryStore) GetWritingSession(sessionID string, userID string) (domain.WritingSession, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	item, ok := s.writings[sessionID]
+	if !ok || item.UserID != userID {
+		return domain.WritingSession{}, errors.New("writing session not found")
+	}
+	return item, nil
+}
+
+func (s *MemoryStore) ListWritingSessions(userID string) ([]domain.WritingSession, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]domain.WritingSession, 0)
+	for _, item := range s.writings {
+		if item.UserID == userID {
+			result = append(result, item)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt.After(result[j].CreatedAt) })
+	return result, nil
+}
+
+func (s *MemoryStore) DeleteWritingSession(userID string, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.writings[sessionID]
+	if !ok || session.UserID != userID {
+		return errors.New("writing session not found")
+	}
+	delete(s.writings, sessionID)
+	return nil
 }

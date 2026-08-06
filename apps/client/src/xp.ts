@@ -57,3 +57,46 @@ export function calculateStageProgress(totalXP: number, totalStages: number): St
     nextLevelRemaining: Math.max(0, nextTarget - safeTotalXP)
   };
 }
+
+export const MAX_LEARNING_LEVEL = 999;
+
+export type LearningProgress = {
+  level: number;
+  xpIntoLevel: number;
+  xpToNextLevel: number;
+  levelProgress: number;
+  rankCode: string;
+  rankLabel: string;
+};
+
+function xpForNextLevel(level: number): number {
+  if (level < 100) return 6 + Math.floor((level - 1) / 25);
+  if (level < 300) return 10 + Math.floor((level - 100) / 20);
+  if (level < 600) return 20 + Math.floor((level - 300) / 18);
+  return 38 + Math.floor((level - 600) / 16);
+}
+
+export function getLearningRank(level: number): Pick<LearningProgress, "rankCode" | "rankLabel"> {
+  if (level >= 999) return { rankCode: "LEGEND", rankLabel: "Lingua 传说" };
+  if (level >= 900) return { rankCode: "SOVEREIGN", rankLabel: "至尊领航者" };
+  if (level >= 800) return { rankCode: "CELESTIAL", rankLabel: "星耀宗师" };
+  if (level >= 650) return { rankCode: "MASTER", rankLabel: "语言大师" };
+  if (level >= 500) return { rankCode: "EXPERT", rankLabel: "表达专家" };
+  if (level >= 350) return { rankCode: "SCHOLAR", rankLabel: "语境学者" };
+  if (level >= 200) return { rankCode: "ADEPT", rankLabel: "进阶研习者" };
+  if (level >= 100) return { rankCode: "VOYAGER", rankLabel: "表达旅人" };
+  if (level >= 50) return { rankCode: "EXPLORER", rankLabel: "语言行者" };
+  return { rankCode: "NOVICE", rankLabel: "初学探索者" };
+}
+
+export function calculateLearningProgress(totalXP: number): LearningProgress {
+  let remaining = Math.max(0, totalXP);
+  for (let level = 1; level < MAX_LEARNING_LEVEL; level += 1) {
+    const required = xpForNextLevel(level);
+    if (remaining < required) {
+      return { level, xpIntoLevel: remaining, xpToNextLevel: required, levelProgress: Math.floor((remaining * 100) / required), ...getLearningRank(level) };
+    }
+    remaining -= required;
+  }
+  return { level: MAX_LEARNING_LEVEL, xpIntoLevel: 0, xpToNextLevel: 0, levelProgress: 100, ...getLearningRank(MAX_LEARNING_LEVEL) };
+}

@@ -320,7 +320,11 @@ export function TheaterPage() {
       <main className="page-center">
         <section className="card" style={{ maxWidth: 560 }}>
           <h2 style={{ marginBottom: 8 }}>剧场生成中</h2>
-          <p style={{ margin: 0 }}>文字内容已经准备完成，正在等待语音合成。完成后当前页面会自动刷新。</p>
+			  <p style={{ margin: 0 }}>{theater.generationMessage || "正在准备剧场内容。完成后当前页面会自动刷新。"}</p>
+			  <div className="task-progress" style={{ marginTop: 16 }}>
+				<div className="task-progress-head"><span>剧场生成进度</span><strong>{theater.generationProgress ?? 0}%</strong></div>
+				<div className="progress-bar"><div className="progress-value" style={{ width: `${Math.max(4, theater.generationProgress ?? 0)}%` }} /></div>
+			  </div>
         </section>
       </main>
     );

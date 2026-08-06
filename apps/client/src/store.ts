@@ -17,6 +17,7 @@ type AppState = {
   setRoleplay: (roleplay?: RoleplaySession) => void;
   setResult: (result?: PracticeResult) => void;
   setLoading: (loading: boolean) => void;
+  clearSession: () => void;
   refreshUserXP: () => Promise<User | undefined>;
 };
 
@@ -31,6 +32,15 @@ export const useAppStore = create<AppState>((set) => ({
   setRoleplay: (roleplay) => set({ roleplay }),
   setResult: (result) => set({ result }),
   setLoading: (loading) => set({ loading }),
+  clearSession: () => set({
+    user: undefined,
+    theater: undefined,
+    theaters: [],
+    courses: [],
+    roleplay: undefined,
+    result: undefined,
+    loading: false
+  }),
   refreshUserXP: async () => {
     try {
       const profile = await me();

@@ -17,11 +17,12 @@ func New(addr string) *Client {
 	}
 }
 
-func (c *Client) SetRefreshToken(ctx context.Context, userID string, token string) error {
-	if token == "" {
+// SetRefreshToken stores a SHA-256 hash, never the bearer refresh token itself.
+func (c *Client) SetRefreshToken(ctx context.Context, userID string, tokenHash string) error {
+	if tokenHash == "" {
 		return c.raw.Del(ctx, "refresh:"+userID).Err()
 	}
-	return c.raw.Set(ctx, "refresh:"+userID, token, 7*24*time.Hour).Err()
+	return c.raw.Set(ctx, "refresh:"+userID, tokenHash, 7*24*time.Hour).Err()
 }
 
 func (c *Client) GetRefreshToken(ctx context.Context, userID string) (string, error) {

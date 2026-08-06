@@ -1,8 +1,10 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
-import { MessageSquare, Mic2, PlayCircle, SquareCheckBig } from "lucide-react";
-import { endRoleplay, startRoleplay, submitRoleplayReply } from "../api";
+import { MessageSquare, Mic2, PlayCircle, Square, SquareCheckBig, Volume2 } from "lucide-react";
+import { endRoleplay, getRoleplaySession, getTheater, startRoleplay, submitRoleplayAudio, submitRoleplayReply } from "../api";
+import { AICreditCostNotice } from "../components/AICreditCostNotice";
+import { recordingToWavDataURL } from "../audioRecorder";
 import { useAppStore } from "../store";
 
 export function RoleplayPage() {
@@ -14,6 +16,13 @@ export function RoleplayPage() {
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showZhSubtitle, setShowZhSubtitle] = useState(true);
+  const [language, setLanguage] = useState("CANTONESE");
+  const [isRecording, setIsRecording] = useState(false);
+  const [voiceMessage, setVoiceMessage] = useState("");
+  const recorderRef = useRef<MediaRecorder>();
+  const chunksRef = useRef<Blob[]>([]);
+  const roleplayID = roleplay?.id;
+  const roleplayProcessing = roleplay?.status === "PROCESSING";
   const navigate = useNavigate();
   const latestEvaluationText = useMemo(() => {
     if (!roleplay?.transcript?.length) return "";
@@ -33,6 +42,14 @@ export function RoleplayPage() {
     }
     return "";
   }, [roleplay]);
+
+  useEffect(() => {
+    if (!roleplayID || !roleplayProcessing) return;
+    const timer = window.setInterval(() => {
+      void getRoleplaySession(roleplayID).then(setRoleplay).catch((error) => console.error("refresh roleplay failed", error));
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [roleplayID, roleplayProcessing, setRoleplay]);
 
   const parsedEvaluation = useMemo(() => {
     if (!latestEvaluationText) {
@@ -70,11 +87,43 @@ export function RoleplayPage() {
   async function handleStart() {
     try {
       const userRole = (user?.nickname || user?.email?.split("@")[0] || "Learner").trim();
-      const session = await startRoleplay(theaterId, userRole);
+      const [session, theater] = await Promise.all([startRoleplay(theaterId, userRole), getTheater(theaterId)]);
+      setLanguage(theater.language);
       setRoleplay(session);
     } catch (e) {
       console.error("start roleplay failed", e);
     }
+  }
+
+  async function sendRecordedAudio(recording: Blob) {
+    if (!roleplay) return;
+    setSubmitting(true);
+    setVoiceMessage("正在转换录音并提交识别…");
+    try {
+      const audioDataUrl = await recordingToWavDataURL(recording);
+      const updated = await submitRoleplayAudio(roleplay.id, audioDataUrl, language);
+      setRoleplay(updated);
+      setVoiceMessage("已提交后台识别，完成后会自动显示文字与语音回复。");
+    } catch (error) {
+      console.error("submit roleplay audio failed", error);
+      setVoiceMessage((error as Error).message || "语音提交失败，请检查麦克风与 ASR 配置。");
+    } finally { setSubmitting(false); }
+  }
+
+  async function handleRecordToggle() {
+    if (!roleplay || submitting) return;
+    if (isRecording) { recorderRef.current?.stop(); return; }
+    setVoiceMessage("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      chunksRef.current = [];
+      recorder.ondataavailable = (event) => { if (event.data.size > 0) chunksRef.current.push(event.data); };
+      recorder.onstop = () => { stream.getTracks().forEach((track) => track.stop()); setIsRecording(false); void sendRecordedAudio(new Blob(chunksRef.current, { type: mimeType })); };
+      recorderRef.current = recorder; recorder.start(); setIsRecording(true); setVoiceMessage("录音中，完成后再次点击结束。建议控制在 90 秒以内。");
+      window.setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, 90000);
+    } catch (error) { console.error("start voice recording failed", error); setVoiceMessage("无法使用麦克风。请允许权限后重试，或改用文字输入。"); }
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -108,9 +157,10 @@ export function RoleplayPage() {
       <section className="card">
         <h2>角色扮演模式</h2>
         <p>按回合推进对话，系统会持续评估你的上下文匹配与表达质量。</p>
+        <AICreditCostNotice action="ROLEPLAY_TURN" />
         <div className="row">
           <button onClick={handleStart}><PlayCircle size={16} /> 开始会话</button>
-          <button onClick={handleEnd} disabled={!roleplay}><SquareCheckBig size={16} /> 结束会话</button>
+          <button onClick={handleEnd} disabled={!roleplay || roleplay.status === "PROCESSING"}><SquareCheckBig size={16} /> 结束会话</button>
           <button className="btn-ghost" onClick={() => setShowZhSubtitle((value) => !value)}>
             {showZhSubtitle ? "隐藏简体中文字幕" : "显示简体中文字幕"}
           </button>
@@ -121,7 +171,7 @@ export function RoleplayPage() {
             <aside className="floating-panel">
               <h3>会话状态</h3>
               <p>当前评分：<strong className="score-pulse">{roleplay.currentScore}</strong></p>
-              <p>状态：{roleplay.status}</p>
+              <p>状态：{roleplay.status}{roleplay.processingMessage ? ` · ${roleplay.processingMessage}` : ""}</p>
               <p>回合：{roleplay.turnIndex + 1}</p>
               <p><Mic2 size={14} /> 建议每轮控制在 1-2 句，保持场景连贯。</p>
             </aside>
@@ -136,6 +186,7 @@ export function RoleplayPage() {
                   animate={{ opacity: 1, y: 0 }}
                 >
                   <strong>{item.speaker}</strong> {item.text}
+                  {item.audioUrl ? <audio className="roleplay-audio" controls preload="none" src={item.audioUrl}><Volume2 size={14} /> 语音回复</audio> : null}
                   {showZhSubtitle && item.speaker === "AI-Role" && item.zhSubtitle ? (
                     <p style={{ margin: "4px 0 0", fontSize: 13, opacity: 0.8 }}>{item.zhSubtitle}</p>
                   ) : null}
@@ -144,9 +195,13 @@ export function RoleplayPage() {
               </ul>
               <form onSubmit={handleSubmit} className="row" style={{ marginTop: 10 }}>
                 <input value={text} onChange={(e) => setText(e.target.value)} placeholder="输入你的回复" />
-                <button type="submit" disabled={submitting}>{submitting ? "提交中..." : "提交回复"}</button>
+                <button type="submit" disabled={submitting || roleplay.status === "PROCESSING"}>{submitting ? "提交中..." : "提交回复"}</button>
+                <button type="button" className={isRecording ? "btn-danger" : "btn-ghost"} onClick={handleRecordToggle} disabled={submitting || roleplay.status === "PROCESSING"}>
+                  {isRecording ? <Square size={16} /> : <Mic2 size={16} />}{isRecording ? "结束录音" : "语音回复"}
+                </button>
               </form>
-              <p><MessageSquare size={14} /> 回答后系统会生成下一句并更新评分。</p>
+              <p><MessageSquare size={14} /> 文字回答即时提交；语音回答将依次完成 ASR、AI 续聊和 TTS 合成。</p>
+              {voiceMessage ? <p className="muted-note">{voiceMessage}</p> : null}
               {latestEvaluationText ? (
                 <article className="stage-banner" style={{ marginTop: 8 }}>
                   <strong>即时评估</strong>

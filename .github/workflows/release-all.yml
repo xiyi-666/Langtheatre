@@ -52,8 +52,9 @@ jobs:
             platform: macos
             artifact_name: tauri-macos
     env:
-      VITE_API_URL: http://61.244.24.7/graphql
+      VITE_API_URL: ${{ secrets.DESKTOP_API_URL }}
       VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+      VITE_APP_EDITION: MINI_PROGRAM
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -89,12 +90,12 @@ jobs:
       - name: Build Linux bundle
         if: matrix.platform == 'linux'
         working-directory: apps/client
-        run: npx tauri build --bundles appimage,deb
+        run: npm run tauri:validate-api-url && npx tauri build --bundles appimage,deb
 
       - name: Build Windows bundle
         if: matrix.platform == 'windows'
         working-directory: apps/client
-        run: npx tauri build --bundles nsis
+        run: npm run tauri:validate-api-url && npx tauri build --bundles nsis
 
       - name: Build macOS bundle
         if: matrix.platform == 'macos'
@@ -112,8 +113,9 @@ jobs:
     permissions:
       contents: read
     env:
-      VITE_API_URL: http://61.244.24.7/graphql
+      VITE_API_URL: ${{ secrets.DESKTOP_API_URL }}
       VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+      VITE_APP_EDITION: MINI_PROGRAM
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -248,9 +250,9 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-server
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_docker_latest == 'true' }}
-            type=sha,format=short,prefix=sha-
-            type=ref,event=tag
+            type=raw,value=mini-program
+            type=sha,format=short,prefix=mini-
+            type=ref,event=tag,prefix=mini-
 
       - name: Build and push server image
         uses: docker/build-push-action@v6
@@ -270,9 +272,9 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-client
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_docker_latest == 'true' }}
-            type=sha,format=short,prefix=sha-
-            type=ref,event=tag
+            type=raw,value=mini-program
+            type=sha,format=short,prefix=mini-
+            type=ref,event=tag,prefix=mini-
 
       - name: Build and push client image
         uses: docker/build-push-action@v6
@@ -286,6 +288,7 @@ jobs:
             VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
           cache-from: type=gha,scope=linguaquest-client
           cache-to: type=gha,mode=max,scope=linguaquest-client
+            VITE_APP_EDITION=MINI_PROGRAM
           tags: ${{ steps.meta-client.outputs.tags }}
           labels: ${{ steps.meta-client.outputs.labels }}
 
@@ -369,8 +372,8 @@ jobs:
           body: |
             Release: ${{ env.RELEASE_TAG_NAME }}
 
-            Default API endpoint:
-            - http://61.244.24.7/graphql
+            API endpoint:
+            - Configured from the DESKTOP_API_URL repository secret (HTTPS required).
 
             Assets:
             - Linux (.AppImage / .deb)

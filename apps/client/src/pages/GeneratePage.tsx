@@ -1,9 +1,11 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Clapperboard, Compass, Languages, Sparkles } from "lucide-react";
-import { generateTheater, getTheater } from "../api";
+import { generateTheater, getTheater, getVoiceProfiles } from "../api";
+import { AICreditCostNotice } from "../components/AICreditCostNotice";
 import { useAppStore } from "../store";
+import type { VoiceProfile } from "../types";
 
 const GENERATION_STATUS_STEPS = [
   {
@@ -33,6 +35,16 @@ const GENERATION_PROGRESS_CAP = 94;
 const GENERATION_AVERAGE_DURATION_MS = 70000;
 const GENERATION_STATUS_MILESTONES = [0, 0.18, 0.48, 0.82] as const;
 const THEATER_STATUS_POLL_MS = 1500;
+
+export function parseDifficultyText(value: string): { value?: number; error?: string } {
+  const normalized = value.trim();
+  if (!normalized) return { error: "请输入难度。" };
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) return { error: "难度必须是数字。" };
+  const difficulty = Number(normalized);
+  if (difficulty < 4 || difficulty > 8) return { error: "难度需在 4.0–8.0 之间。" };
+  if (!Number.isInteger((difficulty - 4) * 2)) return { error: "难度请按 0.5 为间隔填写。" };
+  return { value: difficulty };
+}
 
 function resolveGenerationStatusIndex(progressRatio: number): number {
   for (let index = GENERATION_STATUS_MILESTONES.length - 1; index >= 0; index -= 1) {
@@ -107,8 +119,12 @@ export function GeneratePage() {
   const initialSeed = stageTopicSeeds[presetLanguage][Math.min(presetStage, stageTopicSeeds[presetLanguage].length - 1)]?.[0]
     ?? routeMap[presetLanguage].topicSeeds[0];
   const [topic, setTopic] = useState(presetTopic || initialSeed);
-  const [difficulty, setDifficulty] = useState(5.5);
+  const [difficultyText, setDifficultyText] = useState("5.5");
+  const [difficultyError, setDifficultyError] = useState<string | null>(null);
   const [mode, setMode] = useState<"LISTENING" | "ROLEPLAY" | "APPRECIATION">("LISTENING");
+  const [voiceMode, setVoiceMode] = useState<"AUTO" | "LIBRARY">("AUTO");
+  const [voiceProfiles, setVoiceProfiles] = useState<VoiceProfile[]>([]);
+  const [selectedVoiceProfileIds, setSelectedVoiceProfileIds] = useState<string[]>([]);
   const [progress, setProgress] = useState(0);
   const [statusIndex, setStatusIndex] = useState(0);
   const [pendingTheaterId, setPendingTheaterId] = useState<string | null>(null);
@@ -117,6 +133,7 @@ export function GeneratePage() {
   const setLoading = useAppStore((s) => s.setLoading);
   const setTheater = useAppStore((s) => s.setTheater);
   const navigate = useNavigate();
+  const difficultyInputRef = useRef<HTMLInputElement>(null);
 
   const routeInfo = useMemo(() => routeMap[language], [language]);
   const stageSeeds = useMemo(() => {
@@ -124,6 +141,22 @@ export function GeneratePage() {
     const index = Math.min(activeStage, langSeeds.length - 1);
     return langSeeds[index] ?? routeMap[language].topicSeeds;
   }, [activeStage, language]);
+  const readyVoiceProfiles = useMemo(
+    () => voiceProfiles.filter((profile) => profile.status === "READY" && profile.language === language),
+    [language, voiceProfiles]
+  );
+
+  useEffect(() => {
+    let active = true;
+    void getVoiceProfiles()
+      .then((profiles) => {
+        if (active) setVoiceProfiles(profiles);
+      })
+      .catch((error) => console.error("load voice profiles failed", error));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!loading) {
@@ -201,9 +234,26 @@ export function GeneratePage() {
     setGenerationError("");
     setPendingTheaterId(null);
     setStatusIndex(0);
+    const parsedDifficulty = parseDifficultyText(difficultyText);
+    if (parsedDifficulty.error || parsedDifficulty.value === undefined) {
+      setDifficultyError(parsedDifficulty.error ?? "请输入有效难度。");
+      difficultyInputRef.current?.focus();
+      return;
+    }
+    if (voiceMode === "LIBRARY" && selectedVoiceProfileIds.length === 0) {
+      setGenerationError("请至少选择一个已完成的角色音色，或改为自动生成音色。");
+      return;
+    }
     setLoading(true);
     try {
-      const theater = await generateTheater({ language, topic, difficulty, mode });
+      const theater = await generateTheater({
+        language,
+        topic,
+        difficulty: parsedDifficulty.value,
+        mode,
+        voiceMode,
+        voiceProfileIds: voiceMode === "LIBRARY" ? selectedVoiceProfileIds : []
+      });
       setTheater(theater);
       if (theater.status === "READY") {
         setProgress(100);
@@ -224,6 +274,18 @@ export function GeneratePage() {
     }
   }
 
+  function toggleVoiceProfile(profileID: string) {
+    setSelectedVoiceProfileIds((current) => {
+      if (current.includes(profileID)) return current.filter((id) => id !== profileID);
+      if (current.length >= 3) {
+        setGenerationError("一次最多为前三个角色分配 3 个音色。");
+        return current;
+      }
+      setGenerationError("");
+      return [...current, profileID];
+    });
+  }
+
   return (
     <main className="page-center">
       <motion.section className="card route-shell stage-shell" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}>
@@ -241,6 +303,7 @@ export function GeneratePage() {
                   setLanguage("CANTONESE");
                   setActiveStage(0);
                   setTopic(stageTopicSeeds.CANTONESE[0][0]);
+                  setSelectedVoiceProfileIds([]);
                 }}
               >
                 粤语
@@ -252,6 +315,7 @@ export function GeneratePage() {
                   setLanguage("ENGLISH");
                   setActiveStage(0);
                   setTopic(stageTopicSeeds.ENGLISH[0][0]);
+                  setSelectedVoiceProfileIds([]);
                 }}
               >
                 英语
@@ -290,13 +354,31 @@ export function GeneratePage() {
             <label style={{ minWidth: 130 }}>
               <span>难度</span>
               <input
+                ref={difficultyInputRef}
                 type="number"
                 step="0.5"
                 min={4}
                 max={8}
-                value={difficulty}
-                onChange={(e) => setDifficulty(Number(e.target.value))}
+                inputMode="decimal"
+                value={difficultyText}
+                aria-invalid={Boolean(difficultyError)}
+                aria-describedby="difficulty-hint difficulty-error"
+                onChange={(e) => {
+                  setDifficultyText(e.target.value);
+                  setDifficultyError(null);
+                }}
+                onBlur={() => {
+                  const parsedDifficulty = parseDifficultyText(difficultyText);
+                  if (parsedDifficulty.error || parsedDifficulty.value === undefined) {
+                    setDifficultyError(parsedDifficulty.error ?? "请输入有效难度。");
+                    return;
+                  }
+                  setDifficultyText(parsedDifficulty.value.toFixed(1));
+                  setDifficultyError(null);
+                }}
               />
+              <small id="difficulty-hint">4.0–8.0，每次 0.5</small>
+              {difficultyError ? <span id="difficulty-error" className="field-error" role="alert">{difficultyError}</span> : null}
             </label>
             <label style={{ minWidth: 160 }}>
               <span>模式</span>
@@ -308,6 +390,38 @@ export function GeneratePage() {
             </label>
           </div>
 
+          <section className="voice-selection-panel" aria-label="剧场角色音色">
+            <div className="voice-selection-head">
+              <div>
+                <strong>角色音色</strong>
+                <p>可由系统自动匹配，或复用你在个人中心设计并保存的角色音色。</p>
+              </div>
+              <div className="route-tabs" role="radiogroup" aria-label="音色来源">
+                <button type="button" className={voiceMode === "AUTO" ? "route-tab active" : "route-tab"} onClick={() => setVoiceMode("AUTO")}>自动生成</button>
+                <button type="button" className={voiceMode === "LIBRARY" ? "route-tab active" : "route-tab"} onClick={() => setVoiceMode("LIBRARY")}>从音色库选择</button>
+              </div>
+            </div>
+            {voiceMode === "LIBRARY" ? (
+              readyVoiceProfiles.length > 0 ? (
+                <div className="voice-profile-choice-grid">
+                  {readyVoiceProfiles.map((profile) => {
+                    const selected = selectedVoiceProfileIds.includes(profile.id);
+                    return (
+                      <button key={profile.id} type="button" className={selected ? "voice-profile-choice active" : "voice-profile-choice"} onClick={() => toggleVoiceProfile(profile.id)} aria-pressed={selected}>
+                        <strong>{profile.name}</strong>
+                        <small>{profile.prompt}</small>
+                        <span>{selected ? `角色 ${selectedVoiceProfileIds.indexOf(profile.id) + 1}` : "点击分配角色"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="voice-library-empty">当前语言没有可用音色。<button type="button" className="text-button" onClick={() => navigate("/voices/create")}>创建音色</button> 后可返回这里分配角色。</p>
+              )
+            ) : null}
+          </section>
+
+          <AICreditCostNotice action="THEATER_GENERATION" />
           <div className="row" style={{ marginTop: 14 }}>
             <button type="submit" disabled={loading}>
               {loading ? "剧场生成中..." : "开始生成剧场"}

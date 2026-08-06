@@ -143,6 +143,32 @@ func (t *APITTS) Synthesize(ctx context.Context, text string, language string, v
 	}
 }
 
+// DesignVoice creates a reusable Xiaomi VoiceDesign sample. The returned data URL
+// is persisted by the service as a voice-library profile and later passed to
+// Xiaomi VoiceClone for consistent character speech.
+func (t *APITTS) DesignVoice(ctx context.Context, prompt string, language string) (string, error) {
+	config := t.GetTTSConfig()
+	if !strings.EqualFold(config.Provider, ttsProviderXiaomi) {
+		return "", errors.New("voice design requires Xiaomi TTS")
+	}
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return "", errors.New("voice design prompt is required")
+	}
+	messages, audio, err := buildXiaomiMessagesAndAudio(
+		xiaomiTTSVoiceDesignModel,
+		prompt,
+		config.AudioFormat,
+		xiaomiVoiceDesignSampleText(language),
+		language,
+		"",
+	)
+	if err != nil {
+		return "", err
+	}
+	return t.doXiaomiSynthesis(ctx, config, xiaomiTTSVoiceDesignModel, messages, audio)
+}
+
 func (t *APITTS) synthesizeCustom(ctx context.Context, config domain.TTSConfig, text string, language string, voice string) (string, error) {
 	apiVoice, voiceStyle := resolveVoiceSelection(voice, config.Voice)
 	instruction := buildInstruction(text, language, voiceStyle)
@@ -283,6 +309,19 @@ func (t *APITTS) synthesizeCustom(ctx context.Context, config domain.TTSConfig, 
 }
 
 func (t *APITTS) synthesizeXiaomi(ctx context.Context, config domain.TTSConfig, text string, language string, requestedVoice string) (string, error) {
+<<<<<<< HEAD
+=======
+	if isAudioDataURL(requestedVoice) {
+		messages, audio, buildErr := buildXiaomiMessagesAndAudio(xiaomiTTSVoiceCloneModel, requestedVoice, config.AudioFormat, text, language, "")
+		if buildErr != nil {
+			return "", buildErr
+		}
+		return t.doXiaomiSynthesis(ctx, config, xiaomiTTSVoiceCloneModel, messages, audio)
+	}
+	if shouldUseXiaomiDesignedCloneFlow(requestedVoice) {
+		return t.synthesizeXiaomiWithDesignedClone(ctx, config, text, language, requestedVoice)
+	}
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	model := normalizeTTSModel(ttsProviderXiaomi, config.Model)
 	messages, audio, buildErr := buildXiaomiMessagesAndAudio(model, config.Voice, config.AudioFormat, text, language, requestedVoice)
 	if buildErr != nil {

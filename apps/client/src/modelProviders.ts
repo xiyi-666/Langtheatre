@@ -123,7 +123,7 @@ export const MODEL_PROVIDER_PRESETS: ModelProviderPreset[] = [
     modelOptions: ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat"],
     endpointHint: "https://api.deepseek.com/v1/chat/completions",
     authHint: "Authorization: Bearer DEEPSEEK_API_KEY",
-    compatibilityNote: "默认走 Chat Completions；若你要 Beta 功能，可手动把 Base URL 改成 /beta。"
+    compatibilityNote: "默认使用 Chat Completions；如需测试功能，可手动将 Base URL 改为 /beta。"
   },
   {
     id: "DOUBAO",

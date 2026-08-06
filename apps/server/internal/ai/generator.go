@@ -13,18 +13,29 @@ import (
 	"sync"
 	"time"
 
+<<<<<<< HEAD
 	"github.com/linguaquest/server/internal/contentquality"
+=======
+	"github.com/linguaquest/server/internal/analytics"
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	"github.com/linguaquest/server/internal/domain"
 	"github.com/linguaquest/server/internal/ielts"
 )
 
 type OpenAIGenerator struct {
-	mu       sync.RWMutex
-	Provider string
-	APIKey   string
-	Model    string
-	BaseURL  string
-	Client   *http.Client
+	mu        sync.RWMutex
+	Provider  string
+	APIKey    string
+	Model     string
+	BaseURL   string
+	Client    *http.Client
+	analytics *analytics.Reporter
+}
+
+func (g *OpenAIGenerator) SetUsageReporter(reporter *analytics.Reporter) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.analytics = reporter
 }
 
 const (
@@ -272,6 +283,7 @@ Rules for quiz:
 	if readingMode {
 		attempts = 3
 	}
+<<<<<<< HEAD
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptUser := user
@@ -281,6 +293,27 @@ Rules for quiz:
 			} else {
 				attemptUser += listeningRegenerationInstruction(quizCount)
 			}
+=======
+	operation := "THEATER_GENERATION"
+	if readingMode {
+		operation = "READING_GENERATION"
+	}
+	content, err := g.callModelJSONPayload(ctx, payload, operation)
+	if err != nil && strings.Contains(err.Error(), "no parsable text") && !strings.EqualFold(model, defaultModelName) {
+		log.Printf("model %s returned empty content, retry with fallback model %s", model, defaultModelName)
+		payload["model"] = defaultModelName
+		content, err = g.callModelJSONPayload(ctx, payload, operation)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	dialogues, quiz := parseModelOutput(content)
+	if len(dialogues) == 0 {
+		snippet := content
+		if len(snippet) > 320 {
+			snippet = snippet[:320]
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 		}
 		payload := map[string]any{
 			"model": model,
@@ -658,7 +691,7 @@ JSON:
 		},
 		"temperature": 0.7,
 	}
-	content, err := g.callModelJSONPayload(ctx, payload)
+	content, err := g.callModelJSONPayload(ctx, payload, "THEATER_SCENARIO")
 	if err != nil {
 		return "", err
 	}
@@ -688,13 +721,27 @@ func shouldRetryModelStatus(status int) bool {
 	return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }
 
+<<<<<<< HEAD
 func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[string]any) (string, error) {
 	raw, _ := json.Marshal(modelPayloadWithStreaming(payload))
+=======
+func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[string]any, operationValues ...string) (string, error) {
+	raw, _ := json.Marshal(payload)
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	chatURL := g.chatCompletionsURL()
 	apiKey := g.apiKey()
+	operation := "MODEL_COMPLETION"
+	if len(operationValues) > 0 && strings.TrimSpace(operationValues[0]) != "" {
+		operation = strings.TrimSpace(operationValues[0])
+	}
+	model, _ := payload["model"].(string)
+	if strings.TrimSpace(model) == "" {
+		model = g.modelName()
+	}
 	var lastErr error
 
 	for attempt := 0; attempt <= modelAPIMaxRetries; attempt++ {
+		startedAt := time.Now()
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatURL, bytes.NewReader(raw))
 		if err != nil {
 			return "", err
@@ -706,6 +753,7 @@ func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[
 
 		resp, err := g.Client.Do(req)
 		if err != nil {
+			g.recordModelUsage(model, operation, 0, 0, 0, false, true, time.Since(startedAt))
 			lastErr = fmt.Errorf("request model API failed: %w", err)
 		} else {
 			var retryable bool
@@ -714,16 +762,24 @@ func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[
 				defer resp.Body.Close()
 				if resp.StatusCode >= 400 {
 					body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+					g.recordModelUsage(model, operation, 0, 0, 0, false, true, time.Since(startedAt))
 					lastErr = fmt.Errorf("model API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 					retryable = shouldRetryModelStatus(resp.StatusCode)
 					return
 				}
 				body, readErr := io.ReadAll(resp.Body)
 				if readErr != nil {
+					g.recordModelUsage(model, operation, 0, 0, 0, false, true, time.Since(startedAt))
 					lastErr = readErr
 					return
 				}
+<<<<<<< HEAD
 				content, lastErr = extractModelTextFromStreamResponse(body)
+=======
+				promptTokens, completionTokens, totalTokens, usageReported := extractModelUsageFromResponse(body)
+				content, lastErr = extractModelTextFromResponse(body)
+				g.recordModelUsage(model, operation, promptTokens, completionTokens, totalTokens, usageReported, lastErr != nil, time.Since(startedAt))
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 				if lastErr != nil {
 					content, lastErr = extractModelTextFromResponse(body)
 					if lastErr != nil {
@@ -757,6 +813,7 @@ func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[
 	return "", lastErr
 }
 
+<<<<<<< HEAD
 func modelPayloadWithStreaming(payload map[string]any) map[string]any {
 	out := make(map[string]any, len(payload)+1)
 	for key, value := range payload {
@@ -856,6 +913,44 @@ func extractModelTextFromStreamChunk(body []byte) (string, error) {
 	}
 
 	return "", nil
+=======
+func (g *OpenAIGenerator) recordModelUsage(model string, operation string, promptTokens int64, completionTokens int64, totalTokens int64, usageReported bool, failed bool, latency time.Duration) {
+	g.mu.RLock()
+	reporter := g.analytics
+	provider := normalizedModelProvider(g.Provider)
+	g.mu.RUnlock()
+	if reporter != nil {
+		reporter.RecordModelUsage(provider, strings.TrimSpace(model), operation, promptTokens, completionTokens, totalTokens, usageReported, failed, latency)
+	}
+}
+
+func extractModelUsageFromResponse(body []byte) (promptTokens int64, completionTokens int64, totalTokens int64, reported bool) {
+	var payload struct {
+		Usage *struct {
+			PromptTokens     int64 `json:"prompt_tokens"`
+			CompletionTokens int64 `json:"completion_tokens"`
+			TotalTokens      int64 `json:"total_tokens"`
+			InputTokens      int64 `json:"input_tokens"`
+			OutputTokens     int64 `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal(body, &payload) != nil || payload.Usage == nil {
+		return 0, 0, 0, false
+	}
+	promptTokens = payload.Usage.PromptTokens
+	if promptTokens == 0 {
+		promptTokens = payload.Usage.InputTokens
+	}
+	completionTokens = payload.Usage.CompletionTokens
+	if completionTokens == 0 {
+		completionTokens = payload.Usage.OutputTokens
+	}
+	totalTokens = payload.Usage.TotalTokens
+	if totalTokens == 0 {
+		totalTokens = promptTokens + completionTokens
+	}
+	return promptTokens, completionTokens, totalTokens, true
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func extractModelTextFromResponse(body []byte) (string, error) {
@@ -1311,7 +1406,7 @@ Rules:
 		},
 		"temperature": 0.35,
 	}
-	content, err := g.callModelJSONPayload(ctx, payload)
+	content, err := g.callModelJSONPayload(ctx, payload, "READING_ANALYSIS")
 	if err != nil {
 		return domain.ReadingAnalysis{}, err
 	}

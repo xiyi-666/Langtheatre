@@ -37,9 +37,8 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-server
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event.inputs.publish_latest == 'true' }}
-            type=sha
-            type=ref,event=tag
+            type=raw,value=mini-program
+            type=sha,format=short,prefix=mini-
 
       - name: Build and push server image
         uses: docker/build-push-action@v6
@@ -59,9 +58,8 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/linguaquest-client
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.event.inputs.publish_latest == 'true' }}
-            type=sha
-            type=ref,event=tag
+            type=raw,value=mini-program
+            type=sha,format=short,prefix=mini-
 
       - name: Build and push client image
         uses: docker/build-push-action@v6
@@ -75,5 +73,6 @@ jobs:
             VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
           cache-from: type=gha,scope=linguaquest-client
           cache-to: type=gha,mode=max,scope=linguaquest-client
+            VITE_APP_EDITION=MINI_PROGRAM
           tags: ${{ steps.meta-client.outputs.tags }}
           labels: ${{ steps.meta-client.outputs.labels }}

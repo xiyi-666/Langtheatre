@@ -2,14 +2,23 @@ package service
 
 import (
 	"context"
+<<<<<<< HEAD
+=======
+	"crypto/rand"
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
+<<<<<<< HEAD
 	"os"
 	"path/filepath"
+=======
+	"net/url"
+	"regexp"
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +26,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/linguaquest/server/internal/analytics"
 	"github.com/linguaquest/server/internal/auth"
 	"github.com/linguaquest/server/internal/contentquality"
 	"github.com/linguaquest/server/internal/domain"
@@ -25,15 +35,25 @@ import (
 )
 
 type Store interface {
-	CreateUser(email string, passwordHash string) (domain.User, error)
-	GetUserByEmail(email string) (domain.User, error)
+	CreateUser(username string, email string, passwordHash string, emailVerified bool) (domain.User, error)
+	ListUsersByEmail(email string) ([]domain.User, error)
+	GetUserByUsername(username string) (domain.User, error)
 	GetUserByID(id string) (domain.User, error)
+	UpdateUserPassword(userID string, passwordHash string) error
+	SetUserEmailVerified(userID string, verified bool) error
+	CreateAuthToken(userID string, purpose string, tokenHash string, expiresAt time.Time) error
+	ConsumeAuthToken(tokenHash string, purpose string, now time.Time) (string, error)
 	UpdateUserProfile(userID string, nickname string, avatarURL string, bio string) (domain.User, error)
 	GetModelConfig() (domain.ModelConfig, error)
 	SaveModelConfig(config domain.ModelConfig) (domain.ModelConfig, error)
 	GetTTSConfig() (domain.TTSConfig, error)
 	SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, error)
+<<<<<<< HEAD
 	ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error)
+=======
+	GetASRConfig() (domain.ASRConfig, error)
+	SaveASRConfig(config domain.ASRConfig) (domain.ASRConfig, error)
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	SaveTheater(theater domain.Theater) (domain.Theater, error)
 	GetTheater(id string) (domain.Theater, error)
 	GetTheaterByShareCode(shareCode string) (domain.Theater, error)
@@ -46,11 +66,21 @@ type Store interface {
 	SaveReadingPracticeRecord(userID string, materialID string, score int, answers []string, xpEarned int) error
 	ListCourses(language string) ([]domain.Course, error)
 	SaveReadingMaterial(material domain.ReadingMaterial) (domain.ReadingMaterial, error)
+	UpdateReadingMaterialExisting(material domain.ReadingMaterial) (domain.ReadingMaterial, error)
 	GetReadingMaterial(id string, userID string) (domain.ReadingMaterial, error)
 	ListReadingMaterialsByUser(userID string, exam string) ([]domain.ReadingMaterial, error)
+	DeleteReadingMaterial(userID string, materialID string) error
+	SaveVoiceProfile(profile domain.VoiceProfile) (domain.VoiceProfile, error)
+	ListVoiceProfiles(userID string) ([]domain.VoiceProfile, error)
+	DeleteVoiceProfile(userID string, profileID string) error
 	CreateRoleplaySession(session domain.RoleplaySession) (domain.RoleplaySession, error)
 	GetRoleplaySession(sessionID string, userID string) (domain.RoleplaySession, error)
 	UpdateRoleplaySession(session domain.RoleplaySession) (domain.RoleplaySession, error)
+	SaveWritingSession(session domain.WritingSession) (domain.WritingSession, error)
+	UpdateWritingSessionExisting(session domain.WritingSession) (domain.WritingSession, error)
+	GetWritingSession(sessionID string, userID string) (domain.WritingSession, error)
+	ListWritingSessions(userID string) ([]domain.WritingSession, error)
+	DeleteWritingSession(userID string, sessionID string) error
 }
 
 type SessionStore interface {
@@ -76,11 +106,43 @@ type TTSConfigManager interface {
 	UpdateTTSConfig(config domain.TTSConfig)
 }
 
+type ASRConfigManager interface {
+	GetASRConfig() domain.ASRConfig
+	UpdateASRConfig(config domain.ASRConfig)
+}
+
 type SpeechSynthesizer interface {
 	Synthesize(ctx context.Context, text string, language string, voice string) (string, error)
 }
 
+type SpeechRecognizer interface {
+	Transcribe(ctx context.Context, audioDataURL string, language string) (domain.TranscriptResult, error)
+}
+
+type VoiceDesigner interface {
+	DesignVoice(ctx context.Context, prompt string, language string) (string, error)
+}
+
+type AuthMailer interface {
+	SendEmailVerification(ctx context.Context, to string, username string, verifyURL string) error
+	SendPasswordReset(ctx context.Context, to string, username string, resetURL string) error
+	SendUsernameRecovery(ctx context.Context, to string, usernames []string) error
+}
+
+type Options struct {
+	Mailer                   AuthMailer
+	PublicAppURL             string
+	RequireEmailVerification bool
+	TaskConcurrency          int
+	TaskTimeout              time.Duration
+	Recognizer               SpeechRecognizer
+	Billing                  BillingOptions
+	UsageProtection          UsageProtectionOptions
+	Analytics                *analytics.Reporter
+}
+
 type Service struct {
+<<<<<<< HEAD
 	store            Store
 	session          SessionStore
 	generator        TheaterGenerator
@@ -96,6 +158,27 @@ type Service struct {
 	readingListKick  map[string]time.Time
 	mediaDir         string
 	ttsSem           chan struct{}
+=======
+	store                    Store
+	session                  SessionStore
+	generator                TheaterGenerator
+	modelConfig              ModelConfigManager
+	tts                      SpeechSynthesizer
+	ttsConfig                TTSConfigManager
+	asr                      SpeechRecognizer
+	asrConfig                ASRConfigManager
+	jwtSecret                string
+	tokenExpiry              time.Duration
+	mailer                   AuthMailer
+	publicAppURL             string
+	requireEmailVerification bool
+	tasks                    *taskQueue
+	readingMu                sync.RWMutex
+	readingMaterials         map[string]domain.ReadingMaterial
+	billing                  *billingService
+	usageGuard               *aiRequestGuard
+	analytics                *analytics.Reporter
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 const (
@@ -111,6 +194,7 @@ type roleplayEngine interface {
 }
 
 func New(store Store, session SessionStore, generator TheaterGenerator, tts SpeechSynthesizer, jwtSecret string) *Service {
+<<<<<<< HEAD
 	return NewWithOptions(store, session, generator, tts, jwtSecret, ServiceOptions{})
 }
 
@@ -120,6 +204,12 @@ type ServiceOptions struct {
 }
 
 func NewWithOptions(store Store, session SessionStore, generator TheaterGenerator, tts SpeechSynthesizer, jwtSecret string, options ServiceOptions) *Service {
+=======
+	return NewWithOptions(store, session, generator, tts, jwtSecret, Options{})
+}
+
+func NewWithOptions(store Store, session SessionStore, generator TheaterGenerator, tts SpeechSynthesizer, jwtSecret string, options Options) *Service {
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	var modelConfigManager ModelConfigManager
 	if manager, ok := any(generator).(ModelConfigManager); ok {
 		modelConfigManager = manager
@@ -128,6 +218,7 @@ func NewWithOptions(store Store, session SessionStore, generator TheaterGenerato
 	if manager, ok := any(tts).(TTSConfigManager); ok {
 		ttsConfigManager = manager
 	}
+<<<<<<< HEAD
 	mediaDir := strings.TrimSpace(options.MediaDir)
 	if mediaDir == "" {
 		mediaDir = "media"
@@ -151,52 +242,417 @@ func NewWithOptions(store Store, session SessionStore, generator TheaterGenerato
 		readingListKick:  map[string]time.Time{},
 		mediaDir:         mediaDir,
 		ttsSem:           make(chan struct{}, ttsMaxConcurrency),
+=======
+	var asrConfigManager ASRConfigManager
+	if manager, ok := any(options.Recognizer).(ASRConfigManager); ok {
+		asrConfigManager = manager
+	}
+	publicURL := strings.TrimRight(strings.TrimSpace(options.PublicAppURL), "/")
+	if publicURL == "" {
+		publicURL = "http://localhost:5174"
+	}
+	service := &Service{
+		store:                    store,
+		session:                  session,
+		generator:                generator,
+		modelConfig:              modelConfigManager,
+		tts:                      tts,
+		ttsConfig:                ttsConfigManager,
+		asr:                      options.Recognizer,
+		asrConfig:                asrConfigManager,
+		jwtSecret:                jwtSecret,
+		tokenExpiry:              2 * time.Hour,
+		mailer:                   options.Mailer,
+		publicAppURL:             publicURL,
+		requireEmailVerification: options.RequireEmailVerification,
+		tasks:                    newTaskQueue(options.TaskConcurrency, options.TaskTimeout),
+		readingMaterials:         map[string]domain.ReadingMaterial{},
+		usageGuard:               newAIRequestGuard(options.UsageProtection),
+		analytics:                options.Analytics,
+	}
+	if billingStore, ok := store.(BillingStore); ok && !options.Billing.OpenSourceEdition {
+		service.billing = newBillingService(billingStore, options.Billing, publicURL)
+	}
+	return service
+}
+
+func (s *Service) trackFeature(name string) {
+	if s != nil && s.analytics != nil {
+		s.analytics.RecordProductMetric(analytics.MetricCategoryFeature, name)
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	}
 }
 
-func (s *Service) Register(email string, password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return "", err
-	}
-	user, err := s.store.CreateUser(email, string(hash))
-	if err != nil {
-		return "", err
-	}
-	accessToken, err := auth.CreateAccessToken(s.jwtSecret, user.ID, user.Email)
-	if err == nil && s.session != nil {
-		_ = s.session.SetRefreshToken(context.Background(), user.ID, accessToken)
-	}
-	return accessToken, err
-}
+var usernamePattern = regexp.MustCompile(`^[\p{L}\p{N}_-]{3,24}$`)
 
-func (s *Service) Login(email string, password string) (string, error) {
-	user, err := s.store.GetUserByEmail(email)
-	if err != nil {
-		return "", err
+func validatePassword(password string) error {
+	length := len([]rune(password))
+	if length < 8 || length > 15 {
+		return errors.New("password must be 8-15 characters and include uppercase, lowercase, and number")
 	}
-	if err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return "", errors.New("invalid credentials")
-	}
-	accessToken, err := auth.CreateAccessToken(s.jwtSecret, user.ID, user.Email)
-	if err == nil && s.session != nil {
-		_ = s.session.SetRefreshToken(context.Background(), user.ID, accessToken)
-	}
-	return accessToken, err
-}
-
-func (s *Service) Refresh(accessToken string) (string, error) {
-	claims, err := auth.ParseAccessToken(s.jwtSecret, accessToken)
-	if err != nil {
-		return "", err
-	}
-	if s.session != nil {
-		stored, getErr := s.session.GetRefreshToken(context.Background(), claims.UserID)
-		if getErr != nil || stored == "" || stored != accessToken {
-			return "", errors.New("refresh token invalid")
+	var upper, lower, digit bool
+	for _, char := range password {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			upper = true
+		case char >= 'a' && char <= 'z':
+			lower = true
+		case char >= '0' && char <= '9':
+			digit = true
 		}
 	}
-	return auth.CreateAccessToken(s.jwtSecret, claims.UserID, claims.Email)
+	if !upper || !lower || !digit {
+		return errors.New("password must be 8-15 characters and include uppercase, lowercase, and number")
+	}
+	return nil
+}
+
+func normalizeUsername(username string) (string, error) {
+	username = strings.TrimSpace(username)
+	if !usernamePattern.MatchString(username) {
+		return "", errors.New("username must be 3-24 characters and contain only letters, numbers, underscores, or hyphens")
+	}
+	return username, nil
+}
+
+func normalizeEmail(email string) (string, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if !strings.Contains(email, "@") || strings.HasPrefix(email, "@") || strings.HasSuffix(email, "@") {
+		return "", errors.New("invalid email")
+	}
+	return email, nil
+}
+
+func (s *Service) Register(username string, email string, password string) (domain.AuthResult, error) {
+	var err error
+	if username, err = normalizeUsername(username); err != nil {
+		return domain.AuthResult{}, err
+	}
+	if email, err = normalizeEmail(email); err != nil {
+		return domain.AuthResult{}, err
+	}
+	if err = validatePassword(password); err != nil {
+		return domain.AuthResult{}, err
+	}
+	if s.requireEmailVerification && s.mailer == nil {
+		return domain.AuthResult{}, errors.New("邮箱验证暂不可用：未配置 SMTP。")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return domain.AuthResult{}, err
+	}
+	user, err := s.store.CreateUser(username, email, string(hash), !s.requireEmailVerification)
+	if err != nil {
+		return domain.AuthResult{}, err
+	}
+	result := domain.AuthResult{UserID: user.ID, EmailVerificationRequired: s.requireEmailVerification}
+	if s.requireEmailVerification {
+		sent, sendErr := s.sendVerification(user)
+		result.EmailSent = sent
+		if sendErr != nil {
+			result.Message = "账号已创建，但验证邮件发送失败。"
+		} else {
+			result.Message = "验证邮件已发送。"
+		}
+		return result, nil
+	}
+	authResult, err := s.issueAuthResult(user)
+	if err != nil {
+		return domain.AuthResult{}, err
+	}
+	result.AccessToken = authResult.AccessToken
+	result.RefreshToken = authResult.RefreshToken
+	return result, nil
+}
+
+func (s *Service) LoginCandidates(identifier string) ([]domain.LoginCandidate, error) {
+	users, err := s.findUsers(identifier)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]domain.LoginCandidate, 0, len(users))
+	for _, user := range users {
+		result = append(result, domain.LoginCandidate{ID: user.ID, Username: user.Username, Email: user.Email})
+	}
+	return result, nil
+}
+
+func (s *Service) Login(identifier string, password string, userID string) (domain.AuthResult, error) {
+	user, err := s.selectUser(identifier, userID)
+	if err != nil {
+		return domain.AuthResult{}, err
+	}
+	if s.requireEmailVerification && !user.EmailVerified {
+		return domain.AuthResult{}, errors.New("邮箱尚未验证。")
+	}
+	if err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return domain.AuthResult{}, errors.New("invalid credentials")
+	}
+	return s.issueAuthResult(user)
+}
+
+func (s *Service) RequestEmailVerification(identifier string, userID string) (domain.EmailActionResult, error) {
+	user, result, err := s.selectUserForEmailAction(identifier, userID)
+	if err != nil || result.RequiresSelection {
+		return result, err
+	}
+	if user.EmailVerified {
+		return domain.EmailActionResult{Message: "邮箱验证成功"}, nil
+	}
+	sent, sendErr := s.sendVerification(user)
+	if sendErr != nil {
+		return domain.EmailActionResult{}, sendErr
+	}
+	if sent {
+		return domain.EmailActionResult{Message: "验证邮件已发送。"}, nil
+	}
+	return domain.EmailActionResult{Message: "验证邮件发送失败。"}, nil
+}
+
+func (s *Service) VerifyEmail(token string) (domain.AuthResult, error) {
+	userID, err := s.consumeToken(token, "verify_email")
+	if err != nil {
+		return domain.AuthResult{}, err
+	}
+	if err = s.store.SetUserEmailVerified(userID, true); err != nil {
+		return domain.AuthResult{}, err
+	}
+	user, err := s.store.GetUserByID(userID)
+	if err != nil {
+		return domain.AuthResult{}, err
+	}
+	return s.issueAuthResult(user)
+}
+
+func (s *Service) RequestPasswordReset(identifier string, userID string) (domain.EmailActionResult, error) {
+	user, result, err := s.selectUserForEmailAction(identifier, userID)
+	if err != nil || result.RequiresSelection {
+		return result, err
+	}
+	if s.mailer == nil {
+		return domain.EmailActionResult{}, errors.New("password reset is unavailable: SMTP is not configured")
+	}
+	raw, err := s.createToken(user.ID, "reset_password")
+	if err != nil {
+		return domain.EmailActionResult{}, err
+	}
+	resetURL := s.tokenURL("/login", "reset", raw)
+	if err = s.mailer.SendPasswordReset(context.Background(), user.Email, user.Username, resetURL); err != nil {
+		return domain.EmailActionResult{}, err
+	}
+	return domain.EmailActionResult{Message: "password reset email sent"}, nil
+}
+
+func (s *Service) ResetPassword(token string, password string) error {
+	if err := validatePassword(password); err != nil {
+		return err
+	}
+	userID, err := s.consumeToken(token, "reset_password")
+	if err != nil {
+		return err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	return s.store.UpdateUserPassword(userID, string(hash))
+}
+
+func (s *Service) RequestUsernameRecovery(email string) error {
+	email, err := normalizeEmail(email)
+	if err != nil {
+		return err
+	}
+	if s.mailer == nil {
+		return errors.New("username recovery is unavailable: SMTP is not configured")
+	}
+	users, err := s.store.ListUsersByEmail(email)
+	if err != nil || len(users) == 0 {
+		return nil // Keep the result neutral to avoid account enumeration.
+	}
+	usernames := make([]string, 0, len(users))
+	for _, user := range users {
+		usernames = append(usernames, user.Username)
+	}
+	return s.mailer.SendUsernameRecovery(context.Background(), email, usernames)
+}
+
+func (s *Service) findUsers(identifier string) ([]domain.User, error) {
+	identifier = strings.TrimSpace(identifier)
+	if strings.Contains(identifier, "@") {
+		email, err := normalizeEmail(identifier)
+		if err != nil {
+			return nil, err
+		}
+		return s.store.ListUsersByEmail(email)
+	}
+	user, err := s.store.GetUserByUsername(identifier)
+	if err != nil {
+		return nil, err
+	}
+	return []domain.User{user}, nil
+}
+
+func (s *Service) selectUser(identifier string, userID string) (domain.User, error) {
+	users, err := s.findUsers(identifier)
+	if err != nil || len(users) == 0 {
+		return domain.User{}, errors.New("invalid credentials")
+	}
+	if len(users) > 1 && strings.TrimSpace(userID) == "" {
+		return domain.User{}, errors.New("multiple accounts found: select a user")
+	}
+	for _, user := range users {
+		if len(users) == 1 || user.ID == userID {
+			return user, nil
+		}
+	}
+	return domain.User{}, errors.New("invalid account selection")
+}
+
+func (s *Service) selectUserForEmailAction(identifier string, userID string) (domain.User, domain.EmailActionResult, error) {
+	users, err := s.findUsers(identifier)
+	if err != nil || len(users) == 0 {
+		return domain.User{}, domain.EmailActionResult{Message: "if the account exists, an email will be sent"}, nil
+	}
+	candidates := make([]domain.LoginCandidate, 0, len(users))
+	for _, user := range users {
+		candidates = append(candidates, domain.LoginCandidate{ID: user.ID, Username: user.Username, Email: user.Email})
+	}
+	if len(users) > 1 && strings.TrimSpace(userID) == "" {
+		return domain.User{}, domain.EmailActionResult{RequiresSelection: true, Candidates: candidates}, nil
+	}
+	for _, user := range users {
+		if len(users) == 1 || user.ID == userID {
+			return user, domain.EmailActionResult{}, nil
+		}
+	}
+	return domain.User{}, domain.EmailActionResult{}, errors.New("invalid account selection")
+}
+
+func (s *Service) sendVerification(user domain.User) (bool, error) {
+	if s.mailer == nil {
+		return false, errors.New("邮箱验证暂不可用：未配置 SMTP。")
+	}
+	raw, err := s.createToken(user.ID, "verify_email")
+	if err != nil {
+		return false, err
+	}
+	if err = s.mailer.SendEmailVerification(context.Background(), user.Email, user.Username, s.tokenURL("/login", "verify", raw)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Service) createToken(userID string, purpose string) (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	raw := hex.EncodeToString(bytes)
+	hash := sha256.Sum256([]byte(raw))
+	if err := s.store.CreateAuthToken(userID, purpose, hex.EncodeToString(hash[:]), time.Now().Add(30*time.Minute)); err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
+func (s *Service) consumeToken(raw string, purpose string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("验证链接无效或已过期。")
+	}
+	hash := sha256.Sum256([]byte(raw))
+	userID, err := s.store.ConsumeAuthToken(hex.EncodeToString(hash[:]), purpose, time.Now())
+	if err != nil {
+		return "", errors.New("验证链接无效或已过期。")
+	}
+	return userID, nil
+}
+
+func (s *Service) tokenURL(path string, key string, token string) string {
+	return s.publicAppURL + path + "?" + url.Values{key: []string{token}}.Encode()
+}
+
+func (s *Service) issueAuthResult(user domain.User) (domain.AuthResult, error) {
+	accessToken, err := auth.CreateAccessToken(s.jwtSecret, user.ID, user.Email)
+	if err != nil {
+		return domain.AuthResult{}, err
+	}
+	result := domain.AuthResult{AccessToken: accessToken, UserID: user.ID}
+	if s.session == nil {
+		return result, nil
+	}
+	refreshToken, err := newRefreshToken(user.ID)
+	if err != nil {
+		return domain.AuthResult{}, err
+	}
+	if err = s.session.SetRefreshToken(context.Background(), user.ID, hashRefreshToken(refreshToken)); err != nil {
+		return domain.AuthResult{}, errors.New("session is unavailable")
+	}
+	result.RefreshToken = refreshToken
+	return result, nil
+}
+
+func newRefreshToken(userID string) (string, error) {
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return "", err
+	}
+	return userID + "." + base64.RawURLEncoding.EncodeToString(secret), nil
+}
+
+func refreshTokenUserID(token string) (string, bool) {
+	separator := strings.LastIndex(token, ".")
+	if separator <= 0 || separator == len(token)-1 {
+		return "", false
+	}
+	return token[:separator], true
+}
+
+func hashRefreshToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
+}
+
+// Refresh rotates a valid independent refresh token without parsing the access token.
+func (s *Service) Refresh(refreshToken string) (domain.AuthResult, error) {
+	if s.session == nil {
+		return domain.AuthResult{}, errors.New("refresh is unavailable")
+	}
+	userID, ok := refreshTokenUserID(refreshToken)
+	if !ok {
+		return domain.AuthResult{}, errors.New("refresh token invalid")
+	}
+	stored, err := s.session.GetRefreshToken(context.Background(), userID)
+	if err != nil || stored == "" || stored != hashRefreshToken(refreshToken) {
+		return domain.AuthResult{}, errors.New("refresh token invalid")
+	}
+	user, err := s.store.GetUserByID(userID)
+	if err != nil {
+		return domain.AuthResult{}, errors.New("refresh token invalid")
+	}
+	return s.issueAuthResult(user)
+}
+
+// RefreshLegacyAccessToken allows one release-cycle migration from sessions that
+// stored the access token itself. It cannot recover expired or rotated JWTs.
+func (s *Service) RefreshLegacyAccessToken(accessToken string) (domain.AuthResult, error) {
+	if s.session == nil {
+		return domain.AuthResult{}, errors.New("refresh is unavailable")
+	}
+	claims, err := auth.ParseAccessToken(s.jwtSecret, accessToken)
+	if err != nil {
+		return domain.AuthResult{}, err
+	}
+	stored, err := s.session.GetRefreshToken(context.Background(), claims.UserID)
+	if err != nil || stored == "" || stored != accessToken {
+		return domain.AuthResult{}, errors.New("refresh token invalid")
+	}
+	user, err := s.store.GetUserByID(claims.UserID)
+	if err != nil {
+		return domain.AuthResult{}, errors.New("refresh token invalid")
+	}
+	return s.issueAuthResult(user)
 }
 
 func (s *Service) Logout(userID string) error {
@@ -232,6 +688,14 @@ func buildTTSConfigView(config domain.TTSConfig) domain.TTSConfigView {
 	}
 }
 
+func buildASRConfigView(config domain.ASRConfig) domain.ASRConfigView {
+	apiKey := strings.TrimSpace(config.APIKey)
+	return domain.ASRConfigView{
+		Provider: strings.TrimSpace(config.Provider), Model: strings.TrimSpace(config.Model), BaseURL: strings.TrimSpace(config.BaseURL),
+		HasAPIKey: apiKey != "", APIKeyPreview: previewAPIKey(apiKey), AppID: strings.TrimSpace(config.AppID), UpdatedAt: config.UpdatedAt,
+	}
+}
+
 func previewAPIKey(apiKey string) string {
 	if apiKey == "" {
 		return ""
@@ -243,7 +707,11 @@ func previewAPIKey(apiKey string) string {
 }
 
 func (s *Service) Me(userID string) (domain.User, error) {
-	return s.store.GetUserByID(userID)
+	user, err := s.store.GetUserByID(userID)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return decorateLearningProgress(user), nil
 }
 
 func (s *Service) GetModelConfig() (domain.ModelConfigView, error) {
@@ -463,6 +931,7 @@ func (s *Service) UpdateTTSConfig(input domain.TTSConfigUpdate) (domain.TTSConfi
 	return buildTTSConfigView(saved), nil
 }
 
+<<<<<<< HEAD
 func (s *Service) ExportOAuthAccounts(provider string) (string, error) {
 	accounts, err := s.store.ListOAuthAccounts(provider)
 	if err != nil {
@@ -480,6 +949,239 @@ func (s *Service) ExportOAuthAccounts(provider string) (string, error) {
 		lines = append(lines, strings.Join([]string{email, provider, clientID, refreshToken}, "----"))
 	}
 	return strings.Join(lines, "\n"), nil
+=======
+func (s *Service) GetASRConfig() (domain.ASRConfigView, error) {
+	if s.asrConfig == nil {
+		return domain.ASRConfigView{}, errors.New("asr management unavailable")
+	}
+	return buildASRConfigView(s.asrConfig.GetASRConfig()), nil
+}
+
+func (s *Service) UpdateASRConfig(input domain.ASRConfigUpdate) (domain.ASRConfigView, error) {
+	if s.asrConfig == nil {
+		return domain.ASRConfigView{}, errors.New("asr management unavailable")
+	}
+	current := s.asrConfig.GetASRConfig()
+	provider := normalizeASRProvider(input.Provider, current.Provider)
+	changed := !strings.EqualFold(provider, current.Provider)
+	next := current
+	next.Provider = provider
+	next.Model = strings.TrimSpace(input.Model)
+	if next.Model == "" {
+		if changed {
+			next.Model = defaultASRModel(provider)
+		} else {
+			next.Model = current.Model
+		}
+	}
+	next.BaseURL = strings.TrimRight(strings.TrimSpace(input.BaseURL), "/")
+	if next.BaseURL == "" {
+		if changed {
+			next.BaseURL = defaultASRBaseURL(provider)
+		} else {
+			next.BaseURL = current.BaseURL
+		}
+	}
+	if next.BaseURL == "" {
+		return domain.ASRConfigView{}, errors.New("asr base url is required")
+	}
+	if strings.TrimSpace(input.APIKey) != "" {
+		next.APIKey = strings.TrimSpace(input.APIKey)
+	} else if input.ClearAPIKey || changed {
+		next.APIKey = ""
+	}
+	if provider == "DOUBAO" {
+		if strings.TrimSpace(input.AppID) != "" || changed {
+			next.AppID = strings.TrimSpace(input.AppID)
+		}
+	} else {
+		next.AppID = ""
+	}
+	next.UpdatedAt = time.Now().UTC()
+	saved, err := s.store.SaveASRConfig(next)
+	if err != nil {
+		return domain.ASRConfigView{}, err
+	}
+	s.asrConfig.UpdateASRConfig(saved)
+	return buildASRConfigView(saved), nil
+}
+
+func normalizeASRProvider(input, fallback string) string {
+	value := strings.ToUpper(strings.TrimSpace(input))
+	if value == "" {
+		value = strings.ToUpper(strings.TrimSpace(fallback))
+	}
+	switch value {
+	case "XIAOMI", "ALIYUN", "OPENAI", "DOUBAO", "GEMINI", "MINIMAX":
+		return value
+	}
+	return "OPENAI_COMPATIBLE"
+}
+
+func defaultASRBaseURL(provider string) string {
+	switch strings.ToUpper(strings.TrimSpace(provider)) {
+	case "XIAOMI":
+		return "https://api.xiaomimimo.com/v1"
+	case "ALIYUN":
+		return "https://dashscope.aliyuncs.com/compatible-mode/v1"
+	case "DOUBAO":
+		return "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash"
+	case "GEMINI":
+		return "https://generativelanguage.googleapis.com/v1beta"
+	case "MINIMAX":
+		return "https://api.minimax.io/v1"
+	}
+	return "https://api.openai.com/v1"
+}
+func defaultASRModel(provider string) string {
+	switch strings.ToUpper(strings.TrimSpace(provider)) {
+	case "XIAOMI":
+		return "mimo-v2.5-asr"
+	case "ALIYUN":
+		return "qwen3-asr-flash"
+	case "DOUBAO":
+		return "bigmodel"
+	case "GEMINI":
+		return "gemini-2.5-flash"
+	case "MINIMAX":
+		return "speech-2.8-hd"
+	}
+	return "gpt-4o-mini-transcribe"
+}
+
+func (s *Service) VoiceProfiles(userID string) ([]domain.VoiceProfile, error) {
+	return s.store.ListVoiceProfiles(userID)
+}
+
+func (s *Service) CreateVoiceProfile(userID string, name string, prompt string, language string) (domain.VoiceProfile, error) {
+	name = strings.TrimSpace(name)
+	prompt = strings.TrimSpace(prompt)
+	language = strings.ToUpper(strings.TrimSpace(language))
+	if len([]rune(name)) < 2 || len([]rune(name)) > 40 {
+		return domain.VoiceProfile{}, errors.New("voice profile name must be 2-40 characters")
+	}
+	if len([]rune(prompt)) < 8 || len([]rune(prompt)) > 500 {
+		return domain.VoiceProfile{}, errors.New("voice design prompt must be 8-500 characters")
+	}
+	if language != "CANTONESE" && language != "ENGLISH" {
+		return domain.VoiceProfile{}, errors.New("voice language must be CANTONESE or ENGLISH")
+	}
+	if _, ok := s.tts.(VoiceDesigner); !ok {
+		return domain.VoiceProfile{}, errors.New("voice design is unavailable: configure Xiaomi TTS first")
+	}
+	profile := domain.VoiceProfile{
+		ID:                uuid.NewString(),
+		UserID:            userID,
+		Name:              name,
+		Prompt:            prompt,
+		Language:          language,
+		Provider:          "XIAOMI",
+		Model:             "mimo-v2.5-tts-voicedesign",
+		Status:            "GENERATING",
+		GenerationMessage: "音色设计任务已排队",
+		CreatedAt:         time.Now(),
+	}
+	release, err := s.reserveAIRequest(userID)
+	if err != nil {
+		return domain.VoiceProfile{}, err
+	}
+	if err := s.ConsumeAIConfidence(userID, AICreditActionVoiceDesign, profile.ID, aiCreditAmount(AICreditActionVoiceDesign)); err != nil {
+		release()
+		return domain.VoiceProfile{}, err
+	}
+	saved, err := s.store.SaveVoiceProfile(profile)
+	if err != nil {
+		release()
+		s.RefundAIConfidence(userID, AICreditActionVoiceDesign, profile.ID, aiCreditAmount(AICreditActionVoiceDesign))
+		return domain.VoiceProfile{}, err
+	}
+	if !s.tasks.enqueue(func(ctx context.Context) {
+		defer release()
+		s.designVoiceProfileAsync(ctx, saved)
+	}) {
+		release()
+		s.RefundAIConfidence(userID, AICreditActionVoiceDesign, saved.ID, aiCreditAmount(AICreditActionVoiceDesign))
+		saved.Status = "FAILED"
+		saved.GenerationMessage = "后台任务队列繁忙，请稍后重试"
+		return s.store.SaveVoiceProfile(saved)
+	}
+	s.trackFeature("VOICE_DESIGN_REQUESTED")
+	return saved, nil
+}
+
+func (s *Service) designVoiceProfileAsync(ctx context.Context, profile domain.VoiceProfile) {
+	designer, ok := s.tts.(VoiceDesigner)
+	if !ok {
+		s.RefundAIConfidence(profile.UserID, AICreditActionVoiceDesign, profile.ID, aiCreditAmount(AICreditActionVoiceDesign))
+		profile.Status = "FAILED"
+		profile.GenerationMessage = "小米 VoiceDesign 未配置"
+		_, _ = s.store.SaveVoiceProfile(profile)
+		return
+	}
+	profile.GenerationMessage = "正在根据提示词设计音色"
+	_, _ = s.store.SaveVoiceProfile(profile)
+	previewAudioURL, err := designer.DesignVoice(ctx, profile.Prompt, profile.Language)
+	if err != nil {
+		log.Printf("voice design failed profile_id=%s err=%v", profile.ID, err)
+		s.RefundAIConfidence(profile.UserID, AICreditActionVoiceDesign, profile.ID, aiCreditAmount(AICreditActionVoiceDesign))
+		profile.Status = "FAILED"
+		profile.GenerationMessage = "音色生成失败，请检查小米 TTS 配置后重试"
+		_, _ = s.store.SaveVoiceProfile(profile)
+		return
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(previewAudioURL)), "data:audio/") {
+		s.RefundAIConfidence(profile.UserID, AICreditActionVoiceDesign, profile.ID, aiCreditAmount(AICreditActionVoiceDesign))
+		profile.Status = "FAILED"
+		profile.GenerationMessage = "音色服务未返回可保存的音频样本"
+		_, _ = s.store.SaveVoiceProfile(profile)
+		return
+	}
+	profile.PreviewAudioURL = previewAudioURL
+	profile.Status = "READY"
+	profile.GenerationMessage = "音色已保存到角色音色库"
+	if _, err = s.store.SaveVoiceProfile(profile); err != nil {
+		log.Printf("save completed voice profile failed profile_id=%s err=%v", profile.ID, err)
+	}
+}
+
+func (s *Service) DeleteVoiceProfile(userID string, profileID string) error {
+	return s.store.DeleteVoiceProfile(userID, strings.TrimSpace(profileID))
+}
+
+func (s *Service) selectedVoiceProfiles(userID string, profileIDs []string) ([]domain.VoiceProfile, error) {
+	if len(profileIDs) == 0 {
+		return nil, errors.New("select at least one voice profile")
+	}
+	profiles, err := s.store.ListVoiceProfiles(userID)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]domain.VoiceProfile, len(profiles))
+	for _, profile := range profiles {
+		byID[profile.ID] = profile
+	}
+	selected := make([]domain.VoiceProfile, 0, len(profileIDs))
+	seen := make(map[string]struct{}, len(profileIDs))
+	for _, profileID := range profileIDs {
+		profileID = strings.TrimSpace(profileID)
+		if profileID == "" {
+			continue
+		}
+		if _, exists := seen[profileID]; exists {
+			continue
+		}
+		profile, exists := byID[profileID]
+		if !exists || profile.Status != "READY" || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(profile.PreviewAudioURL)), "data:audio/") {
+			return nil, errors.New("selected voice profile is unavailable")
+		}
+		seen[profileID] = struct{}{}
+		selected = append(selected, profile)
+	}
+	if len(selected) == 0 {
+		return nil, errors.New("select at least one ready voice profile")
+	}
+	return selected, nil
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func normalizeTTSProvider(input string, fallback string) string {
@@ -577,7 +1279,11 @@ func (s *Service) UpdateProfile(userID string, nickname string, avatarURL string
 	nickname = strings.TrimSpace(nickname)
 	avatarURL = strings.TrimSpace(avatarURL)
 	bio = strings.TrimSpace(bio)
-	return s.store.UpdateUserProfile(userID, nickname, avatarURL, bio)
+	user, err := s.store.UpdateUserProfile(userID, nickname, avatarURL, bio)
+	if err != nil {
+		return domain.User{}, err
+	}
+	return decorateLearningProgress(user), nil
 }
 
 func (s *Service) MeFromToken(token string) (domain.User, error) {
@@ -589,31 +1295,79 @@ func (s *Service) MeFromToken(token string) (domain.User, error) {
 }
 
 func (s *Service) GenerateTheater(userID string, language string, topic string, difficulty float64, mode string) (domain.Theater, error) {
+<<<<<<< HEAD
 	requiredQuiz := ielts.ListeningProfileFromTopic(topic, difficulty).QuizCount
+=======
+	return s.GenerateTheaterWithVoices(userID, language, topic, difficulty, mode, "AUTO", nil)
+}
+
+func (s *Service) GenerateTheaterWithVoices(userID string, language string, topic string, difficulty float64, mode string, voiceMode string, voiceProfileIDs []string) (domain.Theater, error) {
+	voiceMode = strings.ToUpper(strings.TrimSpace(voiceMode))
+	if voiceMode == "" {
+		voiceMode = "AUTO"
+	}
+	if voiceMode != "AUTO" && voiceMode != "LIBRARY" {
+		return domain.Theater{}, errors.New("voice mode must be AUTO or LIBRARY")
+	}
+	var voiceProfiles []domain.VoiceProfile
+	var err error
+	if voiceMode == "LIBRARY" {
+		voiceProfiles, err = s.selectedVoiceProfiles(userID, voiceProfileIDs)
+		if err != nil {
+			return domain.Theater{}, err
+		}
+	}
+	requiredQuiz := 2
+	if difficulty >= 7.0 {
+		requiredQuiz = 3
+	}
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	preparedTopic := prepareTheaterTopic(language, topic)
 	placeholder := domain.Theater{
-		ID:            uuid.NewString(),
-		UserID:        userID,
-		Language:      language,
-		Topic:         topic,
-		Difficulty:    difficulty,
-		Mode:          mode,
-		Status:        "GENERATING",
-		Dialogues:     []domain.Dialogue{},
-		QuizQuestions: []domain.QuizQuestion{},
-		CreatedAt:     time.Now(),
+		ID:                 uuid.NewString(),
+		UserID:             userID,
+		Language:           language,
+		Topic:              topic,
+		Difficulty:         difficulty,
+		Mode:               mode,
+		Status:             "GENERATING",
+		GenerationProgress: 5,
+		GenerationMessage:  "任务已排队",
+		Dialogues:          []domain.Dialogue{},
+		QuizQuestions:      []domain.QuizQuestion{},
+		CreatedAt:          time.Now(),
 	}
-	saved, err := s.store.SaveTheater(placeholder)
+	release, err := s.reserveAIRequest(userID)
 	if err != nil {
 		return domain.Theater{}, err
 	}
-	go s.generateTheaterAsync(saved, preparedTopic, requiredQuiz)
+	if err = s.ConsumeAIConfidence(userID, AICreditActionTheaterGeneration, placeholder.ID, aiCreditAmount(AICreditActionTheaterGeneration)); err != nil {
+		release()
+		return domain.Theater{}, err
+	}
+	saved, err := s.store.SaveTheater(placeholder)
+	if err != nil {
+		release()
+		s.RefundAIConfidence(userID, AICreditActionTheaterGeneration, placeholder.ID, aiCreditAmount(AICreditActionTheaterGeneration))
+		return domain.Theater{}, err
+	}
+	if !s.tasks.enqueue(func(ctx context.Context) {
+		defer release()
+		s.generateTheaterAsync(ctx, saved, preparedTopic, requiredQuiz, voiceProfiles)
+	}) {
+		release()
+		s.RefundAIConfidence(userID, AICreditActionTheaterGeneration, saved.ID, aiCreditAmount(AICreditActionTheaterGeneration))
+		_ = s.updateTheaterProgress(saved.ID, "FAILED", 0, "后台任务队列繁忙，请稍后重试")
+		return s.store.GetTheater(saved.ID)
+	}
+	s.trackFeature("THEATER_GENERATION_REQUESTED")
 	return saved, nil
 }
 
-func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic string, requiredQuiz int) {
+func (s *Service) generateTheaterAsync(ctx context.Context, theater domain.Theater, preparedTopic string, requiredQuiz int, voiceProfiles []domain.VoiceProfile) {
 	var dialogues []domain.Dialogue
 	var quiz []domain.QuizQuestion
+	_ = s.updateTheaterProgress(theater.ID, "GENERATING", 15, "正在生成剧场文本")
 
 	if s.generator == nil {
 		err := errors.New("content generator is not configured")
@@ -621,10 +1375,15 @@ func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic str
 		s.markTheaterGenerationFailed(theater, err)
 		return
 	} else {
-		generated, q, err := s.generator.Generate(context.Background(), theater.Language, preparedTopic, theater.Difficulty, theater.Mode)
+		generated, q, err := s.generator.Generate(ctx, theater.Language, preparedTopic, theater.Difficulty, theater.Mode)
 		if err != nil {
 			log.Printf("model generate failed theater_id=%s err=%v", theater.ID, err)
+<<<<<<< HEAD
 			s.markTheaterGenerationFailed(theater, err)
+=======
+			s.RefundAIConfidence(theater.UserID, AICreditActionTheaterGeneration, theater.ID, aiCreditAmount(AICreditActionTheaterGeneration))
+			_ = s.updateTheaterProgress(theater.ID, "FAILED", 0, "文本生成失败，请稍后重试")
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 			return
 		} else {
 			if len(generated) == 0 || dialogueLooksTemplated(generated) {
@@ -644,6 +1403,7 @@ func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic str
 			}
 		}
 	}
+<<<<<<< HEAD
 	dialogues = normalizeGeneratedDialoguesForDelivery(theater.Language, dialogues)
 	quiz = normalizeGeneratedQuizForDelivery(theater.Language, quiz)
 	if err := validateGeneratedPracticeForDelivery(theater.Language, false, dialogues, quiz); err != nil {
@@ -651,11 +1411,32 @@ func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic str
 		s.markTheaterGenerationFailed(theater, err)
 		return
 	}
+=======
+	_ = s.updateTheaterProgress(theater.ID, "GENERATING", 55, "文本已生成，正在合成语音")
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	if s.tts != nil {
 		voicePair := selectDialogueVoicePair(theater.Topic)
+		profileBySpeaker := make(map[string]domain.VoiceProfile)
+		nextProfile := 0
 		for i := range dialogues {
+			progress := 55 + (i * 35 / max(1, len(dialogues)))
+			_ = s.updateTheaterProgress(theater.ID, "GENERATING", progress, fmt.Sprintf("正在合成语音 %d/%d", i+1, len(dialogues)))
 			voiceStyle := voicePair[i%2]
+<<<<<<< HEAD
 			audioURL, err := s.synthesizeAudio(context.Background(), dialogues[i].Text, theater.Language, voiceStyle, "theater", theater.ID)
+=======
+			if len(voiceProfiles) > 0 {
+				speaker := strings.TrimSpace(dialogues[i].Speaker)
+				profile, assigned := profileBySpeaker[speaker]
+				if !assigned {
+					profile = voiceProfiles[nextProfile%len(voiceProfiles)]
+					profileBySpeaker[speaker] = profile
+					nextProfile++
+				}
+				voiceStyle = profile.PreviewAudioURL
+			}
+			audioURL, err := s.tts.Synthesize(ctx, dialogues[i].Text, theater.Language, voiceStyle)
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 			if err != nil {
 				log.Printf("tts failed theater_id=%s index=%d err=%v", theater.ID, i, err)
 				continue
@@ -672,9 +1453,12 @@ func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic str
 	current, err := s.store.GetTheater(theater.ID)
 	if err != nil {
 		log.Printf("skip ready theater persist theater_id=%s err=%v", theater.ID, err)
+		s.RefundAIConfidence(theater.UserID, AICreditActionTheaterGeneration, theater.ID, aiCreditAmount(AICreditActionTheaterGeneration))
 		return
 	}
 	theater.Status = "READY"
+	theater.GenerationProgress = 100
+	theater.GenerationMessage = "生成完成"
 	theater.Dialogues = dialogues
 	theater.QuizQuestions = quiz
 	theater.IsFavorite = current.IsFavorite
@@ -682,9 +1466,11 @@ func (s *Service) generateTheaterAsync(theater domain.Theater, preparedTopic str
 	theater.CreatedAt = current.CreatedAt
 	if _, err := s.store.SaveTheater(theater); err != nil {
 		log.Printf("persist ready theater failed theater_id=%s err=%v", theater.ID, err)
+		s.RefundAIConfidence(theater.UserID, AICreditActionTheaterGeneration, theater.ID, aiCreditAmount(AICreditActionTheaterGeneration))
 	}
 }
 
+<<<<<<< HEAD
 func (s *Service) markTheaterGenerationFailed(theater domain.Theater, reason error) {
 	theater.Status = "FAILED"
 	current, err := s.store.GetTheater(theater.ID)
@@ -857,6 +1643,18 @@ func safeMediaPathPart(value string, fallback string) string {
 		return result[:80]
 	}
 	return result
+=======
+func (s *Service) updateTheaterProgress(theaterID string, status string, progress int, message string) error {
+	theater, err := s.store.GetTheater(theaterID)
+	if err != nil {
+		return err
+	}
+	theater.Status = status
+	theater.GenerationProgress = max(0, min(100, progress))
+	theater.GenerationMessage = message
+	_, err = s.store.SaveTheater(theater)
+	return err
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func prepareTheaterTopic(language string, topic string) string {
@@ -1053,8 +1851,8 @@ func (s *Service) SubmitAnswers(userID string, theaterID string, answers []strin
 		}
 	}
 	score := (correct * 100) / total
-	xp := calculatePracticeXP(score)
-	if err = s.store.AddUserXP(userID, xp); err != nil {
+	xp, err := s.awardLearningXP(userID, "THEATER_PRACTICE", theaterID, score)
+	if err != nil {
 		return domain.PracticeResult{}, err
 	}
 	feedback := buildPracticeFeedback(correct, total, score)
@@ -1093,8 +1891,8 @@ func (s *Service) SubmitReadingAnswers(userID string, materialID string, answers
 	}
 
 	score := (correct * 100) / total
-	xp := calculatePracticeXP(score)
-	if err = s.store.AddUserXP(userID, xp); err != nil {
+	xp, err := s.awardLearningXP(userID, "READING_PRACTICE", materialID, score)
+	if err != nil {
 		return domain.PracticeResult{}, err
 	}
 	if err = s.store.SaveReadingPracticeRecord(userID, materialID, score, answers, xp); err != nil {
@@ -1108,14 +1906,6 @@ func (s *Service) SubmitReadingAnswers(userID string, materialID string, answers
 		CorrectCount: correct,
 		TotalCount:   total,
 	}, nil
-}
-
-func calculatePracticeXP(score int) int {
-	xp := score / 2
-	if xp < 1 && score > 0 {
-		return 1
-	}
-	return xp
 }
 
 func buildPracticeFeedback(correct int, total int, score int) string {
@@ -1183,6 +1973,7 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 		}
 	}
 
+<<<<<<< HEAD
 	language := "ENGLISH"
 	metadata := ielts.ReadingMetadataFromTopic(exam, topic, level)
 	difficulty := metadata.Band
@@ -1213,37 +2004,145 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 	generated = normalizeGeneratedDialoguesForDelivery(language, generated)
 	q = normalizeGeneratedQuizForDelivery(language, q)
 
+=======
+	material := domain.ReadingMaterial{
+		ID:                 uuid.NewString(),
+		UserID:             userID,
+		Exam:               exam,
+		Language:           "ENGLISH",
+		Level:              level,
+		Topic:              topic,
+		Title:              fmt.Sprintf("%s Reading Drill: %s", exam, topic),
+		SourceIDs:          sourceIDs,
+		GenerationNote:     "任务已创建，正在后台生成阅读材料。",
+		AudioStatus:        "PENDING",
+		Status:             "GENERATING",
+		GenerationProgress: 5,
+		GenerationMessage:  "任务已排队",
+		CreatedAt:          time.Now(),
+	}
+	release, err := s.reserveAIRequest(userID)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	if err := s.ConsumeAIConfidence(userID, AICreditActionReadingGeneration, material.ID, aiCreditAmount(AICreditActionReadingGeneration)); err != nil {
+		release()
+		return domain.ReadingMaterial{}, err
+	}
+
+	saved, err := s.store.SaveReadingMaterial(material)
+	if err != nil {
+		release()
+		s.RefundAIConfidence(userID, AICreditActionReadingGeneration, material.ID, aiCreditAmount(AICreditActionReadingGeneration))
+		return domain.ReadingMaterial{}, err
+	}
+	s.cacheReadingMaterial(saved)
+	if !s.tasks.enqueue(func(ctx context.Context) {
+		defer release()
+		s.generateReadingAsync(ctx, saved)
+	}) {
+		release()
+		s.RefundAIConfidence(userID, AICreditActionReadingGeneration, saved.ID, aiCreditAmount(AICreditActionReadingGeneration))
+		_ = s.updateReadingProgress(saved.ID, userID, "FAILED", 0, "后台任务队列繁忙，请稍后重试")
+		return s.store.GetReadingMaterial(saved.ID, userID)
+	}
+
+	s.trackFeature("READING_GENERATION_REQUESTED")
+	return saved, nil
+}
+
+func (s *Service) generateReadingAsync(ctx context.Context, material domain.ReadingMaterial) {
+	_ = s.updateReadingProgress(material.ID, material.UserID, "GENERATING", 15, "正在生成阅读文本")
+	difficulty := 6.5
+	if material.Exam == "CET" {
+		difficulty = 5.5
+	}
+	generated, questions, err := s.generator.Generate(ctx, material.Language, fmt.Sprintf("[%s Reading] %s", material.Exam, material.Topic), difficulty, "APPRECIATION")
+	if err != nil || len(generated) == 0 || len(questions) < 5 {
+		if err == nil {
+			err = errors.New("reading generation returned insufficient content")
+		}
+		log.Printf("reading generation failed material_id=%s err=%v", material.ID, err)
+		s.RefundAIConfidence(material.UserID, AICreditActionReadingGeneration, material.ID, aiCreditAmount(AICreditActionReadingGeneration))
+		_ = s.updateReadingProgress(material.ID, material.UserID, "FAILED", 0, "阅读文本生成失败，请稍后重试")
+		return
+	}
+	if len(questions) > 5 {
+		questions = questions[:5]
+	}
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	passageParts := make([]string, 0, len(generated))
-	for _, d := range generated {
-		line := strings.TrimSpace(d.Text)
-		if line != "" {
+	for _, dialogue := range generated {
+		if line := strings.TrimSpace(dialogue.Text); line != "" {
 			passageParts = append(passageParts, line)
 		}
 	}
 	passage := strings.Join(passageParts, "\n")
 	if strings.TrimSpace(passage) == "" {
-		return domain.ReadingMaterial{}, errors.New("reading generation returned empty normalized passage")
+		s.RefundAIConfidence(material.UserID, AICreditActionReadingGeneration, material.ID, aiCreditAmount(AICreditActionReadingGeneration))
+		_ = s.updateReadingProgress(material.ID, material.UserID, "FAILED", 0, "阅读文本生成失败，请稍后重试")
+		return
 	}
+<<<<<<< HEAD
 	lengthLimits := ielts.ReadingLengthLimitsFromMetadata(exam, topic, metadata)
 	if err := validateReadingMaterialText(passage, q, lengthLimits.MinWords, lengthLimits.MinSegments); err != nil {
 		return domain.ReadingMaterial{}, err
 	}
 	vocabSet := map[string]struct{}{}
+=======
+	vocabulary := extractReadingVocabulary(passage)
+	_ = s.updateReadingProgress(material.ID, material.UserID, "GENERATING", 55, "正在分析词汇与语法")
+	analysis := domain.ReadingAnalysis{}
+	if analyzer, ok := s.generator.(ReadingAnalyzer); ok {
+		if aiResult, analysisErr := analyzer.AnalyzeReading(ctx, material.Exam, material.Topic, passage, vocabulary); analysisErr == nil {
+			analysis = normalizeReadingAnalysis(aiResult, vocabulary, material.Topic)
+		} else {
+			log.Printf("reading semantic analysis fallback material_id=%s err=%v", material.ID, analysisErr)
+		}
+	}
+	if len(analysis.VocabularyItems) == 0 {
+		analysis = normalizeReadingAnalysis(domain.ReadingAnalysis{}, vocabulary, material.Topic)
+	}
+	current, err := s.store.GetReadingMaterial(material.ID, material.UserID)
+	if err != nil {
+		return
+	}
+	current.Passage = passage
+	current.Vocabulary = vocabulary
+	current.Questions = questions
+	current.VocabularyItems = analysis.VocabularyItems
+	current.AssociationSentences = analysis.AssociationSentences
+	current.GrammarInsights = analysis.GrammarInsights
+	current.GenerationNote = "文本已生成，正在合成音频。"
+	current.Status = "GENERATING"
+	current.GenerationProgress = 65
+	current.GenerationMessage = "正在合成音频"
+	if _, err = s.store.UpdateReadingMaterialExisting(current); err != nil {
+		return
+	}
+	s.cacheReadingMaterial(current)
+	s.generateReadingAudio(ctx, current)
+}
+
+func extractReadingVocabulary(passage string) []string {
+	seen := map[string]struct{}{}
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 	vocabulary := make([]string, 0, 8)
 	for _, word := range strings.Fields(strings.ToLower(passage)) {
-		w := strings.Trim(word, ",.!?;:\"'()[]{}")
-		if len(w) < 6 {
+		word = strings.Trim(word, ",.!?;:\"'()[]{}")
+		if len(word) < 6 {
 			continue
 		}
-		if _, exists := vocabSet[w]; exists {
+		if _, exists := seen[word]; exists {
 			continue
 		}
-		vocabSet[w] = struct{}{}
-		vocabulary = append(vocabulary, w)
+		seen[word] = struct{}{}
+		vocabulary = append(vocabulary, word)
 		if len(vocabulary) >= 8 {
 			break
 		}
 	}
+<<<<<<< HEAD
 
 	analysis := domain.ReadingAnalysis{}
 	if analyzer, ok := s.generator.(ReadingAnalyzer); ok {
@@ -1294,6 +2193,9 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 	s.queueReadingAudioGeneration(saved.ID, saved.Passage, saved.Language)
 
 	return saved, nil
+=======
+	return vocabulary
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func fallbackReadingGeneratedContent(exam string, topic string, quizCount int) ([]domain.Dialogue, []domain.QuizQuestion) {
@@ -1678,18 +2580,28 @@ var readingMeaningDict = map[string][]string{
 	"outcomes":       {"n. 结果（复数）", "n. 学习产出（教育语境）"},
 }
 
+<<<<<<< HEAD
 func (s *Service) generateReadingAudio(materialID string, text string, language string) {
 	defer s.finishReadingAudioJob(materialID)
 	if s.tts == nil || strings.TrimSpace(text) == "" {
 		if err := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
+=======
+func (s *Service) generateReadingAudio(ctx context.Context, material domain.ReadingMaterial) {
+	if s.tts == nil || strings.TrimSpace(material.Passage) == "" {
+		if err := s.updateReadingMaterial(material.ID, material.UserID, func(m *domain.ReadingMaterial) {
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 			m.AudioStatus = "FAILED"
+			m.Status = "READY"
+			m.GenerationProgress = 100
+			m.GenerationMessage = "文本生成完成，音频不可用"
 			m.GenerationNote = strings.TrimSpace(m.GenerationNote + " | audio generation unavailable")
 		}); err != nil {
-			log.Printf("reading audio fallback update failed material_id=%s err=%v", materialID, err)
+			log.Printf("reading audio fallback update failed material_id=%s err=%v", material.ID, err)
 		}
 		return
 	}
 
+<<<<<<< HEAD
 	chunks := splitTextChunks(text, 420)
 	existing, existingErr := s.store.GetReadingMaterial(materialID, "")
 	if existingErr == nil {
@@ -1725,6 +2637,22 @@ func (s *Service) generateReadingAudio(materialID string, text string, language 
 				if len(audioURLs) > 0 {
 					m.AudioURL = audioURLs[0]
 					m.AudioStatus = "PENDING"
+=======
+	chunks := splitTextChunks(material.Passage, 420)
+	audioURLs := make([]string, 0, len(chunks))
+	for index, chunk := range chunks {
+		progress := 65 + ((index * 30) / max(1, len(chunks)))
+		_ = s.updateReadingProgress(material.ID, material.UserID, "GENERATING", progress, fmt.Sprintf("正在合成音频 %d/%d", index+1, len(chunks)))
+		audioURL, err := s.tts.Synthesize(ctx, chunk, material.Language, "")
+		if err != nil || strings.TrimSpace(audioURL) == "" {
+			updateErr := s.updateReadingMaterial(material.ID, material.UserID, func(m *domain.ReadingMaterial) {
+				m.AudioStatus = "FAILED"
+				m.Status = "READY"
+				m.GenerationProgress = 100
+				m.GenerationMessage = "文本已生成，音频合成失败"
+				if err != nil {
+					m.GenerationNote = strings.TrimSpace(m.GenerationNote + " | audio error: " + err.Error())
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 				} else {
 					m.AudioStatus = "FAILED"
 				}
@@ -1735,7 +2663,7 @@ func (s *Service) generateReadingAudio(materialID string, text string, language 
 				}
 			})
 			if updateErr != nil {
-				log.Printf("reading audio failure state persist failed material_id=%s err=%v", materialID, updateErr)
+				log.Printf("reading audio failure state persist failed material_id=%s err=%v", material.ID, updateErr)
 			}
 			return
 		}
@@ -1758,17 +2686,21 @@ func (s *Service) generateReadingAudio(materialID string, text string, language 
 		}
 	}
 
-	if err := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
+	if err := s.updateReadingMaterial(material.ID, material.UserID, func(m *domain.ReadingMaterial) {
 		m.AudioStatus = "READY"
+		m.Status = "READY"
+		m.GenerationProgress = 100
+		m.GenerationMessage = "生成完成"
 		m.AudioURLs = audioURLs
 		if len(audioURLs) > 0 {
 			m.AudioURL = audioURLs[0]
 		}
 	}); err != nil {
-		log.Printf("reading audio ready state persist failed material_id=%s err=%v", materialID, err)
+		log.Printf("reading audio ready state persist failed material_id=%s err=%v", material.ID, err)
 	}
 }
 
+<<<<<<< HEAD
 func trimReadingAudioProgressNote(note string) string {
 	parts := strings.Split(note, "|")
 	kept := make([]string, 0, len(parts))
@@ -1802,6 +2734,14 @@ func (s *Service) RetryReadingAudio(userID string, materialID string) (domain.Re
 	s.cacheReadingMaterial(saved)
 	s.queueReadingAudioGeneration(saved.ID, saved.Passage, saved.Language)
 	return saved, nil
+=======
+func (s *Service) updateReadingProgress(materialID string, userID string, status string, progress int, message string) error {
+	return s.updateReadingMaterial(materialID, userID, func(material *domain.ReadingMaterial) {
+		material.Status = status
+		material.GenerationProgress = max(0, min(100, progress))
+		material.GenerationMessage = message
+	})
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func splitTextChunks(text string, maxLen int) []string {
@@ -1894,6 +2834,9 @@ func (s *Service) ReadingMaterial(userID string, materialID string) (domain.Read
 		log.Printf("reading detail audio data migration failed material_id=%s err=%v", item.ID, migrateErr)
 	}
 	s.cacheReadingMaterial(item)
+	if item.Status == "GENERATING" || item.Status == "FAILED" {
+		return item, nil
+	}
 
 	if needsReadingAnalysis(item) {
 		analysis := domain.ReadingAnalysis{}
@@ -1909,7 +2852,7 @@ func (s *Service) ReadingMaterial(userID string, materialID string) (domain.Read
 		item.VocabularyItems = normalized.VocabularyItems
 		item.AssociationSentences = normalized.AssociationSentences
 		item.GrammarInsights = normalized.GrammarInsights
-		saved, saveErr := s.store.SaveReadingMaterial(item)
+		saved, saveErr := s.store.UpdateReadingMaterialExisting(item)
 		if saveErr != nil {
 			return domain.ReadingMaterial{}, saveErr
 		}
@@ -1922,6 +2865,7 @@ func (s *Service) ReadingMaterial(userID string, materialID string) (domain.Read
 	return item, nil
 }
 
+<<<<<<< HEAD
 func (s *Service) queueReadingAudioGeneration(materialID string, text string, language string) bool {
 	return s.queueReadingAudioGenerationWithCooldown(materialID, text, language, 0)
 }
@@ -2006,6 +2950,35 @@ func ensureReadingMetadata(material *domain.ReadingMaterial) {
 	if strings.TrimSpace(material.ScenarioFamily) == "" {
 		material.ScenarioFamily = meta.ScenarioFamily
 	}
+=======
+func (s *Service) DeleteReadingMaterial(userID string, materialID string) error {
+	if strings.TrimSpace(userID) == "" {
+		return errors.New("unauthorized")
+	}
+	material, err := s.store.GetReadingMaterial(materialID, userID)
+	if err != nil {
+		return err
+	}
+	if isActiveGeneratedMaterialStatus(material.Status) {
+		return errors.New("reading material is still being generated")
+	}
+	if err := s.store.DeleteReadingMaterial(userID, materialID); err != nil {
+		return err
+	}
+	s.readingMu.Lock()
+	delete(s.readingMaterials, materialID)
+	s.readingMu.Unlock()
+	return nil
+}
+
+func isActiveGeneratedMaterialStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "GENERATING", "PROCESSING", "EVALUATING":
+		return true
+	default:
+		return false
+	}
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func (s *Service) cacheReadingMaterial(material domain.ReadingMaterial) {
@@ -2027,7 +3000,7 @@ func (s *Service) updateReadingMaterial(materialID string, userID string, mutate
 		return err
 	}
 	mutate(&material)
-	saved, err := s.store.SaveReadingMaterial(material)
+	saved, err := s.store.UpdateReadingMaterialExisting(material)
 	if err != nil {
 		return err
 	}
@@ -2095,6 +3068,11 @@ func (s *Service) StartRoleplay(userID string, theaterID string, userRole string
 	if !strings.EqualFold(strings.TrimSpace(theater.Mode), "ROLEPLAY") {
 		return domain.RoleplaySession{}, errors.New("当前剧场不是角色扮演模式")
 	}
+	release, err := s.reserveAIRequest(userID)
+	if err != nil {
+		return domain.RoleplaySession{}, err
+	}
+	defer release()
 	session := domain.RoleplaySession{
 		ID:         uuid.NewString(),
 		UserID:     userID,
@@ -2105,6 +3083,10 @@ func (s *Service) StartRoleplay(userID string, theaterID string, userRole string
 		Transcript: []domain.Dialogue{},
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
+	}
+	creditSource := session.ID + ":opening"
+	if err = s.ConsumeAIConfidence(userID, AICreditActionRoleplayTurn, creditSource, aiCreditAmount(AICreditActionRoleplayTurn)); err != nil {
+		return domain.RoleplaySession{}, err
 	}
 
 	opening := "你好，我们开始角色扮演。请先用一句话介绍你的立场。"
@@ -2128,7 +3110,13 @@ func (s *Service) StartRoleplay(userID string, theaterID string, userRole string
 		AudioURL:   "",
 		Timestamp:  0,
 	})
-	return s.store.CreateRoleplaySession(session)
+	saved, err := s.store.CreateRoleplaySession(session)
+	if err != nil {
+		s.RefundAIConfidence(userID, AICreditActionRoleplayTurn, creditSource, aiCreditAmount(AICreditActionRoleplayTurn))
+	} else {
+		s.trackFeature("ROLEPLAY_SESSION_STARTED")
+	}
+	return saved, err
 }
 
 func (s *Service) GetRoleplaySession(userID string, sessionID string) (domain.RoleplaySession, error) {
@@ -2136,6 +3124,95 @@ func (s *Service) GetRoleplaySession(userID string, sessionID string) (domain.Ro
 }
 
 func (s *Service) SubmitRoleplayReply(userID string, sessionID string, text string) (domain.RoleplaySession, error) {
+	release, err := s.reserveAIRequest(userID)
+	if err != nil {
+		return domain.RoleplaySession{}, err
+	}
+	defer release()
+	return s.submitRoleplayReplyWithContext(context.Background(), userID, sessionID, text, false, true)
+}
+
+func (s *Service) SubmitRoleplayAudio(userID string, sessionID string, audioDataURL string, language string) (domain.RoleplaySession, error) {
+	if s.asr == nil {
+		return domain.RoleplaySession{}, errors.New("asr is unavailable: configure ASR first")
+	}
+	if len(audioDataURL) > 14*1024*1024 || !strings.HasPrefix(strings.TrimSpace(audioDataURL), "data:audio/") {
+		return domain.RoleplaySession{}, errors.New("invalid audio input")
+	}
+	session, err := s.store.GetRoleplaySession(sessionID, userID)
+	if err != nil {
+		return domain.RoleplaySession{}, err
+	}
+	if !strings.EqualFold(session.Status, "active") {
+		return domain.RoleplaySession{}, errors.New("roleplay is processing or has ended")
+	}
+	release, err := s.reserveAIRequest(userID)
+	if err != nil {
+		return domain.RoleplaySession{}, err
+	}
+	creditSource := fmt.Sprintf("%s:%d", sessionID, session.TurnIndex+1)
+	if err = s.ConsumeAIConfidence(userID, AICreditActionRoleplayTurn, creditSource, aiCreditAmount(AICreditActionRoleplayTurn)); err != nil {
+		release()
+		return domain.RoleplaySession{}, err
+	}
+	session.Status = "PROCESSING"
+	session.ProcessingMessage = "正在识别语音"
+	saved, err := s.store.UpdateRoleplaySession(session)
+	if err != nil {
+		release()
+		s.RefundAIConfidence(userID, AICreditActionRoleplayTurn, creditSource, aiCreditAmount(AICreditActionRoleplayTurn))
+		return domain.RoleplaySession{}, err
+	}
+	if !s.tasks.enqueue(func(ctx context.Context) {
+		defer release()
+		s.processRoleplayAudio(ctx, userID, sessionID, audioDataURL, language, creditSource)
+	}) {
+		release()
+		s.RefundAIConfidence(userID, AICreditActionRoleplayTurn, creditSource, aiCreditAmount(AICreditActionRoleplayTurn))
+		session.Status = "active"
+		session.ProcessingMessage = ""
+		_, _ = s.store.UpdateRoleplaySession(session)
+		return domain.RoleplaySession{}, errors.New("voice practice queue is full")
+	}
+	s.trackFeature("ROLEPLAY_AUDIO_TURN_REQUESTED")
+	return saved, nil
+}
+
+func (s *Service) processRoleplayAudio(ctx context.Context, userID, sessionID, audioDataURL, language, creditSource string) {
+	transcript, err := s.asr.Transcribe(ctx, audioDataURL, language)
+	if err != nil {
+		s.RefundAIConfidence(userID, AICreditActionRoleplayTurn, creditSource, aiCreditAmount(AICreditActionRoleplayTurn))
+		s.markRoleplayProcessingFailure(userID, sessionID, "语音识别失败，请检查音频格式或 ASR 配置")
+		return
+	}
+	session, err := s.store.GetRoleplaySession(sessionID, userID)
+	if err != nil {
+		return
+	}
+	session.ProcessingMessage = "识别完成，AI 正在组织回复"
+	_, _ = s.store.UpdateRoleplaySession(session)
+	updated, err := s.submitRoleplayReplyWithContext(ctx, userID, sessionID, transcript.Text, true, false)
+	if err != nil {
+		s.RefundAIConfidence(userID, AICreditActionRoleplayTurn, creditSource, aiCreditAmount(AICreditActionRoleplayTurn))
+		s.markRoleplayProcessingFailure(userID, sessionID, "生成回复失败，请稍后重试")
+		return
+	}
+	updated.Status = "active"
+	updated.ProcessingMessage = ""
+	_, _ = s.store.UpdateRoleplaySession(updated)
+}
+
+func (s *Service) markRoleplayProcessingFailure(userID, sessionID, message string) {
+	session, err := s.store.GetRoleplaySession(sessionID, userID)
+	if err != nil {
+		return
+	}
+	session.Status = "active"
+	session.ProcessingMessage = message
+	_, _ = s.store.UpdateRoleplaySession(session)
+}
+
+func (s *Service) submitRoleplayReplyWithContext(ctx context.Context, userID string, sessionID string, text string, synthesize bool, consumeCredit bool) (domain.RoleplaySession, error) {
 	session, err := s.store.GetRoleplaySession(sessionID, userID)
 	if err != nil {
 		return domain.RoleplaySession{}, err
@@ -2148,6 +3225,12 @@ func (s *Service) SubmitRoleplayReply(userID string, sessionID string, text stri
 	if cleanText == "" {
 		return domain.RoleplaySession{}, errors.New("回复内容不能为空")
 	}
+	creditSource := fmt.Sprintf("%s:%d", sessionID, session.TurnIndex+1)
+	if consumeCredit {
+		if err = s.ConsumeAIConfidence(userID, AICreditActionRoleplayTurn, creditSource, aiCreditAmount(AICreditActionRoleplayTurn)); err != nil {
+			return domain.RoleplaySession{}, err
+		}
+	}
 
 	session.TurnIndex++
 	session.Transcript = append(session.Transcript, domain.Dialogue{
@@ -2159,7 +3242,7 @@ func (s *Service) SubmitRoleplayReply(userID string, sessionID string, text stri
 
 	eval := fallbackRoleplayTurn(theater.Language, cleanText)
 	if engine, ok := any(s.generator).(roleplayEngine); ok {
-		if generated, e := engine.RoleplayTurn(context.Background(), theater, session.UserRole, session.Transcript, cleanText); e == nil {
+		if generated, e := engine.RoleplayTurn(ctx, theater, session.UserRole, session.Transcript, cleanText); e == nil {
 			eval = generated
 		}
 	}
@@ -2167,15 +3250,34 @@ func (s *Service) SubmitRoleplayReply(userID string, sessionID string, text stri
 		session.CurrentScore = ((session.CurrentScore * (session.TurnIndex - 1)) + eval.Total) / session.TurnIndex
 	}
 	coach := buildTurnFeedbackText(theater.Language, eval)
-	session.Transcript = append(session.Transcript, domain.Dialogue{
+	assistant := domain.Dialogue{
 		Speaker:    "AI-Role",
 		Text:       coach,
 		ZhSubtitle: eval.AssistantZhSub,
 		AudioURL:   "",
 		Timestamp:  float64(session.TurnIndex) + 0.3,
-	})
+	}
+	if synthesize && s.tts != nil {
+		if audioURL, synthErr := s.tts.Synthesize(ctx, eval.AssistantReply, theater.Language, ""); synthErr == nil {
+			assistant.AudioURL = audioURL
+		}
+	}
+	session.Transcript = append(session.Transcript, assistant)
 	session.UpdatedAt = time.Now()
-	return s.store.UpdateRoleplaySession(session)
+	saved, err := s.store.UpdateRoleplaySession(session)
+	if err != nil && consumeCredit {
+		s.RefundAIConfidence(userID, AICreditActionRoleplayTurn, creditSource, aiCreditAmount(AICreditActionRoleplayTurn))
+	} else {
+		_, _ = s.awardLearningXP(userID, "SPEAKING_TURN", creditSource, eval.Total)
+		if err == nil {
+			if synthesize {
+				s.trackFeature("ROLEPLAY_AUDIO_TURN_COMPLETED")
+			} else {
+				s.trackFeature("ROLEPLAY_TEXT_TURN_COMPLETED")
+			}
+		}
+	}
+	return saved, err
 }
 
 func ensureTheaterReady(theater domain.Theater) error {
@@ -2194,6 +3296,9 @@ func (s *Service) EndRoleplay(userID string, sessionID string) (domain.RoleplayS
 	if err != nil {
 		return domain.RoleplaySession{}, err
 	}
+	if strings.EqualFold(session.Status, "completed") {
+		return session, nil
+	}
 	session.Status = "completed"
 	th, terr := s.store.GetTheater(session.TheaterID)
 	if terr != nil {
@@ -2208,8 +3313,7 @@ func (s *Service) EndRoleplay(userID string, sessionID string) (domain.RoleplayS
 		session.FinalFeedback = fallbackRoleplaySummary(th.Language, session.CurrentScore)
 	}
 	session.UpdatedAt = time.Now()
-	xp := 20 + session.CurrentScore/5
-	if err = s.store.AddUserXP(userID, xp); err != nil {
+	if _, err = s.awardLearningXP(userID, "ROLEPLAY_COMPLETE", sessionID, session.CurrentScore); err != nil {
 		return domain.RoleplaySession{}, err
 	}
 	return s.store.UpdateRoleplaySession(session)

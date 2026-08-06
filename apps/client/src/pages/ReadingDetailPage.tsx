@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, BookOpenText, ChevronLeft, ChevronRight, ClipboardCheck, MenuSquare } from "lucide-react";
-import { getApiBaseUrl, readingMaterial, submitReadingAnswers } from "../api";
+import { ArrowLeft, BookOpenText, ChevronLeft, ChevronRight, ClipboardCheck, MenuSquare, Trash2 } from "lucide-react";
+import { deleteReadingMaterial, getApiBaseUrl, readingMaterial, submitReadingAnswers } from "../api";
 import { useAppStore } from "../store";
 import type { ReadingMaterial } from "../types";
 
@@ -29,6 +29,24 @@ const READING_LOADING_PROGRESS_CAP = 92;
 const READING_LOADING_PROGRESS_TICK_MS = 360;
 const READING_LOADING_HINT_TICK_MS = 4400;
 const AUDIO_FETCH_TIMEOUT_MS = 20000;
+const ACTIVE_READING_MATERIAL_STATUSES = new Set(["GENERATING", "PROCESSING", "EVALUATING"]);
+
+function isReadingMaterialActive(status?: string) {
+  return ACTIVE_READING_MATERIAL_STATUSES.has(status ?? "");
+}
+
+function getReadingDeletionDisabledMessage(status?: string) {
+  switch (status) {
+    case "GENERATING":
+      return "材料生成中，暂不可删除。完成后可删除。";
+    case "PROCESSING":
+      return "材料处理中，暂不可删除。处理完成后可删除。";
+    case "EVALUATING":
+      return "材料评估中，暂不可删除。评估完成后可删除。";
+    default:
+      return "";
+  }
+}
 
 type AudioMergeState = "idle" | "merging" | "ready" | "fallback";
 
@@ -40,6 +58,8 @@ export function ReadingDetailPage() {
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [referenceOpen, setReferenceOpen] = useState(false);
   const [articleParagraphIndex, setArticleParagraphIndex] = useState(0);
   const [referenceParagraphIndex, setReferenceParagraphIndex] = useState(0);
@@ -53,6 +73,7 @@ export function ReadingDetailPage() {
   const readingContentRef = useRef<HTMLElement | null>(null);
   const touchStartXRef = useRef<number | null>(null);
   const loadingSeqRef = useRef(0);
+  const deleteButtonRef = useRef<HTMLButtonElement | null>(null);
   const setResult = useAppStore((s) => s.setResult);
   const refreshUserXP = useAppStore((s) => s.refreshUserXP);
 
@@ -193,6 +214,16 @@ export function ReadingDetailPage() {
   }, [id, navigate]);
 
   useEffect(() => {
+    if (!item || !isReadingMaterialActive(item.status)) return;
+    const timer = window.setInterval(() => {
+      void readingMaterial(item.id)
+        .then((current) => setItem(current))
+        .catch((error) => console.error("reading generation status poll failed", error));
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [item]);
+
+  useEffect(() => {
     if (item) return;
     const progressTimer = window.setInterval(() => {
       setLoadingProgress((prev) => {
@@ -225,7 +256,7 @@ export function ReadingDetailPage() {
   }, [activeView]);
 
   async function handleSubmitReadingAnswers() {
-    if (!item || submitting) return;
+    if (!item || submitting || isDeleting) return;
     setSubmitError("");
     setSubmitting(true);
     try {
@@ -244,6 +275,24 @@ export function ReadingDetailPage() {
       setSubmitted(true);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleDeleteReadingMaterial() {
+    if (!item || isDeleting || isReadingMaterialActive(item.status)) return;
+    const confirmed = window.confirm(`确定删除阅读材料“${item.title}”吗？删除后无法恢复；该材料的阅读答题记录也会一并删除。`);
+    if (!confirmed) return;
+
+    setDeleteError("");
+    setIsDeleting(true);
+    try {
+      await deleteReadingMaterial(item.id);
+      navigate("/reading", { replace: true, state: { message: "阅读材料已删除", focus: "reading-history" } });
+    } catch (error) {
+      setDeleteError((error as Error).message || "删除阅读材料失败，请稍后重试。");
+      window.requestAnimationFrame(() => deleteButtonRef.current?.focus());
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -321,13 +370,53 @@ export function ReadingDetailPage() {
           <div className="reading-loading-cinematic" aria-live="polite">
             <span key={`hint-${loadingHintIndex}`} className="reading-loading-line">{currentHint}</span>
           </div>
+          <button type="button" className="btn-ghost" onClick={() => navigate("/reading")}>返回阅读中心</button>
+        </section>
+      </main>
+    );
+  }
+
+  const deleteDisabledMessage = getReadingDeletionDisabledMessage(item.status);
+
+  if (item.status === "GENERATING") {
+    return (
+      <main className="page-center">
+        <section className="card" style={{ maxWidth: 560 }}>
+          <h2 style={{ marginBottom: 8 }}>阅读材料生成中</h2>
+          <p style={{ margin: 0 }}>{item.generationMessage || "正在准备阅读文本与语音。"}</p>
+          <div className="task-progress" style={{ marginTop: 16 }}>
+            <div className="task-progress-head"><span>阅读生成进度</span><strong>{item.generationProgress ?? 0}%</strong></div>
+            <div className="progress-bar"><div className="progress-value" style={{ width: `${Math.max(4, item.generationProgress ?? 0)}%` }} /></div>
+          </div>
+          <div className="row" style={{ marginTop: 16 }}>
+            <button type="button" className="btn-ghost" onClick={() => navigate("/reading")}>返回阅读中心</button>
+            <button type="button" className="btn-danger" disabled aria-label={`删除阅读材料《${item.title}》`}><Trash2 size={14} /> 删除材料</button>
+          </div>
+          <p className="muted-note">{deleteDisabledMessage}</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (item.status === "FAILED") {
+    return (
+      <main className="page-center">
+        <section className="card" style={{ maxWidth: 560 }}>
+          <h2 style={{ marginBottom: 8 }}>阅读材料生成失败</h2>
+          <p style={{ margin: 0 }}>{item.generationMessage || "请返回阅读中心后重新创建材料。"}</p>
+          <div className="row" style={{ marginTop: 16 }}>
+            <button type="button" className="btn-ghost" disabled={isDeleting} onClick={() => navigate("/reading")}>返回阅读中心</button>
+            <button ref={deleteButtonRef} type="button" className="btn-danger" disabled={isDeleting} onClick={() => void handleDeleteReadingMaterial()} aria-label={`删除阅读材料《${item.title}》`}><Trash2 size={14} /> {isDeleting ? "删除中…" : "删除材料"}</button>
+          </div>
+          {isDeleting ? <p role="status" aria-live="polite">正在删除，请稍候…</p> : null}
+          {deleteError ? <p className="field-error" role="alert">{deleteError}</p> : null}
         </section>
       </main>
     );
   }
 
   return (
-    <main className="page">
+    <main className="page" aria-busy={isDeleting}>
       <section className="card reading-shell">
         <header className="reading-header">
           <div>
@@ -335,16 +424,23 @@ export function ReadingDetailPage() {
             <p>{item.topic}</p>
           </div>
           <div className="row">
-            <button className="btn-ghost" onClick={() => navigate("/reading")}>
+            <button className="btn-ghost" disabled={isDeleting} onClick={() => navigate("/reading")}>
               <ArrowLeft size={14} /> 返回阅读中心
+            </button>
+            <button ref={deleteButtonRef} type="button" className="btn-danger" disabled={isDeleting || Boolean(deleteDisabledMessage)} onClick={() => void handleDeleteReadingMaterial()} aria-label={`删除阅读材料《${item.title}》`}>
+              <Trash2 size={14} /> {isDeleting ? "删除中…" : "删除材料"}
             </button>
           </div>
         </header>
+        {isDeleting ? <p role="status" aria-live="polite">正在删除，请稍候…</p> : null}
+        {deleteError ? <p className="field-error" role="alert">{deleteError}</p> : null}
+        {deleteDisabledMessage ? <p className="muted-note">{deleteDisabledMessage}</p> : null}
 
         <nav className="reading-tabs" aria-label="阅读详情子页面切换">
           <button
             type="button"
             className={activeView === "article" ? "route-tab active" : "route-tab"}
+            disabled={isDeleting}
             onClick={() => navigate(`/reading/${id}/article`)}
           >
             <BookOpenText size={14} /> 阅读文章
@@ -352,6 +448,7 @@ export function ReadingDetailPage() {
           <button
             type="button"
             className={activeView === "quiz" ? "route-tab active" : "route-tab"}
+            disabled={isDeleting}
             onClick={() => navigate(`/reading/${id}/quiz`)}
           >
             <ClipboardCheck size={14} /> 阅读答题
@@ -528,7 +625,7 @@ export function ReadingDetailPage() {
             <>
               <article className="stage-banner reading-quiz-topbar">
                 <strong>阅读题（{item.questions?.length ?? 0}题）</strong>
-                <button type="button" className="btn-ghost" onClick={() => setReferenceOpen((v) => !v)}>
+                <button type="button" className="btn-ghost" disabled={isDeleting} onClick={() => setReferenceOpen((v) => !v)}>
                   <MenuSquare size={14} /> {referenceOpen ? "关闭参考文章" : "打开参考文章"}
                 </button>
               </article>
@@ -558,10 +655,10 @@ export function ReadingDetailPage() {
                                 type="button"
                                 className={classNames}
                                 onClick={() => {
-                                  if (submitted) return;
+                                  if (submitted || isDeleting) return;
                                   setAnswers((prev) => ({ ...prev, [idx]: i }));
                                 }}
-                              >
+                              disabled={isDeleting}>
                                 {String.fromCharCode(65 + i)}. {opt}
                               </button>
                             );
@@ -572,12 +669,13 @@ export function ReadingDetailPage() {
                   ))}
                 </ol>
                 <div className="row">
-                  <button type="button" onClick={handleSubmitReadingAnswers} disabled={submitting}>
+                  <button type="button" onClick={handleSubmitReadingAnswers} disabled={submitting || isDeleting}>
                     {submitting ? "提交中..." : "提交答案"}
                   </button>
                   <button
                     type="button"
                     className="btn-ghost"
+                    disabled={isDeleting}
                     onClick={() => {
                       setAnswers({});
                       setSubmitted(false);

@@ -61,7 +61,7 @@ JSON format:
 		string(historyBytes),
 		strings.TrimSpace(userReply),
 	)
-	content, err := g.callJSONCompletion(ctx, sys, prompt)
+	content, err := g.callJSONCompletion(ctx, sys, prompt, "ROLEPLAY_TURN")
 	if err != nil {
 		return domain.RoleplayTurnEval{}, err
 	}
@@ -114,7 +114,7 @@ JSON format:
 		currentScore,
 		string(historyBytes),
 	)
-	content, err := g.callJSONCompletion(ctx, sys, prompt)
+	content, err := g.callJSONCompletion(ctx, sys, prompt, "ROLEPLAY_SUMMARY")
 	if err != nil {
 		return "", err
 	}
@@ -129,7 +129,7 @@ JSON format:
 	return summary, nil
 }
 
-func (g *OpenAIGenerator) callJSONCompletion(ctx context.Context, systemPrompt string, userPrompt string) (string, error) {
+func (g *OpenAIGenerator) callJSONCompletion(ctx context.Context, systemPrompt string, userPrompt string, operationValues ...string) (string, error) {
 	model := g.modelName()
 	payload := map[string]any{
 		"model": model,
@@ -139,7 +139,7 @@ func (g *OpenAIGenerator) callJSONCompletion(ctx context.Context, systemPrompt s
 		},
 		"temperature": 0.5,
 	}
-	return g.callModelJSONPayload(ctx, payload)
+	return g.callModelJSONPayload(ctx, payload, operationValues...)
 }
 
 func clamp(v, min, max int) int {

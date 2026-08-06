@@ -1,7 +1,15 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+<<<<<<< HEAD
 import { BadgeCheck, ChevronDown, ChevronUp, Download, Eye, EyeOff, IdCard, Mail, UserRound } from "lucide-react";
 import { exportOAuthAccounts, getModelConfig, getTTSConfig, me, updateModelConfig, updateProfile, updateTTSConfig } from "../api";
+=======
+import { AudioLines, BadgeCheck, BrainCircuit, ChevronDown, ChevronUp, Crown, Eye, EyeOff, History, IdCard, LogOut, Mail, SlidersHorizontal, UserRound, Waves } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { isCommercialEdition, isMiniProgramEdition } from "../edition";
+import { getASRConfig, getModelConfig, getTTSConfig, logout, me, updateASRConfig, updateModelConfig, updateProfile, updateTTSConfig } from "../api";
+import { ASR_PROVIDER_PRESETS, getASRProviderPreset, type ASRProviderId } from "../asrProviders";
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
 import { getModelProviderPreset, MODEL_PROVIDER_PRESETS, type ModelProviderId } from "../modelProviders";
 import { useAppStore } from "../store";
 import {
@@ -17,7 +25,7 @@ import {
   type TTSProviderId,
   type XiaomiTTSModelId
 } from "../ttsProviders";
-import type { ModelConfig, TTSConfig } from "../types";
+import type { ASRConfig, ModelConfig, TTSConfig } from "../types";
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -29,29 +37,42 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 export function ProfilePage() {
+	const navigate = useNavigate();
   const user = useAppStore((s) => s.user);
   const setUser = useAppStore((s) => s.setUser);
+  const clearSession = useAppStore((s) => s.clearSession);
   const [nickname, setNickname] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
   const [bio, setBio] = useState("");
   const [profileMessage, setProfileMessage] = useState("");
   const [modelMessage, setModelMessage] = useState("");
   const [ttsMessage, setTTSMessage] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const [asrMessage, setASRMessage] = useState("");
   const [avatarLoadError, setAvatarLoadError] = useState(false);
   const [showEmail, setShowEmail] = useState(false);
   const [modelConfig, setModelConfig] = useState<ModelConfig>();
-  const [modelSectionOpen, setModelSectionOpen] = useState(true);
+  const [modelSectionOpen, setModelSectionOpen] = useState(false);
   const [modelProvider, setModelProvider] = useState<ModelProviderId>("OPENAI");
   const [modelName, setModelName] = useState("");
   const [modelBaseURL, setModelBaseURL] = useState("");
   const [modelAPIKey, setModelAPIKey] = useState("");
   const [ttsConfig, setTTSConfig] = useState<TTSConfig>();
-  const [ttsSectionOpen, setTTSSectionOpen] = useState(true);
+  const [ttsSectionOpen, setTTSSectionOpen] = useState(false);
   const [ttsProvider, setTTSProvider] = useState<TTSProviderId>("XIAOMI");
   const [ttsModel, setTTSModel] = useState("");
   const [ttsBaseURL, setTTSBaseURL] = useState("");
   const [ttsVoice, setTTSVoice] = useState("");
   const [ttsAPIKey, setTTSAPIKey] = useState("");
+
+  const [asrConfig, setASRConfig] = useState<ASRConfig>();
+  const [asrSectionOpen, setASRSectionOpen] = useState(false);
+  const [asrProvider, setASRProvider] = useState<ASRProviderId>("XIAOMI");
+  const [asrModel, setASRModel] = useState("");
+  const [asrBaseURL, setASRBaseURL] = useState("");
+  const [asrAPIKey, setASRAPIKey] = useState("");
+  const [asrAppID, setASRAppID] = useState("");
   const [ttsVoiceFileLabel, setTTSVoiceFileLabel] = useState("");
   const [oauthProviderFilter, setOAuthProviderFilter] = useState("");
   const [oauthExporting, setOAuthExporting] = useState(false);
@@ -59,6 +80,8 @@ export function ProfilePage() {
   const currentModelPreset = useMemo(() => getModelProviderPreset(modelProvider), [modelProvider]);
   const currentTTSPreset = useMemo(() => getTTSProviderPreset(ttsProvider), [ttsProvider]);
   const currentXiaomiModelPreset = useMemo(() => getXiaomiTTSModelPreset(ttsModel), [ttsModel]);
+  const currentASRPreset = useMemo(() => getASRProviderPreset(asrProvider), [asrProvider]);
+  const hasASRKeyForSelectedProvider = asrConfig?.provider === asrProvider && asrConfig.hasApiKey;
 
   function applyTTSConfig(next: TTSConfig) {
     const normalizedProvider = getTTSProviderPreset(next.provider).id;
@@ -91,7 +114,7 @@ export function ProfilePage() {
   useEffect(() => {
     void (async () => {
       try {
-        const [profile, config, tts] = await Promise.all([me(), getModelConfig(), getTTSConfig()]);
+		const [profile, config, tts, asr] = await Promise.all([me(), getModelConfig(), getTTSConfig(), getASRConfig()]);
         setUser(profile);
         setNickname(profile.nickname ?? "");
         setAvatarUrl(profile.avatarUrl ?? "");
@@ -101,6 +124,7 @@ export function ProfilePage() {
         setModelName(config.model ?? "");
         setModelBaseURL(config.baseURL ?? "");
         applyTTSConfig(tts);
+        setASRConfig(asr); setASRProvider(getASRProviderPreset(asr.provider).id); setASRModel(asr.model); setASRBaseURL(asr.baseURL); setASRAppID(asr.appId ?? "");
       } catch (e) {
         console.error("load profile, model config, or tts config failed", e);
       }
@@ -116,6 +140,21 @@ export function ProfilePage() {
       setProfileMessage("资料已更新");
     } catch (e) {
       console.error("update profile failed", e);
+    }
+  }
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    try {
+      await logout();
+    } catch (error) {
+      // 本地会话仍需清理，确保后端短暂不可用时用户也能安全退出。
+      console.warn("remote logout failed; clearing local session", error);
+    } finally {
+      localStorage.removeItem("accessToken");
+			localStorage.removeItem("refreshToken");
+      clearSession();
+      navigate("/login", { replace: true });
     }
   }
 
@@ -164,6 +203,7 @@ export function ProfilePage() {
     }
   }
 
+<<<<<<< HEAD
   async function handleOAuthExport() {
     setOAuthMessage("");
     setOAuthExporting(true);
@@ -185,6 +225,33 @@ export function ProfilePage() {
       setOAuthMessage("OAuth 账号导出失败，请确认当前账号已登录且后端已部署最新版本。");
     } finally {
       setOAuthExporting(false);
+=======
+  async function handleASRSubmit(event: FormEvent) {
+    event.preventDefault(); setASRMessage("");
+    try {
+      const updated = await updateASRConfig({ provider: asrProvider, model: asrModel.trim(), baseURL: asrBaseURL.trim(), apiKey: asrAPIKey.trim(), appId: asrAppID.trim() });
+      setASRConfig(updated); setASRProvider(getASRProviderPreset(updated.provider).id); setASRModel(updated.model); setASRBaseURL(updated.baseURL); setASRAppID(updated.appId ?? ""); setASRAPIKey("");
+      setASRMessage("ASR 配置已更新，剧场语音练习会在下一轮使用新配置。");
+    } catch (error) { console.error("update asr config failed", error); setASRMessage((error as Error).message || "ASR 配置更新失败，请检查地址和 Key。"); }
+  }
+
+  function handleASRProviderChange(nextProvider: ASRProviderId) {
+    const previousPreset = getASRProviderPreset(asrProvider);
+    const nextPreset = getASRProviderPreset(nextProvider);
+    setASRProvider(nextProvider);
+    setASRBaseURL((previous) => (
+      shouldSwapToProviderDefault(previous, previousPreset.defaults.baseURL)
+        ? nextPreset.defaults.baseURL
+        : previous
+    ));
+    setASRModel((previous) => (
+      shouldSwapToProviderDefault(previous, previousPreset.defaults.model)
+        ? nextPreset.defaults.model
+        : previous
+    ));
+    if (!nextPreset.requiresAppID) {
+      setASRAppID("");
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
     }
   }
 
@@ -294,10 +361,31 @@ export function ProfilePage() {
   }
 
   return (
-    <main className="page-center">
-      <motion.section className="card auth-shell" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-        <div className="auth-main">
-          <h2>个人中心</h2>
+    <main className="page settings-page">
+      <motion.section className="settings-shell" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
+        <div className="settings-main">
+          <header className="settings-page-header">
+            <span className="eyebrow"><SlidersHorizontal size={15} /> Workspace settings</span>
+            <div>
+              <h1>设置与服务</h1>
+              <p>管理学习身份、内容模型和语音服务。每项配置独立保存，修改后会立即应用到新的学习任务。</p>
+            </div>
+          </header>
+
+          <section className="settings-account-card" aria-labelledby="profile-settings-title">
+            <div className="settings-section-heading">
+              <div>
+                <span className="settings-section-kicker">Account</span>
+                <h2 id="profile-settings-title">学习身份</h2>
+              </div>
+              <div className="settings-account-actions">
+                <span className="settings-section-hint">公开信息仅用于你的学习档案</span>
+                <button type="button" className="profile-logout-button" onClick={() => void handleLogout()} disabled={loggingOut}>
+                  <LogOut size={15} />
+                  {loggingOut ? "退出中…" : "退出登录"}
+                </button>
+              </div>
+            </div>
           <article className="profile-hero">
             {safeAvatarUrl ? (
               <img
@@ -319,7 +407,7 @@ export function ProfilePage() {
             </div>
           </article>
 
-          <form onSubmit={handleSubmit}>
+          <form className="settings-profile-form" onSubmit={handleSubmit}>
             <div className="profile-email">
               <span className="profile-email-label"><Mail size={14} /> 邮箱</span>
               <span className="profile-email-value">{showEmail ? user?.email ?? "--" : "已隐藏"}</span>
@@ -350,11 +438,13 @@ export function ProfilePage() {
             {avatarUrl.trim() && !safeAvatarUrl ? <p className="error">头像链接无效，仅支持 http/https 图片链接。</p> : null}
             {avatarLoadError && safeAvatarUrl ? <p className="error">头像加载失败，请确认图片链接可公开访问。</p> : null}
           </form>
+          </section>
 
-          <form onSubmit={handleModelSubmit} style={{ marginTop: 18 }}>
-            <article className="stage-banner profile-section-banner" style={{ marginBottom: 12 }}>
+          <section className="settings-service-stack" aria-label="AI 服务设置">
+          <form className="settings-service-card" onSubmit={handleModelSubmit}>
+            <article className="stage-banner profile-section-banner settings-service-header model-service">
               <div>
-                <strong>模型管理</strong>
+                <strong><BrainCircuit size={17} /> 内容模型</strong>
                 <p style={{ margin: "6px 0 0" }}>这里修改的是当前服务端生成模型配置，保存后剧场生成、阅读分析和角色扮演会立即使用新配置。</p>
               </div>
               <button
@@ -449,6 +539,7 @@ export function ProfilePage() {
             ) : null}
           </form>
 
+<<<<<<< HEAD
           <section className="profile-section-content oauth-export-panel" style={{ marginTop: 18 }}>
             <article className="stage-banner profile-section-banner">
               <div>
@@ -478,8 +569,12 @@ export function ProfilePage() {
 
           <form onSubmit={handleTTSSubmit} style={{ marginTop: 18 }}>
             <article className="stage-banner profile-section-banner" style={{ marginBottom: 12 }}>
+=======
+          <form className="settings-service-card" onSubmit={handleTTSSubmit}>
+            <article className="stage-banner profile-section-banner settings-service-header tts-service">
+>>>>>>> 73c0fbd (feat: prepare mini program production release)
               <div>
-                <strong>TTS 管理</strong>
+                <strong><AudioLines size={17} /> 语音合成</strong>
                 <p style={{ margin: "6px 0 0" }}>可切换不同 TTS 厂商预设。当前预设会自动带入推荐地址、模型与音色，你也可以继续手动调整。</p>
               </div>
               <button
@@ -656,15 +751,70 @@ export function ProfilePage() {
               </div>
             ) : null}
           </form>
+
+          <form className="settings-service-card" onSubmit={handleASRSubmit}>
+            <article className="stage-banner profile-section-banner settings-service-header asr-service">
+              <div><strong>ASR 语音识别管理</strong><p style={{ margin: "6px 0 0" }}>用于剧场库语音练习：录音会先转为 WAV，再进入后台识别、AI 续聊和 TTS 语音回复。</p></div>
+              <button type="button" className="section-toggle" onClick={() => setASRSectionOpen((prev) => !prev)} aria-expanded={asrSectionOpen}>{asrSectionOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}{asrSectionOpen ? "隐藏" : "展开"}</button>
+            </article>
+            {asrSectionOpen ? <div className="profile-section-content asr-config-grid">
+              <label>
+                <span>ASR 接入方式</span>
+                <select value={asrProvider} onChange={(event) => handleASRProviderChange(event.target.value as ASRProviderId)}>
+                  {ASR_PROVIDER_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+                </select>
+              </label>
+              <p className="profile-provider-note asr-provider-description">{currentASRPreset.description}</p>
+              <label>
+                <span>模型</span>
+                <input value={asrModel} onChange={(event) => setASRModel(event.target.value)} placeholder={currentASRPreset.defaults.model} />
+              </label>
+              <label>
+                <span>Base URL</span>
+                <input value={asrBaseURL} onChange={(event) => setASRBaseURL(event.target.value)} placeholder={currentASRPreset.defaults.baseURL} />
+              </label>
+              {currentASRPreset.requiresAppID ? <label>
+                <span>豆包 App ID</span>
+                <input value={asrAppID} onChange={(event) => setASRAppID(event.target.value)} placeholder="请输入火山引擎 App ID" required />
+              </label> : null}
+              <label>
+                <span>{asrProvider === "DOUBAO" ? "Access Token" : "API Key"}</span>
+                <input type="password" value={asrAPIKey} onChange={(event) => setASRAPIKey(event.target.value)} placeholder={hasASRKeyForSelectedProvider ? "留空则保持当前 Key 不变" : asrProvider === "DOUBAO" ? "请输入火山引擎 Access Token" : "请输入 ASR API Key"} />
+              </label>
+              <div className="asr-config-footer">
+                <button type="submit">保存 ASR 配置</button>
+                {asrMessage ? <p>{asrMessage}</p> : null}
+                <small>当前 Key：{hasASRKeyForSelectedProvider ? `已配置（${asrConfig?.apiKeyPreview || "已隐藏"}）` : "未配置"}</small>
+              </div>
+            </div> : null}
+          </form>
+          </section>
+
+			{isCommercialEdition && !isMiniProgramEdition ? <article className="stage-banner profile-voice-library-link settings-voice-library-card membership-profile-link">
+				<div><strong><Crown size={16} /> 会员与 AI 点数</strong><p style={{ margin: "6px 0 0" }}>免费用户每日 20 点；开通会员可去广告并提升生成、评分和语音服务额度。</p></div>
+				<button type="button" onClick={() => navigate("/membership")}>查看会员</button>
+			</article> : null}
+
+			<article className="stage-banner profile-voice-library-link settings-voice-library-card">
+				<div><strong><Waves size={16} /> 角色音色库</strong><p style={{ margin: "6px 0 0" }}>在独立页面创建、试听、筛选和管理角色声线；完成后可分配给剧场角色。</p></div>
+				<button type="button" onClick={() => navigate("/voices")}>打开音色库</button>
+			</article>
+
+			<article className="stage-banner profile-voice-library-link settings-voice-library-card release-notes-profile-link">
+				<div><strong><History size={16} /> 产品更新日志</strong><p style={{ margin: "6px 0 0" }}>当前 V1.0.1：查看已上线功能和之后每一次的版本更新。</p></div>
+				<button type="button" onClick={() => navigate("/updates")}>查看更新</button>
+			</article>
         </div>
 
-        <aside className="floating-panel auth-side">
+        <aside className="settings-side-panel">
+          <span className="eyebrow"><Waves size={15} /> Learning space</span>
           <h3>成长轨迹</h3>
-          <p>你可以在这里维护学习身份信息，便于复练与分享时展示。</p>
+          <p>在此维护学习身份和服务配置，让每一次练习更贴近你的目标。</p>
           <div className="mini-progress" aria-hidden>
             <span style={{ width: `${Math.min(100, Math.max(8, (user?.totalXP ?? 0) / 10))}%` }} />
           </div>
-          <p>当前总 XP：{user?.totalXP ?? 0}</p>
+			<p>{user?.rankLabel ?? "初学探索者"} · Lv.{user?.level ?? 1}</p>
+			<p>当前总 XP：{user?.totalXP ?? 0}</p>
         </aside>
       </motion.section>
     </main>

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { BookOpenText, ScrollText } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { BookOpenText, ScrollText, Search } from "lucide-react";
 import { readingMaterials } from "../api";
 import { useAppStore } from "../store";
 import { calculateStageProgress, getStageRequirement } from "../xp";
@@ -24,29 +24,83 @@ const readingStages = {
 
 export function ReadingPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isLibraryPage = location.pathname === "/reading/library";
   const user = useAppStore((s) => s.user);
   const [exam, setExam] = useState<ExamType>("IELTS");
   const [materials, setMaterials] = useState<import("../types").ReadingMaterial[]>([]);
+  const [loadingMaterials, setLoadingMaterials] = useState(true);
+  const [materialsError, setMaterialsError] = useState("");
+  const [historyMessage, setHistoryMessage] = useState("");
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyStatus, setHistoryStatus] = useState("ALL");
+  const [historyPage, setHistoryPage] = useState(1);
+  const historyTitleRef = useRef<HTMLHeadingElement | null>(null);
+
+  const loadMaterials = useCallback(async (showLoading = true) => {
+    if (showLoading) {
+      setLoadingMaterials(true);
+      setMaterialsError("");
+    }
+    try {
+      setMaterials(await readingMaterials(exam));
+    } catch (error) {
+      if (showLoading) {
+        setMaterials([]);
+        setMaterialsError((error as Error).message || "阅读材料加载失败，请稍后重试。");
+      }
+    } finally {
+      if (showLoading) setLoadingMaterials(false);
+    }
+  }, [exam]);
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const data = await readingMaterials(exam);
-        setMaterials(data);
-      } catch {
-        setMaterials([]);
-      }
-    })();
-  }, [exam]);
+    if (isLibraryPage) void loadMaterials();
+  }, [isLibraryPage, loadMaterials]);
+
+  useEffect(() => {
+    const state = location.state as { message?: string } | null;
+    if (!isLibraryPage || !state?.message) return;
+    setHistoryMessage(state.message);
+    void loadMaterials();
+    navigate(location.pathname, { replace: true, state: null });
+  }, [isLibraryPage, loadMaterials, location.pathname, location.state, navigate]);
+
+  useEffect(() => {
+    if (historyMessage && !loadingMaterials) historyTitleRef.current?.focus();
+  }, [historyMessage, loadingMaterials]);
+
+  useEffect(() => {
+    if (!materials.some((item) => item.status === "GENERATING")) return;
+    const timer = window.setInterval(() => {
+      void loadMaterials(false);
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [loadMaterials, materials]);
 
   const stages = useMemo(() => readingStages[exam], [exam]);
   const totalXP = user?.totalXP ?? 0;
   const stageProgress = useMemo(() => calculateStageProgress(totalXP, stages.length), [stages.length, totalXP]);
+  const filteredMaterials = useMemo(() => {
+    const query = historyQuery.trim().toLowerCase();
+    return materials.filter((item) => {
+      const status = item.status ?? "READY";
+      const matchesStatus = historyStatus === "ALL" || status === historyStatus;
+      const matchesQuery = !query || [item.title, item.topic, item.level, item.language].some((value) => value.toLowerCase().includes(query));
+      return matchesStatus && matchesQuery;
+    });
+  }, [historyQuery, historyStatus, materials]);
+  const historyPageCount = Math.max(1, Math.ceil(filteredMaterials.length / 8));
+  const visibleMaterials = filteredMaterials.slice((historyPage - 1) * 8, historyPage * 8);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [exam, historyQuery, historyStatus]);
 
   return (
     <main className="page">
       <section className="card stage-shell">
-        <div className="route-header">
+        {!isLibraryPage ? <><div className="route-header">
           <div>
             <h2>阅读训练中心</h2>
             <p>先选择阶段，再进入子页生成阅读材料</p>
@@ -84,22 +138,41 @@ export function ReadingPage() {
             </article>
           ))}
         </div>
+        <article className="stage-banner" style={{ marginTop: 12 }}><h3><ScrollText size={14} /> 阅读材料库</h3><p>在独立子页中搜索、筛选和分页查看你生成的阅读材料。</p><button type="button" className="btn-ghost" onClick={() => navigate("/reading/library")}>查看我的阅读材料</button></article>
+        </> : null}
 
-        <article className="stage-banner" style={{ marginTop: 10 }}>
-          <strong><ScrollText size={14} /> 历史阅读材料</strong>
-          {materials.length === 0 ? <p>暂无历史阅读材料。</p> : null}
-          <ul className="dialogue-list">
-            {materials.map((item) => (
-              <li key={item.id} className="dialogue" role="button" onClick={() => navigate(`/reading/${item.id}/article`)}>
+        {isLibraryPage ? <article className="stage-banner" style={{ marginTop: 10 }} aria-labelledby="reading-history-title">
+          <div className="route-header"><div><h2 ref={historyTitleRef} id="reading-history-title" tabIndex={-1}><ScrollText size={16} /> 阅读材料库</h2><p>搜索、筛选并按页查看已生成的材料。</p></div><button type="button" className="btn-ghost" onClick={() => navigate("/reading")}>返回阅读训练</button></div>
+           <div className="library-toolbar" aria-label="筛选阅读材料">
+             <label className="library-search"><Search size={16} /><span className="sr-only">搜索阅读材料</span><input value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="搜索标题、主题或难度" /></label>
+             <label>状态<select value={historyStatus} onChange={(event) => setHistoryStatus(event.target.value)}><option value="ALL">全部状态</option><option value="READY">已完成</option><option value="GENERATING">生成中</option><option value="FAILED">生成失败</option></select></label>
+           </div>
+           {historyMessage ? <p role="status" aria-live="polite">{historyMessage}</p> : null}
+          {loadingMaterials ? <p className="muted-note">正在加载阅读材料…</p> : null}
+          {materialsError ? <p className="field-error" role="alert">{materialsError}</p> : null}
+          {materialsError ? <button type="button" className="btn-ghost" onClick={() => void loadMaterials()}>重试加载</button> : null}
+           {!loadingMaterials && !materialsError && materials.length === 0 ? <p>暂无历史阅读材料。</p> : null}
+           {!loadingMaterials && !materialsError && materials.length > 0 ? <p className="library-result-count">找到 {filteredMaterials.length} 份材料，第 {historyPage} / {historyPageCount} 页。</p> : null}
+           {!loadingMaterials && !materialsError && materials.length > 0 && filteredMaterials.length === 0 ? <p className="muted-note">没有符合当前搜索或筛选条件的阅读材料。</p> : null}
+           {!loadingMaterials && !materialsError ? <ul key={`${historyPage}-${historyQuery}-${historyStatus}`} className="dialogue-list library-page-list">
+             {visibleMaterials.map((item) => (
+              <li key={item.id} className="dialogue">
                 <div className="row" style={{ justifyContent: "space-between" }}>
                   <strong>{item.title}</strong>
-                  <small>{item.audioStatus ?? "PENDING"}</small>
+                  <small>{item.status === "GENERATING" ? "生成中" : item.status === "FAILED" ? "生成失败" : item.audioStatus ?? "PENDING"}</small>
                 </div>
                 <p>{item.topic}</p>
+                {item.status === "GENERATING" ? <div className="task-progress" aria-live="polite"><div className="task-progress-head"><span>{item.generationMessage || "正在生成阅读材料"}</span><strong>{item.generationProgress ?? 0}%</strong></div><div className="progress-bar"><div className="progress-value" style={{ width: `${Math.max(4, item.generationProgress ?? 0)}%` }} /></div></div> : null}
+                <div className="dialogue-actions">
+                  <button type="button" className="btn-ghost" onClick={() => navigate(`/reading/${item.id}/article`)}>
+                    {item.status === "GENERATING" ? "查看生成进度" : item.status === "FAILED" ? "查看失败原因" : "查看材料"}
+                  </button>
+                </div>
               </li>
-            ))}
-          </ul>
-        </article>
+             ))}
+           </ul> : null}
+           {!loadingMaterials && !materialsError && filteredMaterials.length > 8 ? <div className="library-pagination"><button type="button" className="btn-ghost" disabled={historyPage <= 1} onClick={() => setHistoryPage((page) => page - 1)}>上一页</button><span>第 {historyPage} / {historyPageCount} 页</span><button type="button" className="btn-ghost" disabled={historyPage >= historyPageCount} onClick={() => setHistoryPage((page) => page + 1)}>下一页</button></div> : null}
+         </article> : null}
       </section>
     </main>
   );

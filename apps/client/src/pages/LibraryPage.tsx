@@ -1,15 +1,18 @@
-import { TouchEvent, useCallback, useEffect, useRef, useState } from "react";
+import { TouchEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Check, Copy, Heart, Share2, Theater, Trash2, TrendingUp } from "lucide-react";
+import { Check, Copy, Heart, Search, Share2, Theater, Trash2, TrendingUp } from "lucide-react";
 import { deleteTheater, myTheaters, shareTheater, toggleFavorite } from "../api";
 import { useAppStore } from "../store";
+import { AdSlot } from "../components/AdSlot";
 
 export function LibraryPage() {
   const [languageFilter, setLanguageFilter] = useState<"ALL" | "CANTONESE" | "ENGLISH">("ALL");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "READY" | "GENERATING" | "FAILED">("ALL");
   const [difficultyFilter, setDifficultyFilter] = useState<"ALL" | "4-5.5" | "6-7" | "7.5+">("ALL");
   const [favoriteFilter, setFavoriteFilter] = useState<"ALL" | "ONLY">("ALL");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
   const theaters = useAppStore((s) => s.theaters);
   const setTheaters = useAppStore((s) => s.setTheaters);
   const [sharingID, setSharingID] = useState("");
@@ -29,19 +32,33 @@ export function LibraryPage() {
     }
   }, [setTheaters]);
 
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+	useEffect(() => {
+		void reload();
+	}, [reload]);
 
-  const filteredTheaters = theaters.filter((item) => {
+	useEffect(() => {
+		if (!theaters.some((item) => item.status === "GENERATING")) return;
+		const timer = window.setInterval(() => void reload(), 1500);
+		return () => window.clearInterval(timer);
+	}, [reload, theaters]);
+
+  const filteredTheaters = useMemo(() => theaters.filter((item) => {
     if (languageFilter !== "ALL" && item.language !== languageFilter) return false;
     if (statusFilter !== "ALL" && item.status !== statusFilter) return false;
     if (favoriteFilter === "ONLY" && !item.isFavorite) return false;
     if (difficultyFilter === "4-5.5" && (item.difficulty < 4 || item.difficulty > 5.5)) return false;
     if (difficultyFilter === "6-7" && (item.difficulty < 6 || item.difficulty > 7)) return false;
     if (difficultyFilter === "7.5+" && item.difficulty < 7.5) return false;
+    const normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery && ![item.topic, item.sceneDescription ?? "", item.mode, item.language].some((value) => value.toLowerCase().includes(normalizedQuery))) return false;
     return true;
-  });
+  }), [difficultyFilter, favoriteFilter, languageFilter, query, statusFilter, theaters]);
+  const pageCount = Math.max(1, Math.ceil(filteredTheaters.length / 8));
+  const visibleTheaters = filteredTheaters.slice((page - 1) * 8, page * 8);
+
+  useEffect(() => {
+    setPage(1);
+  }, [difficultyFilter, favoriteFilter, languageFilter, query, statusFilter]);
 
   const routeStats = {
     cant: theaters.filter((item) => item.language === "CANTONESE").length,
@@ -108,7 +125,10 @@ export function LibraryPage() {
           <button onClick={() => navigate("/generate")}>生成新剧场</button>
         </header>
 
+        <AdSlot placement="LIBRARY" />
+
         <div className="library-filters">
+          <label className="library-search"><Search size={16} /><span className="sr-only">搜索剧场</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索主题或场景" /></label>
           <label>
             语种
             <select value={languageFilter} onChange={(e) => setLanguageFilter(e.target.value as typeof languageFilter)}>
@@ -162,15 +182,17 @@ export function LibraryPage() {
 
         <div className="row">
           <button onClick={() => navigate("/courses")}>课程中心</button>
+          <button className="btn-ghost" onClick={() => navigate("/voices")}>音色库</button>
           <button className="btn-ghost" onClick={() => navigate("/profile")}>个人中心</button>
         </div>
-        <ul className="dialogue-list">
+        <p className="library-result-count">找到 {filteredTheaters.length} 个剧场，第 {page} / {pageCount} 页。</p>
+        <ul key={`${page}-${query}-${languageFilter}-${difficultyFilter}-${statusFilter}-${favoriteFilter}`} className="dialogue-list library-page-list">
           {filteredTheaters.length === 0 ? (
             <li className="theater-item">
               <p style={{ margin: 0 }}>当前筛选条件下暂无剧场，可切换筛选或先生成新剧场。</p>
             </li>
           ) : null}
-          {filteredTheaters.map((item) => (
+          {visibleTheaters.map((item) => (
             <motion.li
               key={item.id}
               className="theater-item"
@@ -185,9 +207,13 @@ export function LibraryPage() {
                   {item.status === "READY" ? "已完成" : "待完成"}
                 </span>
               </div>
-              <p>
-                {item.language === "CANTONESE" ? "粤语" : "英语"} | {item.mode} | 难度 {item.difficulty}
-              </p>
+			  <p>
+				{item.language === "CANTONESE" ? "粤语" : "英语"} | {item.mode} | 难度 {item.difficulty}
+			  </p>
+			  {item.status === "GENERATING" ? <div className="task-progress" aria-label="剧场生成进度">
+				<div className="task-progress-head"><span>{item.generationMessage || "正在准备剧场内容"}</span><strong>{item.generationProgress ?? 0}%</strong></div>
+				<div className="progress-bar"><div className="progress-value" style={{ width: `${Math.max(4, item.generationProgress ?? 0)}%` }} /></div>
+			  </div> : null}
               {item.shareCode ? <p className="share-code-line">分享码：{item.shareCode}</p> : null}
               <p><TrendingUp size={14} /> {item.language === "CANTONESE" ? "推荐路径：日常交流 -> 职场 -> 专业" : "Recommended flow: daily -> workplace -> IELTS"}</p>
               <div className="row">
@@ -277,6 +303,7 @@ export function LibraryPage() {
             </motion.li>
           ))}
         </ul>
+        {filteredTheaters.length > 8 ? <div className="library-pagination"><button type="button" className="btn-ghost" disabled={page <= 1} onClick={() => setPage((current) => current - 1)}>上一页</button><span>第 {page} / {pageCount} 页</span><button type="button" className="btn-ghost" disabled={page >= pageCount} onClick={() => setPage((current) => current + 1)}>下一页</button></div> : null}
       </section>
     </main>
   );
