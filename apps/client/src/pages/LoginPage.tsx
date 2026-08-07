@@ -21,13 +21,6 @@ export function LoginPage() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-<<<<<<< HEAD
-  const [isRegister, setIsRegister] = useState(false);
-  const [authError, setAuthError] = useState("");
-  const setUser = useAppStore((s) => s.setUser);
-  const setLoading = useAppStore((s) => s.setLoading);
-  const loading = useAppStore((s) => s.loading);
-=======
   const [confirmPassword, setConfirmPassword] = useState("");
   const [candidates, setCandidates] = useState<LoginCandidate[]>([]);
   const [selectionAction, setSelectionAction] = useState<SelectionAction>("login");
@@ -36,7 +29,6 @@ export function LoginPage() {
   const setUser = useAppStore((state) => state.setUser);
   const setLoading = useAppStore((state) => state.setLoading);
   const loading = useAppStore((state) => state.loading);
->>>>>>> 73c0fbd (feat: prepare mini program production release)
   const navigate = useNavigate();
 
   const passwordIsStrong = useMemo(() => passwordRule.test(password), [password]);
@@ -85,22 +77,9 @@ export function LoginPage() {
 
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
-    setAuthError("");
     setLoading(true);
     setError("");
     try {
-<<<<<<< HEAD
-      const token = isRegister ? await register(email, password) : await login(email, password);
-      localStorage.setItem("accessToken", token);
-      const profile = await me();
-      setUser(profile);
-      navigate("/courses");
-    } catch (e) {
-      if (!isExpectedAuthError(e)) {
-        console.error("auth submit failed", e);
-      }
-      setAuthError(formatAuthError(e, isRegister));
-=======
       const accounts = await loginCandidates(identifier);
       if (accounts.length > 1) {
         setCandidates(accounts);
@@ -111,7 +90,6 @@ export function LoginPage() {
       await completeAuth(await login(identifier, password, accounts[0]?.id));
     } catch (caught) {
       setError((caught as Error).message || "登录失败，请检查用户名、邮箱和密码。");
->>>>>>> 73c0fbd (feat: prepare mini program production release)
     } finally {
       setLoading(false);
     }
@@ -252,49 +230,6 @@ export function LoginPage() {
             <div><h1>{title}</h1><p>英粤双路线训练，从每一次真实表达开始。</p></div>
           </div>
 
-<<<<<<< HEAD
-          <label>
-            <span><Mail size={14} /> 邮箱</span>
-            <input
-              value={email}
-              onChange={(e) => {
-                setEmail(e.target.value);
-                setAuthError("");
-              }}
-              placeholder="请输入你的邮箱"
-            />
-          </label>
-
-          <label>
-            <span><KeyRound size={14} /> 密码</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setAuthError("");
-              }}
-              placeholder="请输入你的密码"
-            />
-          </label>
-
-          {authError ? <p className="error" role="alert">{authError}</p> : null}
-
-          <button disabled={loading} type="submit">
-            {loading ? "处理中..." : isRegister ? "注册并进入" : "登录"}
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            onClick={() => {
-              setIsRegister((value) => !value);
-              setAuthError("");
-            }}
-          >
-            {isRegister ? "已有账号，去登录" : "没有账号，去注册"}
-          </button>
-        </form>
-=======
           {screen === "verify" ? <div className="auth-notice"><ShieldCheck size={18} /> {loading ? "正在验证邮箱…" : error || "邮箱验证成功"}</div> : null}
 
           {screen === "login" ? <form onSubmit={handleLogin}>
@@ -332,7 +267,6 @@ export function LoginPage() {
             <button disabled={loading} type="submit">{loading ? "创建中…" : "注册并发送验证邮件"}</button>
             <button type="button" className="btn-ghost" onClick={() => begin("login")}>已有账号，去登录</button>
           </form> : null}
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 
           {screen === "forgot-password" ? <form onSubmit={handlePasswordResetRequest}>
             <div className="auth-flow-intro">
@@ -385,23 +319,4 @@ export function LoginPage() {
       </motion.section>
     </main>
   );
-}
-
-function isExpectedAuthError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-  return message.includes("email already exists") || message.includes("invalid credentials");
-}
-
-function formatAuthError(error: unknown, isRegister: boolean): string {
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-  if (message.includes("email already exists")) {
-    return "该邮箱已注册，请直接登录。";
-  }
-  if (message.includes("invalid credentials")) {
-    return "邮箱或密码不正确，请检查后重试。";
-  }
-  if (message.includes("database is locked")) {
-    return "服务正在处理其他请求，请稍后再试。";
-  }
-  return isRegister ? "注册失败，请稍后再试。" : "登录失败，请稍后再试。";
 }

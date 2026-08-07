@@ -77,18 +77,6 @@ func applySQLiteSchema(db *sql.DB) error {
             audio_format TEXT NOT NULL DEFAULT 'mp3',
             updated_at TEXT NOT NULL
         )`,
-<<<<<<< HEAD
-		`CREATE TABLE IF NOT EXISTS oauth_accounts (
-            id TEXT PRIMARY KEY,
-            email TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            client_id TEXT NOT NULL,
-            refresh_token TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )`,
-		`CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider_email ON oauth_accounts(provider, email)`,
-=======
 		`CREATE TABLE IF NOT EXISTS asr_configs (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             provider TEXT NOT NULL DEFAULT 'XIAOMI',
@@ -98,7 +86,6 @@ func applySQLiteSchema(db *sql.DB) error {
             app_id TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL
         )`,
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 		`CREATE TABLE IF NOT EXISTS theaters (
             id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -307,17 +294,6 @@ func applySQLiteSchema(db *sql.DB) error {
 	if _, err := db.Exec(`ALTER TABLE theaters ADD COLUMN characters TEXT NOT NULL DEFAULT '[]'`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return err
 	}
-<<<<<<< HEAD
-	readingMetadataColumns := []string{
-		`ALTER TABLE reading_materials ADD COLUMN band REAL NOT NULL DEFAULT 0`,
-		`ALTER TABLE reading_materials ADD COLUMN stage TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE reading_materials ADD COLUMN section TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE reading_materials ADD COLUMN skill_focus TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE reading_materials ADD COLUMN question_type TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE reading_materials ADD COLUMN scenario_family TEXT NOT NULL DEFAULT ''`,
-	}
-	for _, stmt := range readingMetadataColumns {
-=======
 	if _, err := db.Exec(`ALTER TABLE asr_configs ADD COLUMN app_id TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		return err
 	}
@@ -329,7 +305,6 @@ func applySQLiteSchema(db *sql.DB) error {
 		`ALTER TABLE reading_materials ADD COLUMN generation_message TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE roleplay_sessions ADD COLUMN processing_message TEXT NOT NULL DEFAULT ''`,
 	} {
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 		if _, err := db.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err
 		}
@@ -514,30 +489,6 @@ func (s *SQLiteStore) SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, 
 	return config, nil
 }
 
-<<<<<<< HEAD
-func (s *SQLiteStore) ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error) {
-	query := `SELECT id, email, provider, client_id, refresh_token, created_at, updated_at FROM oauth_accounts`
-	args := []any{}
-	if strings.TrimSpace(provider) != "" {
-		query += ` WHERE LOWER(provider) = LOWER(?)`
-		args = append(args, strings.TrimSpace(provider))
-	}
-	query += ` ORDER BY LOWER(email), LOWER(provider), client_id`
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := make([]domain.OAuthAccount, 0)
-	for rows.Next() {
-		item, scanErr := scanOAuthAccount(rows)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		result = append(result, item)
-	}
-	return result, rows.Err()
-=======
 func (s *SQLiteStore) GetASRConfig() (domain.ASRConfig, error) {
 	row := s.db.QueryRow(`SELECT provider, model, base_url, api_key, app_id, updated_at FROM asr_configs WHERE id = 1`)
 	var config domain.ASRConfig
@@ -563,7 +514,6 @@ func (s *SQLiteStore) SaveASRConfig(config domain.ASRConfig) (domain.ASRConfig, 
 		return domain.ASRConfig{}, err
 	}
 	return config, nil
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func (s *SQLiteStore) GetUserByEmail(email string) (domain.User, error) {
@@ -936,16 +886,9 @@ func (s *SQLiteStore) SaveReadingMaterial(material domain.ReadingMaterial) (doma
 	}
 	_, err = s.db.Exec(
 		`INSERT INTO reading_materials (
-<<<<<<< HEAD
-            id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family,
-            title, passage, vocabulary, questions, source_ids,
-            generation_note, audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-=======
             id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
             generation_note, audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
->>>>>>> 73c0fbd (feat: prepare mini program production release)
         ON CONFLICT(id) DO UPDATE SET
             user_id=excluded.user_id,
             exam=excluded.exam,
@@ -1052,14 +995,8 @@ func (s *SQLiteStore) UpdateReadingMaterialExisting(material domain.ReadingMater
 
 func (s *SQLiteStore) GetReadingMaterial(id string, userID string) (domain.ReadingMaterial, error) {
 	row := s.db.QueryRow(
-<<<<<<< HEAD
-		`SELECT id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family,
-            title, passage, vocabulary, questions, source_ids, generation_note,
-            audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
-=======
 		`SELECT id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids, generation_note,
 			audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
->>>>>>> 73c0fbd (feat: prepare mini program production release)
          FROM reading_materials WHERE id = ? AND (? = '' OR user_id = ?)`,
 		id, userID, userID,
 	)
@@ -1068,14 +1005,8 @@ func (s *SQLiteStore) GetReadingMaterial(id string, userID string) (domain.Readi
 
 func (s *SQLiteStore) ListReadingMaterialsByUser(userID string, exam string) ([]domain.ReadingMaterial, error) {
 	rows, err := s.db.Query(
-<<<<<<< HEAD
-		`SELECT id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family,
-            title, passage, vocabulary, questions, source_ids, generation_note,
-            audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
-=======
 		`SELECT id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids, generation_note,
 			audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
->>>>>>> 73c0fbd (feat: prepare mini program production release)
          FROM reading_materials
          WHERE user_id = ? AND (? = '' OR exam = ?)
          ORDER BY datetime(created_at) DESC`,

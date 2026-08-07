@@ -2,23 +2,17 @@ package service
 
 import (
 	"context"
-<<<<<<< HEAD
-=======
 	"crypto/rand"
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
-<<<<<<< HEAD
+	"net/url"
 	"os"
 	"path/filepath"
-=======
-	"net/url"
 	"regexp"
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	"strings"
 	"sync"
 	"time"
@@ -48,12 +42,8 @@ type Store interface {
 	SaveModelConfig(config domain.ModelConfig) (domain.ModelConfig, error)
 	GetTTSConfig() (domain.TTSConfig, error)
 	SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, error)
-<<<<<<< HEAD
-	ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error)
-=======
 	GetASRConfig() (domain.ASRConfig, error)
 	SaveASRConfig(config domain.ASRConfig) (domain.ASRConfig, error)
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	SaveTheater(theater domain.Theater) (domain.Theater, error)
 	GetTheater(id string) (domain.Theater, error)
 	GetTheaterByShareCode(shareCode string) (domain.Theater, error)
@@ -132,6 +122,7 @@ type AuthMailer interface {
 type Options struct {
 	Mailer                   AuthMailer
 	PublicAppURL             string
+	MediaDir                 string
 	RequireEmailVerification bool
 	TaskConcurrency          int
 	TaskTimeout              time.Duration
@@ -142,23 +133,6 @@ type Options struct {
 }
 
 type Service struct {
-<<<<<<< HEAD
-	store            Store
-	session          SessionStore
-	generator        TheaterGenerator
-	modelConfig      ModelConfigManager
-	tts              SpeechSynthesizer
-	ttsConfig        TTSConfigManager
-	jwtSecret        string
-	tokenExpiry      time.Duration
-	readingMu        sync.RWMutex
-	readingMaterials map[string]domain.ReadingMaterial
-	readingAudioJobs map[string]bool
-	readingAudioKick map[string]time.Time
-	readingListKick  map[string]time.Time
-	mediaDir         string
-	ttsSem           chan struct{}
-=======
 	store                    Store
 	session                  SessionStore
 	generator                TheaterGenerator
@@ -175,10 +149,13 @@ type Service struct {
 	tasks                    *taskQueue
 	readingMu                sync.RWMutex
 	readingMaterials         map[string]domain.ReadingMaterial
+	readingAudioJobs         map[string]bool
+	readingAudioKick         map[string]time.Time
+	readingListKick          map[string]time.Time
+	mediaDir                 string
 	billing                  *billingService
 	usageGuard               *aiRequestGuard
 	analytics                *analytics.Reporter
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 const (
@@ -194,22 +171,10 @@ type roleplayEngine interface {
 }
 
 func New(store Store, session SessionStore, generator TheaterGenerator, tts SpeechSynthesizer, jwtSecret string) *Service {
-<<<<<<< HEAD
-	return NewWithOptions(store, session, generator, tts, jwtSecret, ServiceOptions{})
-}
-
-type ServiceOptions struct {
-	MediaDir          string
-	TTSMaxConcurrency int
-}
-
-func NewWithOptions(store Store, session SessionStore, generator TheaterGenerator, tts SpeechSynthesizer, jwtSecret string, options ServiceOptions) *Service {
-=======
 	return NewWithOptions(store, session, generator, tts, jwtSecret, Options{})
 }
 
 func NewWithOptions(store Store, session SessionStore, generator TheaterGenerator, tts SpeechSynthesizer, jwtSecret string, options Options) *Service {
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	var modelConfigManager ModelConfigManager
 	if manager, ok := any(generator).(ModelConfigManager); ok {
 		modelConfigManager = manager
@@ -218,31 +183,6 @@ func NewWithOptions(store Store, session SessionStore, generator TheaterGenerato
 	if manager, ok := any(tts).(TTSConfigManager); ok {
 		ttsConfigManager = manager
 	}
-<<<<<<< HEAD
-	mediaDir := strings.TrimSpace(options.MediaDir)
-	if mediaDir == "" {
-		mediaDir = "media"
-	}
-	ttsMaxConcurrency := options.TTSMaxConcurrency
-	if ttsMaxConcurrency <= 0 {
-		ttsMaxConcurrency = defaultTTSMaxConcurrency
-	}
-	return &Service{
-		store:            store,
-		session:          session,
-		generator:        generator,
-		modelConfig:      modelConfigManager,
-		tts:              tts,
-		ttsConfig:        ttsConfigManager,
-		jwtSecret:        jwtSecret,
-		tokenExpiry:      2 * time.Hour,
-		readingMaterials: map[string]domain.ReadingMaterial{},
-		readingAudioJobs: map[string]bool{},
-		readingAudioKick: map[string]time.Time{},
-		readingListKick:  map[string]time.Time{},
-		mediaDir:         mediaDir,
-		ttsSem:           make(chan struct{}, ttsMaxConcurrency),
-=======
 	var asrConfigManager ASRConfigManager
 	if manager, ok := any(options.Recognizer).(ASRConfigManager); ok {
 		asrConfigManager = manager
@@ -250,6 +190,10 @@ func NewWithOptions(store Store, session SessionStore, generator TheaterGenerato
 	publicURL := strings.TrimRight(strings.TrimSpace(options.PublicAppURL), "/")
 	if publicURL == "" {
 		publicURL = "http://localhost:5174"
+	}
+	mediaDir := strings.TrimSpace(options.MediaDir)
+	if mediaDir == "" {
+		mediaDir = "media"
 	}
 	service := &Service{
 		store:                    store,
@@ -267,6 +211,10 @@ func NewWithOptions(store Store, session SessionStore, generator TheaterGenerato
 		requireEmailVerification: options.RequireEmailVerification,
 		tasks:                    newTaskQueue(options.TaskConcurrency, options.TaskTimeout),
 		readingMaterials:         map[string]domain.ReadingMaterial{},
+		readingAudioJobs:         map[string]bool{},
+		readingAudioKick:         map[string]time.Time{},
+		readingListKick:          map[string]time.Time{},
+		mediaDir:                 mediaDir,
 		usageGuard:               newAIRequestGuard(options.UsageProtection),
 		analytics:                options.Analytics,
 	}
@@ -279,7 +227,6 @@ func NewWithOptions(store Store, session SessionStore, generator TheaterGenerato
 func (s *Service) trackFeature(name string) {
 	if s != nil && s.analytics != nil {
 		s.analytics.RecordProductMetric(analytics.MetricCategoryFeature, name)
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	}
 }
 
@@ -931,25 +878,6 @@ func (s *Service) UpdateTTSConfig(input domain.TTSConfigUpdate) (domain.TTSConfi
 	return buildTTSConfigView(saved), nil
 }
 
-<<<<<<< HEAD
-func (s *Service) ExportOAuthAccounts(provider string) (string, error) {
-	accounts, err := s.store.ListOAuthAccounts(provider)
-	if err != nil {
-		return "", err
-	}
-	lines := make([]string, 0, len(accounts))
-	for _, account := range accounts {
-		email := strings.TrimSpace(account.Email)
-		provider := strings.TrimSpace(account.Provider)
-		clientID := strings.TrimSpace(account.ClientID)
-		refreshToken := strings.TrimSpace(account.RefreshToken)
-		if email == "" || provider == "" || clientID == "" || refreshToken == "" {
-			continue
-		}
-		lines = append(lines, strings.Join([]string{email, provider, clientID, refreshToken}, "----"))
-	}
-	return strings.Join(lines, "\n"), nil
-=======
 func (s *Service) GetASRConfig() (domain.ASRConfigView, error) {
 	if s.asrConfig == nil {
 		return domain.ASRConfigView{}, errors.New("asr management unavailable")
@@ -1181,7 +1109,6 @@ func (s *Service) selectedVoiceProfiles(userID string, profileIDs []string) ([]d
 		return nil, errors.New("select at least one ready voice profile")
 	}
 	return selected, nil
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func normalizeTTSProvider(input string, fallback string) string {
@@ -1295,9 +1222,6 @@ func (s *Service) MeFromToken(token string) (domain.User, error) {
 }
 
 func (s *Service) GenerateTheater(userID string, language string, topic string, difficulty float64, mode string) (domain.Theater, error) {
-<<<<<<< HEAD
-	requiredQuiz := ielts.ListeningProfileFromTopic(topic, difficulty).QuizCount
-=======
 	return s.GenerateTheaterWithVoices(userID, language, topic, difficulty, mode, "AUTO", nil)
 }
 
@@ -1321,7 +1245,6 @@ func (s *Service) GenerateTheaterWithVoices(userID string, language string, topi
 	if difficulty >= 7.0 {
 		requiredQuiz = 3
 	}
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	preparedTopic := prepareTheaterTopic(language, topic)
 	placeholder := domain.Theater{
 		ID:                 uuid.NewString(),
@@ -1378,12 +1301,8 @@ func (s *Service) generateTheaterAsync(ctx context.Context, theater domain.Theat
 		generated, q, err := s.generator.Generate(ctx, theater.Language, preparedTopic, theater.Difficulty, theater.Mode)
 		if err != nil {
 			log.Printf("model generate failed theater_id=%s err=%v", theater.ID, err)
-<<<<<<< HEAD
-			s.markTheaterGenerationFailed(theater, err)
-=======
 			s.RefundAIConfidence(theater.UserID, AICreditActionTheaterGeneration, theater.ID, aiCreditAmount(AICreditActionTheaterGeneration))
 			_ = s.updateTheaterProgress(theater.ID, "FAILED", 0, "文本生成失败，请稍后重试")
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 			return
 		} else {
 			if len(generated) == 0 || dialogueLooksTemplated(generated) {
@@ -1403,17 +1322,7 @@ func (s *Service) generateTheaterAsync(ctx context.Context, theater domain.Theat
 			}
 		}
 	}
-<<<<<<< HEAD
-	dialogues = normalizeGeneratedDialoguesForDelivery(theater.Language, dialogues)
-	quiz = normalizeGeneratedQuizForDelivery(theater.Language, quiz)
-	if err := validateGeneratedPracticeForDelivery(theater.Language, false, dialogues, quiz); err != nil {
-		log.Printf("generated theater quality guard failed theater_id=%s err=%v", theater.ID, err)
-		s.markTheaterGenerationFailed(theater, err)
-		return
-	}
-=======
 	_ = s.updateTheaterProgress(theater.ID, "GENERATING", 55, "文本已生成，正在合成语音")
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	if s.tts != nil {
 		voicePair := selectDialogueVoicePair(theater.Topic)
 		profileBySpeaker := make(map[string]domain.VoiceProfile)
@@ -1422,9 +1331,6 @@ func (s *Service) generateTheaterAsync(ctx context.Context, theater domain.Theat
 			progress := 55 + (i * 35 / max(1, len(dialogues)))
 			_ = s.updateTheaterProgress(theater.ID, "GENERATING", progress, fmt.Sprintf("正在合成语音 %d/%d", i+1, len(dialogues)))
 			voiceStyle := voicePair[i%2]
-<<<<<<< HEAD
-			audioURL, err := s.synthesizeAudio(context.Background(), dialogues[i].Text, theater.Language, voiceStyle, "theater", theater.ID)
-=======
 			if len(voiceProfiles) > 0 {
 				speaker := strings.TrimSpace(dialogues[i].Speaker)
 				profile, assigned := profileBySpeaker[speaker]
@@ -1436,7 +1342,6 @@ func (s *Service) generateTheaterAsync(ctx context.Context, theater domain.Theat
 				voiceStyle = profile.PreviewAudioURL
 			}
 			audioURL, err := s.tts.Synthesize(ctx, dialogues[i].Text, theater.Language, voiceStyle)
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 			if err != nil {
 				log.Printf("tts failed theater_id=%s index=%d err=%v", theater.ID, i, err)
 				continue
@@ -1470,9 +1375,22 @@ func (s *Service) generateTheaterAsync(ctx context.Context, theater domain.Theat
 	}
 }
 
-<<<<<<< HEAD
+func (s *Service) updateTheaterProgress(theaterID string, status string, progress int, message string) error {
+	theater, err := s.store.GetTheater(theaterID)
+	if err != nil {
+		return err
+	}
+	theater.Status = status
+	theater.GenerationProgress = max(0, min(100, progress))
+	theater.GenerationMessage = message
+	_, err = s.store.SaveTheater(theater)
+	return err
+}
+
 func (s *Service) markTheaterGenerationFailed(theater domain.Theater, reason error) {
 	theater.Status = "FAILED"
+	theater.GenerationProgress = 0
+	theater.GenerationMessage = "生成失败，请稍后重试"
 	current, err := s.store.GetTheater(theater.ID)
 	if err != nil {
 		log.Printf("skip failed theater persist theater_id=%s err=%v", theater.ID, err)
@@ -1484,177 +1402,6 @@ func (s *Service) markTheaterGenerationFailed(theater domain.Theater, reason err
 	if _, err := s.store.SaveTheater(theater); err != nil {
 		log.Printf("persist failed theater status failed theater_id=%s reason=%v err=%v", theater.ID, reason, err)
 	}
-}
-
-func (s *Service) synthesizeAudio(ctx context.Context, text string, language string, voice string, scope string, ownerID string) (string, error) {
-	if s.tts == nil {
-		return "", errors.New("tts synthesizer is nil")
-	}
-	if s.ttsSem != nil {
-		select {
-		case s.ttsSem <- struct{}{}:
-			defer func() { <-s.ttsSem }()
-		case <-ctx.Done():
-			return "", ctx.Err()
-		}
-	}
-	audioURL, err := s.tts.Synthesize(ctx, text, language, voice)
-	if err != nil {
-		return "", err
-	}
-	return s.materializeAudioURL(audioURL, scope, ownerID)
-}
-
-func (s *Service) materializeAudioURL(rawURL string, scope string, ownerID string) (string, error) {
-	clean := strings.TrimSpace(rawURL)
-	if clean == "" || !strings.HasPrefix(strings.ToLower(clean), "data:audio/") {
-		return clean, nil
-	}
-	payload, mime, err := decodeAudioDataURL(clean)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(payload)
-	hash := hex.EncodeToString(sum[:])
-	ext := audioExtensionForMIME(mime)
-	cleanScope := safeMediaPathPart(scope, "tts")
-	cleanOwner := safeMediaPathPart(ownerID, "general")
-	dir := filepath.Join(s.mediaDir, "tts", cleanScope, cleanOwner)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	name := hash + ext
-	path := filepath.Join(dir, name)
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(path, payload, 0o644); err != nil {
-			return "", err
-		}
-	} else if err != nil {
-		return "", err
-	}
-	return "/media/tts/" + cleanScope + "/" + cleanOwner + "/" + name, nil
-}
-
-func (s *Service) migrateTheaterAudioDataURLs(theater domain.Theater) (domain.Theater, error) {
-	changed := false
-	for i := range theater.Dialogues {
-		materialized, err := s.materializeAudioURL(theater.Dialogues[i].AudioURL, "theater", theater.ID)
-		if err != nil {
-			return theater, err
-		}
-		if materialized != theater.Dialogues[i].AudioURL {
-			theater.Dialogues[i].AudioURL = materialized
-			changed = true
-		}
-	}
-	if !changed {
-		return theater, nil
-	}
-	saved, err := s.store.SaveTheater(theater)
-	if err != nil {
-		return theater, err
-	}
-	return saved, nil
-}
-
-func (s *Service) migrateReadingAudioDataURLs(material domain.ReadingMaterial) (domain.ReadingMaterial, error) {
-	changed := false
-	if material.AudioURL != "" {
-		materialized, err := s.materializeAudioURL(material.AudioURL, "reading", material.ID)
-		if err != nil {
-			return material, err
-		}
-		if materialized != material.AudioURL {
-			material.AudioURL = materialized
-			changed = true
-		}
-	}
-	for i := range material.AudioURLs {
-		materialized, err := s.materializeAudioURL(material.AudioURLs[i], "reading", material.ID)
-		if err != nil {
-			return material, err
-		}
-		if materialized != material.AudioURLs[i] {
-			material.AudioURLs[i] = materialized
-			changed = true
-		}
-	}
-	if !changed {
-		return material, nil
-	}
-	saved, err := s.store.SaveReadingMaterial(material)
-	if err != nil {
-		return material, err
-	}
-	return saved, nil
-}
-
-func decodeAudioDataURL(value string) ([]byte, string, error) {
-	meta, encoded, ok := strings.Cut(strings.TrimSpace(value), ",")
-	if !ok {
-		return nil, "", errors.New("invalid audio data url")
-	}
-	meta = strings.TrimSpace(meta)
-	if !strings.HasPrefix(strings.ToLower(meta), "data:audio/") || !strings.Contains(strings.ToLower(meta), ";base64") {
-		return nil, "", errors.New("unsupported audio data url")
-	}
-	mime := strings.TrimPrefix(strings.Split(meta, ";")[0], "data:")
-	payload, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
-	if err != nil {
-		return nil, "", err
-	}
-	if len(payload) == 0 {
-		return nil, "", errors.New("empty audio data payload")
-	}
-	return payload, mime, nil
-}
-
-func audioExtensionForMIME(mime string) string {
-	switch strings.ToLower(strings.TrimSpace(mime)) {
-	case "audio/mpeg", "audio/mp3":
-		return ".mp3"
-	case "audio/ogg", "audio/opus":
-		return ".ogg"
-	case "audio/wav", "audio/x-wav", "audio/wave":
-		return ".wav"
-	default:
-		return ".bin"
-	}
-}
-
-func safeMediaPathPart(value string, fallback string) string {
-	clean := strings.ToLower(strings.TrimSpace(value))
-	if clean == "" {
-		clean = fallback
-	}
-	var b strings.Builder
-	for _, r := range clean {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('-')
-		}
-	}
-	result := strings.Trim(b.String(), "-")
-	if result == "" {
-		return fallback
-	}
-	if len(result) > 80 {
-		return result[:80]
-	}
-	return result
-=======
-func (s *Service) updateTheaterProgress(theaterID string, status string, progress int, message string) error {
-	theater, err := s.store.GetTheater(theaterID)
-	if err != nil {
-		return err
-	}
-	theater.Status = status
-	theater.GenerationProgress = max(0, min(100, progress))
-	theater.GenerationMessage = message
-	_, err = s.store.SaveTheater(theater)
-	return err
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func prepareTheaterTopic(language string, topic string) string {
@@ -1770,6 +1517,114 @@ func (s *Service) Theater(id string) (domain.Theater, error) {
 		return domain.Theater{}, err
 	}
 	return s.migrateTheaterAudioDataURLs(theater)
+}
+
+func (s *Service) materializeAudioURL(rawURL string, scope string, ownerID string) (string, error) {
+	clean := strings.TrimSpace(rawURL)
+	if clean == "" || !strings.HasPrefix(strings.ToLower(clean), "data:audio/") {
+		return clean, nil
+	}
+	payload, mime, err := decodeAudioDataURL(clean)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(payload)
+	hash := hex.EncodeToString(sum[:])
+	ext := audioExtensionForMIME(mime)
+	cleanScope := safeMediaPathPart(scope, "tts")
+	cleanOwner := safeMediaPathPart(ownerID, "general")
+	dir := filepath.Join(s.mediaDir, "tts", cleanScope, cleanOwner)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	name := hash + ext
+	path := filepath.Join(dir, name)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(path, payload, 0o644); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+	return "/media/tts/" + cleanScope + "/" + cleanOwner + "/" + name, nil
+}
+
+func decodeAudioDataURL(value string) ([]byte, string, error) {
+	meta, encoded, ok := strings.Cut(strings.TrimSpace(value), ",")
+	if !ok {
+		return nil, "", errors.New("invalid audio data url")
+	}
+	meta = strings.TrimSpace(meta)
+	if !strings.HasPrefix(strings.ToLower(meta), "data:audio/") || !strings.Contains(strings.ToLower(meta), ";base64") {
+		return nil, "", errors.New("unsupported audio data url")
+	}
+	mime := strings.TrimPrefix(strings.Split(meta, ";")[0], "data:")
+	payload, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(payload) == 0 {
+		return nil, "", errors.New("empty audio data payload")
+	}
+	return payload, mime, nil
+}
+
+func audioExtensionForMIME(mime string) string {
+	switch strings.ToLower(strings.TrimSpace(mime)) {
+	case "audio/mpeg", "audio/mp3":
+		return ".mp3"
+	case "audio/ogg", "audio/opus":
+		return ".ogg"
+	case "audio/wav", "audio/x-wav", "audio/wave":
+		return ".wav"
+	default:
+		return ".bin"
+	}
+}
+
+func safeMediaPathPart(value string, fallback string) string {
+	clean := strings.ToLower(strings.TrimSpace(value))
+	if clean == "" {
+		clean = fallback
+	}
+	var b strings.Builder
+	for _, r := range clean {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	result := strings.Trim(b.String(), "-")
+	if result == "" {
+		return fallback
+	}
+	if len(result) > 80 {
+		return result[:80]
+	}
+	return result
+}
+
+func (s *Service) migrateTheaterAudioDataURLs(theater domain.Theater) (domain.Theater, error) {
+	changed := false
+	for i := range theater.Dialogues {
+		materialized, err := s.materializeAudioURL(theater.Dialogues[i].AudioURL, "theater", theater.ID)
+		if err != nil {
+			return theater, err
+		}
+		if materialized != theater.Dialogues[i].AudioURL {
+			theater.Dialogues[i].AudioURL = materialized
+			changed = true
+		}
+	}
+	if !changed {
+		return theater, nil
+	}
+	saved, err := s.store.SaveTheater(theater)
+	if err != nil {
+		return theater, err
+	}
+	return saved, nil
 }
 
 func (s *Service) SharedTheater(shareCode string) (domain.Theater, error) {
@@ -1973,38 +1828,6 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 		}
 	}
 
-<<<<<<< HEAD
-	language := "ENGLISH"
-	metadata := ielts.ReadingMetadataFromTopic(exam, topic, level)
-	difficulty := metadata.Band
-
-	// Reading generation should not pollute theater library.
-	quizCount := 5
-	generationTopic := readingGenerationTopic(exam, topic, metadata)
-	var generated []domain.Dialogue
-	var q []domain.QuizQuestion
-	if s.generator == nil {
-		return domain.ReadingMaterial{}, errors.New("reading content generator is not configured")
-	} else {
-		var err error
-		generated, q, err = s.generator.Generate(context.Background(), language, generationTopic, difficulty, "APPRECIATION")
-		if err != nil {
-			return domain.ReadingMaterial{}, fmt.Errorf("reading ai generation failed: %w", err)
-		}
-	}
-	if len(generated) == 0 {
-		return domain.ReadingMaterial{}, errors.New("reading generation returned no passage segments")
-	}
-	if len(q) < quizCount {
-		return domain.ReadingMaterial{}, fmt.Errorf("reading generation returned too few quiz questions: got %d want %d", len(q), quizCount)
-	}
-	if len(q) > quizCount {
-		q = q[:quizCount]
-	}
-	generated = normalizeGeneratedDialoguesForDelivery(language, generated)
-	q = normalizeGeneratedQuizForDelivery(language, q)
-
-=======
 	material := domain.ReadingMaterial{
 		ID:                 uuid.NewString(),
 		UserID:             userID,
@@ -2070,7 +1893,6 @@ func (s *Service) generateReadingAsync(ctx context.Context, material domain.Read
 	if len(questions) > 5 {
 		questions = questions[:5]
 	}
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	passageParts := make([]string, 0, len(generated))
 	for _, dialogue := range generated {
 		if line := strings.TrimSpace(dialogue.Text); line != "" {
@@ -2083,13 +1905,6 @@ func (s *Service) generateReadingAsync(ctx context.Context, material domain.Read
 		_ = s.updateReadingProgress(material.ID, material.UserID, "FAILED", 0, "阅读文本生成失败，请稍后重试")
 		return
 	}
-<<<<<<< HEAD
-	lengthLimits := ielts.ReadingLengthLimitsFromMetadata(exam, topic, metadata)
-	if err := validateReadingMaterialText(passage, q, lengthLimits.MinWords, lengthLimits.MinSegments); err != nil {
-		return domain.ReadingMaterial{}, err
-	}
-	vocabSet := map[string]struct{}{}
-=======
 	vocabulary := extractReadingVocabulary(passage)
 	_ = s.updateReadingProgress(material.ID, material.UserID, "GENERATING", 55, "正在分析词汇与语法")
 	analysis := domain.ReadingAnalysis{}
@@ -2126,7 +1941,6 @@ func (s *Service) generateReadingAsync(ctx context.Context, material domain.Read
 
 func extractReadingVocabulary(passage string) []string {
 	seen := map[string]struct{}{}
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	vocabulary := make([]string, 0, 8)
 	for _, word := range strings.Fields(strings.ToLower(passage)) {
 		word = strings.Trim(word, ",.!?;:\"'()[]{}")
@@ -2142,60 +1956,7 @@ func extractReadingVocabulary(passage string) []string {
 			break
 		}
 	}
-<<<<<<< HEAD
-
-	analysis := domain.ReadingAnalysis{}
-	if analyzer, ok := s.generator.(ReadingAnalyzer); ok {
-		aiResult, analysisErr := analyzer.AnalyzeReading(context.Background(), exam, topic, passage, vocabulary)
-		if analysisErr != nil {
-			log.Printf("reading semantic analysis failed, fallback to lightweight defaults err=%v", analysisErr)
-		} else {
-			analysis = normalizeReadingAnalysis(aiResult, vocabulary, topic)
-		}
-	}
-	if len(analysis.VocabularyItems) == 0 {
-		analysis = normalizeReadingAnalysis(domain.ReadingAnalysis{}, vocabulary, topic)
-	}
-
-	material := domain.ReadingMaterial{
-		ID:                   uuid.NewString(),
-		UserID:               userID,
-		Exam:                 exam,
-		Language:             language,
-		Level:                level,
-		Topic:                topic,
-		Band:                 metadata.Band,
-		Stage:                metadata.Stage,
-		Section:              metadata.Section,
-		SkillFocus:           metadata.SkillFocus,
-		QuestionType:         metadata.QuestionType,
-		ScenarioFamily:       metadata.ScenarioFamily,
-		Title:                readingMaterialTitle(exam, topic, metadata),
-		Passage:              passage,
-		Vocabulary:           vocabulary,
-		Questions:            q,
-		SourceIDs:            sourceIDs,
-		GenerationNote:       readingGenerationNote(false),
-		AudioStatus:          "PENDING",
-		VocabularyItems:      analysis.VocabularyItems,
-		AssociationSentences: analysis.AssociationSentences,
-		GrammarInsights:      analysis.GrammarInsights,
-		CreatedAt:            time.Now(),
-	}
-	ensureReadingMetadata(&material)
-
-	saved, err := s.store.SaveReadingMaterial(material)
-	if err != nil {
-		return domain.ReadingMaterial{}, err
-	}
-	s.cacheReadingMaterial(saved)
-
-	s.queueReadingAudioGeneration(saved.ID, saved.Passage, saved.Language)
-
-	return saved, nil
-=======
 	return vocabulary
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func fallbackReadingGeneratedContent(exam string, topic string, quizCount int) ([]domain.Dialogue, []domain.QuizQuestion) {
@@ -2580,16 +2341,9 @@ var readingMeaningDict = map[string][]string{
 	"outcomes":       {"n. 结果（复数）", "n. 学习产出（教育语境）"},
 }
 
-<<<<<<< HEAD
-func (s *Service) generateReadingAudio(materialID string, text string, language string) {
-	defer s.finishReadingAudioJob(materialID)
-	if s.tts == nil || strings.TrimSpace(text) == "" {
-		if err := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
-=======
 func (s *Service) generateReadingAudio(ctx context.Context, material domain.ReadingMaterial) {
 	if s.tts == nil || strings.TrimSpace(material.Passage) == "" {
 		if err := s.updateReadingMaterial(material.ID, material.UserID, func(m *domain.ReadingMaterial) {
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 			m.AudioStatus = "FAILED"
 			m.Status = "READY"
 			m.GenerationProgress = 100
@@ -2601,43 +2355,6 @@ func (s *Service) generateReadingAudio(ctx context.Context, material domain.Read
 		return
 	}
 
-<<<<<<< HEAD
-	chunks := splitTextChunks(text, 420)
-	existing, existingErr := s.store.GetReadingMaterial(materialID, "")
-	if existingErr == nil {
-		if migrated, migrateErr := s.migrateReadingAudioDataURLs(existing); migrateErr == nil {
-			existing = migrated
-		} else {
-			log.Printf("reading audio data migration failed material_id=%s err=%v", materialID, migrateErr)
-		}
-	}
-	audioURLs := make([]string, 0, len(chunks))
-	if existingErr == nil && len(existing.AudioURLs) > 0 {
-		audioURLs = append(audioURLs, existing.AudioURLs...)
-		if len(audioURLs) > len(chunks) {
-			audioURLs = audioURLs[:len(chunks)]
-		}
-	}
-	if len(chunks) > 0 && len(audioURLs) >= len(chunks) {
-		if err := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
-			m.AudioStatus = "READY"
-			m.AudioURLs = audioURLs
-			m.AudioURL = audioURLs[0]
-		}); err != nil {
-			log.Printf("reading audio resume ready persist failed material_id=%s err=%v", materialID, err)
-		}
-		return
-	}
-	for index := len(audioURLs); index < len(chunks); index++ {
-		chunk := chunks[index]
-		audioURL, err := s.synthesizeAudio(context.Background(), chunk, language, "", "reading", materialID)
-		if err != nil || strings.TrimSpace(audioURL) == "" {
-			updateErr := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
-				m.AudioURLs = audioURLs
-				if len(audioURLs) > 0 {
-					m.AudioURL = audioURLs[0]
-					m.AudioStatus = "PENDING"
-=======
 	chunks := splitTextChunks(material.Passage, 420)
 	audioURLs := make([]string, 0, len(chunks))
 	for index, chunk := range chunks {
@@ -2652,7 +2369,6 @@ func (s *Service) generateReadingAudio(ctx context.Context, material domain.Read
 				m.GenerationMessage = "文本已生成，音频合成失败"
 				if err != nil {
 					m.GenerationNote = strings.TrimSpace(m.GenerationNote + " | audio error: " + err.Error())
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 				} else {
 					m.AudioStatus = "FAILED"
 				}
@@ -2669,7 +2385,7 @@ func (s *Service) generateReadingAudio(ctx context.Context, material domain.Read
 		}
 		audioURLs = append(audioURLs, strings.TrimSpace(audioURL))
 		latestIndex := index
-		if persistErr := s.updateReadingMaterial(materialID, "", func(m *domain.ReadingMaterial) {
+		if persistErr := s.updateReadingMaterial(material.ID, material.UserID, func(m *domain.ReadingMaterial) {
 			m.AudioURLs = append([]string(nil), audioURLs...)
 			m.AudioURL = audioURLs[0]
 			if len(audioURLs) >= len(chunks) {
@@ -2682,7 +2398,7 @@ func (s *Service) generateReadingAudio(ctx context.Context, material domain.Read
 				m.GenerationNote = strings.TrimSpace(m.GenerationNote + fmt.Sprintf(" | audio chunk %d/%d ready", latestIndex+1, len(chunks)))
 			}
 		}); persistErr != nil {
-			log.Printf("reading audio progress persist failed material_id=%s chunk=%d/%d err=%v", materialID, latestIndex+1, len(chunks), persistErr)
+			log.Printf("reading audio progress persist failed material_id=%s chunk=%d/%d err=%v", material.ID, latestIndex+1, len(chunks), persistErr)
 		}
 	}
 
@@ -2700,48 +2416,12 @@ func (s *Service) generateReadingAudio(ctx context.Context, material domain.Read
 	}
 }
 
-<<<<<<< HEAD
-func trimReadingAudioProgressNote(note string) string {
-	parts := strings.Split(note, "|")
-	kept := make([]string, 0, len(parts))
-	for _, part := range parts {
-		piece := strings.TrimSpace(part)
-		if piece == "" {
-			continue
-		}
-		if strings.HasPrefix(piece, "audio chunk ") && strings.HasSuffix(piece, " ready") {
-			continue
-		}
-		kept = append(kept, piece)
-	}
-	return strings.Join(kept, " | ")
-}
-
-func (s *Service) RetryReadingAudio(userID string, materialID string) (domain.ReadingMaterial, error) {
-	material, err := s.store.GetReadingMaterial(materialID, userID)
-	if err != nil {
-		return domain.ReadingMaterial{}, err
-	}
-	if strings.TrimSpace(material.Passage) == "" {
-		return domain.ReadingMaterial{}, errors.New("reading material has empty passage")
-	}
-	material.AudioStatus = "PENDING"
-	material.GenerationNote = strings.TrimSpace(material.GenerationNote + " | audio retry queued")
-	saved, err := s.store.SaveReadingMaterial(material)
-	if err != nil {
-		return domain.ReadingMaterial{}, err
-	}
-	s.cacheReadingMaterial(saved)
-	s.queueReadingAudioGeneration(saved.ID, saved.Passage, saved.Language)
-	return saved, nil
-=======
 func (s *Service) updateReadingProgress(materialID string, userID string, status string, progress int, message string) error {
 	return s.updateReadingMaterial(materialID, userID, func(material *domain.ReadingMaterial) {
 		material.Status = status
 		material.GenerationProgress = max(0, min(100, progress))
 		material.GenerationMessage = message
 	})
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func splitTextChunks(text string, maxLen int) []string {
@@ -2815,6 +2495,150 @@ func (s *Service) ReadingMaterials(userID string, exam string) ([]domain.Reading
 	return result, nil
 }
 
+func (s *Service) migrateReadingAudioDataURLs(material domain.ReadingMaterial) (domain.ReadingMaterial, error) {
+	changed := false
+	if material.AudioURL != "" {
+		materialized, err := s.materializeAudioURL(material.AudioURL, "reading", material.ID)
+		if err != nil {
+			return material, err
+		}
+		if materialized != material.AudioURL {
+			material.AudioURL = materialized
+			changed = true
+		}
+	}
+	for i := range material.AudioURLs {
+		materialized, err := s.materializeAudioURL(material.AudioURLs[i], "reading", material.ID)
+		if err != nil {
+			return material, err
+		}
+		if materialized != material.AudioURLs[i] {
+			material.AudioURLs[i] = materialized
+			changed = true
+		}
+	}
+	if !changed {
+		return material, nil
+	}
+	saved, err := s.store.SaveReadingMaterial(material)
+	if err != nil {
+		return material, err
+	}
+	return saved, nil
+}
+
+func (s *Service) queueReadingAudioGenerationWithCooldown(materialID string, text string, language string, cooldown time.Duration) bool {
+	if !s.startReadingAudioJob(materialID, cooldown) {
+		return false
+	}
+	material, err := s.store.GetReadingMaterial(materialID, "")
+	if err != nil {
+		s.finishReadingAudioJob(materialID)
+		return false
+	}
+	if strings.TrimSpace(material.Passage) == "" {
+		material.Passage = text
+	}
+	if strings.TrimSpace(material.Language) == "" {
+		material.Language = language
+	}
+	if !s.tasks.enqueue(func(ctx context.Context) {
+		defer s.finishReadingAudioJob(materialID)
+		s.generateReadingAudio(ctx, material)
+	}) {
+		s.finishReadingAudioJob(materialID)
+		return false
+	}
+	return true
+}
+
+func (s *Service) startReadingAudioJob(materialID string, cooldown time.Duration) bool {
+	s.readingMu.Lock()
+	defer s.readingMu.Unlock()
+	if s.readingAudioJobs[materialID] {
+		return false
+	}
+	if cooldown > 0 {
+		if lastKick, ok := s.readingAudioKick[materialID]; ok && time.Since(lastKick) < cooldown {
+			return false
+		}
+	}
+	s.readingAudioJobs[materialID] = true
+	s.readingAudioKick[materialID] = time.Now()
+	return true
+}
+
+func (s *Service) finishReadingAudioJob(materialID string) {
+	s.readingMu.Lock()
+	defer s.readingMu.Unlock()
+	delete(s.readingAudioJobs, materialID)
+}
+
+func shouldRetryFallbackReadingAudio(item domain.ReadingMaterial) bool {
+	if strings.TrimSpace(item.Passage) == "" {
+		return false
+	}
+	if !strings.Contains(strings.ToLower(item.GenerationNote), "structured fallback") {
+		return false
+	}
+	return item.AudioStatus != "READY"
+}
+
+func trimReadingAudioProgressNote(note string) string {
+	parts := strings.Split(note, "|")
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		piece := strings.TrimSpace(part)
+		if piece == "" {
+			continue
+		}
+		if strings.HasPrefix(piece, "audio chunk ") && strings.HasSuffix(piece, " ready") {
+			continue
+		}
+		kept = append(kept, piece)
+	}
+	return strings.Join(kept, " | ")
+}
+
+func (s *Service) allowReadingListAudioRetry(userID string, exam string, cooldown time.Duration) bool {
+	if cooldown <= 0 {
+		return true
+	}
+	key := strings.TrimSpace(userID) + "|" + strings.TrimSpace(strings.ToUpper(exam))
+	s.readingMu.Lock()
+	defer s.readingMu.Unlock()
+	if lastKick, ok := s.readingListKick[key]; ok && time.Since(lastKick) < cooldown {
+		return false
+	}
+	s.readingListKick[key] = time.Now()
+	return true
+}
+
+func ensureReadingMetadata(material *domain.ReadingMaterial) {
+	if material == nil {
+		return
+	}
+	meta := ielts.ReadingMetadataFromTopic(material.Exam, material.Topic, material.Level)
+	if material.Band <= 0 {
+		material.Band = meta.Band
+	}
+	if strings.TrimSpace(material.Stage) == "" {
+		material.Stage = meta.Stage
+	}
+	if strings.TrimSpace(material.Section) == "" {
+		material.Section = meta.Section
+	}
+	if strings.TrimSpace(material.SkillFocus) == "" {
+		material.SkillFocus = meta.SkillFocus
+	}
+	if strings.TrimSpace(material.QuestionType) == "" {
+		material.QuestionType = meta.QuestionType
+	}
+	if strings.TrimSpace(material.ScenarioFamily) == "" {
+		material.ScenarioFamily = meta.ScenarioFamily
+	}
+}
+
 func (s *Service) ReadingMaterial(userID string, materialID string) (domain.ReadingMaterial, error) {
 	item, err := s.store.GetReadingMaterial(materialID, userID)
 	if err != nil {
@@ -2865,92 +2689,6 @@ func (s *Service) ReadingMaterial(userID string, materialID string) (domain.Read
 	return item, nil
 }
 
-<<<<<<< HEAD
-func (s *Service) queueReadingAudioGeneration(materialID string, text string, language string) bool {
-	return s.queueReadingAudioGenerationWithCooldown(materialID, text, language, 0)
-}
-
-func (s *Service) queueReadingAudioGenerationWithCooldown(materialID string, text string, language string, cooldown time.Duration) bool {
-	if !s.startReadingAudioJob(materialID, cooldown) {
-		return false
-	}
-	go s.generateReadingAudio(materialID, text, language)
-	return true
-}
-
-func (s *Service) startReadingAudioJob(materialID string, cooldown time.Duration) bool {
-	s.readingMu.Lock()
-	defer s.readingMu.Unlock()
-	if s.readingAudioJobs[materialID] {
-		return false
-	}
-	if cooldown > 0 {
-		if lastKick, ok := s.readingAudioKick[materialID]; ok && time.Since(lastKick) < cooldown {
-			return false
-		}
-	}
-	s.readingAudioJobs[materialID] = true
-	s.readingAudioKick[materialID] = time.Now()
-	return true
-}
-
-func (s *Service) finishReadingAudioJob(materialID string) {
-	s.readingMu.Lock()
-	defer s.readingMu.Unlock()
-	delete(s.readingAudioJobs, materialID)
-}
-
-func shouldRetryFallbackReadingAudio(item domain.ReadingMaterial) bool {
-	if strings.TrimSpace(item.Passage) == "" {
-		return false
-	}
-	if !strings.Contains(strings.ToLower(item.GenerationNote), "structured fallback") {
-		return false
-	}
-	if item.AudioStatus == "READY" {
-		return false
-	}
-	return true
-}
-
-func (s *Service) allowReadingListAudioRetry(userID string, exam string, cooldown time.Duration) bool {
-	if cooldown <= 0 {
-		return true
-	}
-	key := strings.TrimSpace(userID) + "|" + strings.TrimSpace(strings.ToUpper(exam))
-	s.readingMu.Lock()
-	defer s.readingMu.Unlock()
-	if lastKick, ok := s.readingListKick[key]; ok && time.Since(lastKick) < cooldown {
-		return false
-	}
-	s.readingListKick[key] = time.Now()
-	return true
-}
-
-func ensureReadingMetadata(material *domain.ReadingMaterial) {
-	if material == nil {
-		return
-	}
-	meta := ielts.ReadingMetadataFromTopic(material.Exam, material.Topic, material.Level)
-	if material.Band <= 0 {
-		material.Band = meta.Band
-	}
-	if strings.TrimSpace(material.Stage) == "" {
-		material.Stage = meta.Stage
-	}
-	if strings.TrimSpace(material.Section) == "" {
-		material.Section = meta.Section
-	}
-	if strings.TrimSpace(material.SkillFocus) == "" {
-		material.SkillFocus = meta.SkillFocus
-	}
-	if strings.TrimSpace(material.QuestionType) == "" {
-		material.QuestionType = meta.QuestionType
-	}
-	if strings.TrimSpace(material.ScenarioFamily) == "" {
-		material.ScenarioFamily = meta.ScenarioFamily
-	}
-=======
 func (s *Service) DeleteReadingMaterial(userID string, materialID string) error {
 	if strings.TrimSpace(userID) == "" {
 		return errors.New("unauthorized")
@@ -2978,7 +2716,6 @@ func isActiveGeneratedMaterialStatus(status string) bool {
 	default:
 		return false
 	}
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func (s *Service) cacheReadingMaterial(material domain.ReadingMaterial) {

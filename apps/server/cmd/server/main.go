@@ -106,11 +106,6 @@ func main() {
 		tts.UpdateTTSConfig(savedTTSConfig)
 		log.Printf("loaded persisted tts config provider=%s model=%s voice=%s", savedTTSConfig.Provider, savedTTSConfig.Model, savedTTSConfig.Voice)
 	}
-<<<<<<< HEAD
-	svc := service.NewWithOptions(dataStore, redisClient, generator, tts, cfg.JWTSecret, service.ServiceOptions{
-		MediaDir:          cfg.MediaDir,
-		TTSMaxConcurrency: cfg.TTSMaxConcurrency,
-=======
 	asr := ai.NewAPIASR(cfg.ASRProvider, cfg.ASRAPIURL, cfg.ASRAPIKey, cfg.ASRAppID, cfg.ASRModel)
 	if savedASRConfig, err := dataStore.GetASRConfig(); err == nil {
 		asr.UpdateASRConfig(savedASRConfig)
@@ -164,7 +159,6 @@ func main() {
 			MaxActiveTasks: cfg.MiniProgramMaxActiveTasks,
 		},
 		Analytics: analyticsReporter,
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	})
 	schema, err := graph.NewSchema(svc)
 	if err != nil {
@@ -194,11 +188,7 @@ func main() {
 			Timestamp: result.Timestamp,
 			Checks:    result.Checks,
 		}
-<<<<<<< HEAD
-	}, cfg.MediaDir, svc)
-=======
 	}, httpserver.MuxOptions{Security: securityOptions, Analytics: analyticsReporter, AnalyticsAdminToken: cfg.AnalyticsAdminToken})
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	log.Printf("LinguaQuest API listening on :%s", cfg.Port)
 	if err = http.ListenAndServe(":"+cfg.Port, httpserver.WrapWithBaseMiddleware(mux, securityOptions)); err != nil {
 		log.Fatal(err)

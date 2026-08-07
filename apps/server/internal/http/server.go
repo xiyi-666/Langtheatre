@@ -9,11 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-<<<<<<< HEAD
-	"os"
-=======
 	"strconv"
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	"strings"
 	"time"
 
@@ -34,10 +30,6 @@ type HealthResult struct {
 	Checks    map[string]string `json:"checks"`
 }
 
-<<<<<<< HEAD
-type OAuthAccountExporter interface {
-	ExportOAuthAccounts(provider string) (string, error)
-=======
 type PaymentNotifier interface {
 	HandleEpayNotification(values url.Values) error
 }
@@ -46,7 +38,6 @@ type MuxOptions struct {
 	Security            SecurityOptions
 	Analytics           *analytics.Reporter
 	AnalyticsAdminToken string
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
@@ -60,9 +51,6 @@ func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
-<<<<<<< HEAD
-func NewMux(schema graphql.Schema, jwtSecret string, healthFunc func(context.Context) HealthResult, mediaDir string, oauthExporter OAuthAccountExporter) *http.ServeMux {
-=======
 func NewMux(schema graphql.Schema, jwtSecret string, paymentNotifier PaymentNotifier, healthFunc func(context.Context) HealthResult, optionValues ...SecurityOptions) *http.ServeMux {
 	security := SecurityOptions{}
 	if len(optionValues) > 0 {
@@ -75,7 +63,6 @@ func NewMuxWithOptions(schema graphql.Schema, jwtSecret string, paymentNotifier 
 	security := muxOptions.Security.normalized()
 	authLimiter := NewInMemoryRateLimiter(security.AuthRateLimitPerMinute, time.Minute)
 	aiLimiter := NewInMemoryRateLimiter(security.AIRequestRateLimitPerMinute, time.Minute)
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	mux := http.NewServeMux()
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		setCORSHeaders(w, r)
@@ -106,52 +93,6 @@ func NewMuxWithOptions(schema graphql.Schema, jwtSecret string, paymentNotifier 
 	}
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/readyz", healthHandler)
-<<<<<<< HEAD
-	mediaDir = strings.TrimSpace(mediaDir)
-	if mediaDir != "" {
-		_ = os.MkdirAll(mediaDir, 0o755)
-		mediaHandler := http.StripPrefix("/media/", http.FileServer(http.Dir(mediaDir)))
-		mux.HandleFunc("/media/", func(w http.ResponseWriter, r *http.Request) {
-			setCORSHeaders(w, r)
-			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			if r.Method != http.MethodGet && r.Method != http.MethodHead {
-				http.Error(w, "only GET and HEAD are supported", http.StatusMethodNotAllowed)
-				return
-			}
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-			mediaHandler.ServeHTTP(w, r)
-		})
-	}
-	if oauthExporter != nil {
-		mux.HandleFunc("/admin/oauth-accounts/export.txt", func(w http.ResponseWriter, r *http.Request) {
-			setCORSHeaders(w, r)
-			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			if r.Method != http.MethodGet {
-				http.Error(w, "only GET is supported", http.StatusMethodNotAllowed)
-				return
-			}
-			ctx := withAuth(r.Context(), r.Header.Get("Authorization"), jwtSecret)
-			userID, _ := ctx.Value(graph.UserIDKey).(string)
-			if userID == "" {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			text, err := oauthExporter.ExportOAuthAccounts(r.URL.Query().Get("provider"))
-			if err != nil {
-				http.Error(w, "failed to export oauth accounts", http.StatusInternalServerError)
-				return
-			}
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Header().Set("Content-Disposition", `attachment; filename="oauth-accounts.txt"`)
-			w.Header().Set("Cache-Control", "no-store")
-			_, _ = w.Write([]byte(text))
-=======
 	if paymentNotifier != nil {
 		mux.HandleFunc("/payments/easypay/notify", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -172,7 +113,6 @@ func NewMuxWithOptions(schema graphql.Schema, jwtSecret string, paymentNotifier 
 			}
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_, _ = w.Write([]byte("success"))
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 		})
 	}
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {

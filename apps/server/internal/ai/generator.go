@@ -13,11 +13,8 @@ import (
 	"sync"
 	"time"
 
-<<<<<<< HEAD
-	"github.com/linguaquest/server/internal/contentquality"
-=======
 	"github.com/linguaquest/server/internal/analytics"
->>>>>>> 73c0fbd (feat: prepare mini program production release)
+	"github.com/linguaquest/server/internal/contentquality"
 	"github.com/linguaquest/server/internal/domain"
 	"github.com/linguaquest/server/internal/ielts"
 )
@@ -283,7 +280,10 @@ Rules for quiz:
 	if readingMode {
 		attempts = 3
 	}
-<<<<<<< HEAD
+	operation := "THEATER_GENERATION"
+	if readingMode {
+		operation = "READING_GENERATION"
+	}
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptUser := user
@@ -293,27 +293,6 @@ Rules for quiz:
 			} else {
 				attemptUser += listeningRegenerationInstruction(quizCount)
 			}
-=======
-	operation := "THEATER_GENERATION"
-	if readingMode {
-		operation = "READING_GENERATION"
-	}
-	content, err := g.callModelJSONPayload(ctx, payload, operation)
-	if err != nil && strings.Contains(err.Error(), "no parsable text") && !strings.EqualFold(model, defaultModelName) {
-		log.Printf("model %s returned empty content, retry with fallback model %s", model, defaultModelName)
-		payload["model"] = defaultModelName
-		content, err = g.callModelJSONPayload(ctx, payload, operation)
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-
-	dialogues, quiz := parseModelOutput(content)
-	if len(dialogues) == 0 {
-		snippet := content
-		if len(snippet) > 320 {
-			snippet = snippet[:320]
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 		}
 		payload := map[string]any{
 			"model": model,
@@ -328,11 +307,11 @@ Rules for quiz:
 		} else {
 			payload["max_tokens"] = 4000
 		}
-		content, err := g.callModelJSONPayload(ctx, payload)
+		content, err := g.callModelJSONPayload(ctx, payload, operation)
 		if err != nil && strings.Contains(err.Error(), "no parsable text") && !strings.EqualFold(model, defaultModelName) {
 			log.Printf("model %s returned empty content, retry with fallback model %s", model, defaultModelName)
 			payload["model"] = defaultModelName
-			content, err = g.callModelJSONPayload(ctx, payload)
+			content, err = g.callModelJSONPayload(ctx, payload, operation)
 		}
 		if err != nil {
 			lastErr = err
@@ -721,13 +700,8 @@ func shouldRetryModelStatus(status int) bool {
 	return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }
 
-<<<<<<< HEAD
-func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[string]any) (string, error) {
-	raw, _ := json.Marshal(modelPayloadWithStreaming(payload))
-=======
 func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[string]any, operationValues ...string) (string, error) {
 	raw, _ := json.Marshal(payload)
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	chatURL := g.chatCompletionsURL()
 	apiKey := g.apiKey()
 	operation := "MODEL_COMPLETION"
@@ -773,13 +747,9 @@ func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[
 					lastErr = readErr
 					return
 				}
-<<<<<<< HEAD
-				content, lastErr = extractModelTextFromStreamResponse(body)
-=======
 				promptTokens, completionTokens, totalTokens, usageReported := extractModelUsageFromResponse(body)
 				content, lastErr = extractModelTextFromResponse(body)
 				g.recordModelUsage(model, operation, promptTokens, completionTokens, totalTokens, usageReported, lastErr != nil, time.Since(startedAt))
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 				if lastErr != nil {
 					content, lastErr = extractModelTextFromResponse(body)
 					if lastErr != nil {
@@ -813,107 +783,6 @@ func (g *OpenAIGenerator) callModelJSONPayload(ctx context.Context, payload map[
 	return "", lastErr
 }
 
-<<<<<<< HEAD
-func modelPayloadWithStreaming(payload map[string]any) map[string]any {
-	out := make(map[string]any, len(payload)+1)
-	for key, value := range payload {
-		out[key] = value
-	}
-	out["stream"] = true
-	return out
-}
-
-func extractModelTextFromStreamResponse(body []byte) (string, error) {
-	text := strings.TrimSpace(string(body))
-	if !strings.Contains(text, "data:") {
-		return "", fmt.Errorf("model stream response has no data events")
-	}
-
-	var chunks []string
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, ":") {
-			continue
-		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" {
-			continue
-		}
-		chunk, err := extractModelTextFromStreamChunk([]byte(data))
-		if err != nil {
-			return "", err
-		}
-		if chunk != "" {
-			chunks = append(chunks, chunk)
-		}
-	}
-
-	if len(chunks) == 0 {
-		snippet := text
-		if len(snippet) > 320 {
-			snippet = snippet[:320]
-		}
-		return "", fmt.Errorf("model stream response returned no text chunks, snippet=%q", snippet)
-	}
-	return strings.Join(chunks, ""), nil
-}
-
-func extractModelTextFromStreamChunk(body []byte) (string, error) {
-	var raw map[string]any
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return "", err
-	}
-
-	if choices, ok := raw["choices"].([]any); ok && len(choices) > 0 {
-		var chunks []string
-		for _, choice := range choices {
-			first, ok := choice.(map[string]any)
-			if !ok {
-				continue
-			}
-			if delta, ok := first["delta"].(map[string]any); ok {
-				if content, ok := rawString(delta["content"]); ok && content != "" {
-					chunks = append(chunks, content)
-				}
-			}
-			if text, ok := rawString(first["text"]); ok && text != "" {
-				chunks = append(chunks, text)
-			}
-		}
-		if len(chunks) > 0 {
-			return strings.Join(chunks, ""), nil
-		}
-	}
-
-	if output, ok := raw["output"].([]any); ok && len(output) > 0 {
-		var chunks []string
-		for _, item := range output {
-			entry, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			if content, ok := entry["content"].([]any); ok {
-				for _, c := range content {
-					block, ok := c.(map[string]any)
-					if !ok {
-						continue
-					}
-					if txt, ok := rawString(firstNonNil(block["text"], block["content"])); ok && txt != "" {
-						chunks = append(chunks, txt)
-					}
-				}
-			}
-		}
-		if len(chunks) > 0 {
-			return strings.Join(chunks, ""), nil
-		}
-	}
-
-	return "", nil
-=======
 func (g *OpenAIGenerator) recordModelUsage(model string, operation string, promptTokens int64, completionTokens int64, totalTokens int64, usageReported bool, failed bool, latency time.Duration) {
 	g.mu.RLock()
 	reporter := g.analytics
@@ -950,7 +819,6 @@ func extractModelUsageFromResponse(body []byte) (promptTokens int64, completionT
 		totalTokens = promptTokens + completionTokens
 	}
 	return promptTokens, completionTokens, totalTokens, true
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func extractModelTextFromResponse(body []byte) (string, error) {

@@ -1,15 +1,10 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-<<<<<<< HEAD
-import { BadgeCheck, ChevronDown, ChevronUp, Download, Eye, EyeOff, IdCard, Mail, UserRound } from "lucide-react";
-import { exportOAuthAccounts, getModelConfig, getTTSConfig, me, updateModelConfig, updateProfile, updateTTSConfig } from "../api";
-=======
-import { AudioLines, BadgeCheck, BrainCircuit, ChevronDown, ChevronUp, Crown, Eye, EyeOff, History, IdCard, LogOut, Mail, SlidersHorizontal, UserRound, Waves } from "lucide-react";
+import { AudioLines, BadgeCheck, BrainCircuit, ChevronDown, ChevronUp, Crown, Download, Eye, EyeOff, History, IdCard, LogOut, Mail, SlidersHorizontal, UserRound, Waves } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { isCommercialEdition, isMiniProgramEdition } from "../edition";
-import { getASRConfig, getModelConfig, getTTSConfig, logout, me, updateASRConfig, updateModelConfig, updateProfile, updateTTSConfig } from "../api";
+import { exportOAuthAccounts, getASRConfig, getModelConfig, getTTSConfig, logout, me, updateASRConfig, updateModelConfig, updateProfile, updateTTSConfig } from "../api";
 import { ASR_PROVIDER_PRESETS, getASRProviderPreset, type ASRProviderId } from "../asrProviders";
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 import { getModelProviderPreset, MODEL_PROVIDER_PRESETS, type ModelProviderId } from "../modelProviders";
 import { useAppStore } from "../store";
 import {
@@ -203,7 +198,6 @@ export function ProfilePage() {
     }
   }
 
-<<<<<<< HEAD
   async function handleOAuthExport() {
     setOAuthMessage("");
     setOAuthExporting(true);
@@ -225,7 +219,9 @@ export function ProfilePage() {
       setOAuthMessage("OAuth 账号导出失败，请确认当前账号已登录且后端已部署最新版本。");
     } finally {
       setOAuthExporting(false);
-=======
+    }
+  }
+
   async function handleASRSubmit(event: FormEvent) {
     event.preventDefault(); setASRMessage("");
     try {
@@ -251,7 +247,6 @@ export function ProfilePage() {
     ));
     if (!nextPreset.requiresAppID) {
       setASRAppID("");
->>>>>>> 73c0fbd (feat: prepare mini program production release)
     }
   }
 
@@ -539,7 +534,6 @@ export function ProfilePage() {
             ) : null}
           </form>
 
-<<<<<<< HEAD
           <section className="profile-section-content oauth-export-panel" style={{ marginTop: 18 }}>
             <article className="stage-banner profile-section-banner">
               <div>
@@ -567,12 +561,8 @@ export function ProfilePage() {
             {oauthMessage ? <p>{oauthMessage}</p> : null}
           </section>
 
-          <form onSubmit={handleTTSSubmit} style={{ marginTop: 18 }}>
-            <article className="stage-banner profile-section-banner" style={{ marginBottom: 12 }}>
-=======
           <form className="settings-service-card" onSubmit={handleTTSSubmit}>
             <article className="stage-banner profile-section-banner settings-service-header tts-service">
->>>>>>> 73c0fbd (feat: prepare mini program production release)
               <div>
                 <strong><AudioLines size={17} /> 语音合成</strong>
                 <p style={{ margin: "6px 0 0" }}>可切换不同 TTS 厂商预设。当前预设会自动带入推荐地址、模型与音色，你也可以继续手动调整。</p>

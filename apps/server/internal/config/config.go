@@ -9,31 +9,6 @@ import (
 )
 
 type Config struct {
-<<<<<<< HEAD
-	Port               string
-	JWTSecret          string
-	RedisAddr          string
-	SentryDSN          string
-	DatabaseURL        string
-	SQLitePath         string
-	MigrationsDir      string
-	OpenAIAPIKey       string
-	OpenAIModel        string
-	OpenAIBaseURL      string
-	TTSProvider        string
-	TTSAPIURL          string
-	TTSAPIKey          string
-	TTSVoice           string
-	TTSModel           string
-	TTSAudioFormat     string
-	TTSUseUploadPrompt bool
-	TTSPromptAudioPath string
-	TTSReturnJSON      bool
-	TTSTimeoutSeconds  int
-	TTSMaxRetries      int
-	TTSMaxConcurrency  int
-	MediaDir           string
-=======
 	Edition                      string
 	Port                         string
 	JWTSecret                    string
@@ -97,7 +72,6 @@ type Config struct {
 	AdCourseSlot                 string
 	AdLibrarySlot                string
 	AdResultSlot                 string
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func Load() Config {
@@ -132,34 +106,6 @@ func Load() Config {
 	ttsReturnJSON := getenvBool("TTS_RETURN_JSON", true)
 	ttsTimeoutSeconds := getenvInt("TTS_TIMEOUT_SECONDS", 300)
 	ttsMaxRetries := getenvInt("TTS_MAX_RETRIES", 1)
-<<<<<<< HEAD
-	ttsMaxConcurrency := getenvInt("TTS_MAX_CONCURRENCY", 2)
-	mediaDir := getenv("MEDIA_DIR", "media")
-	return Config{
-		Port:               port,
-		JWTSecret:          secret,
-		RedisAddr:          redisAddr,
-		SentryDSN:          sentryDsn,
-		DatabaseURL:        databaseURL,
-		SQLitePath:         sqlitePath,
-		MigrationsDir:      migrationsDir,
-		OpenAIAPIKey:       openAIAPIKey,
-		OpenAIModel:        openAIModel,
-		OpenAIBaseURL:      openAIBaseURL,
-		TTSProvider:        ttsProvider,
-		TTSAPIURL:          ttsAPIURL,
-		TTSAPIKey:          ttsAPIKey,
-		TTSVoice:           ttsVoice,
-		TTSModel:           ttsModel,
-		TTSAudioFormat:     ttsAudioFormat,
-		TTSUseUploadPrompt: ttsUseUploadPrompt,
-		TTSPromptAudioPath: ttsPromptAudioPath,
-		TTSReturnJSON:      ttsReturnJSON,
-		TTSTimeoutSeconds:  ttsTimeoutSeconds,
-		TTSMaxRetries:      ttsMaxRetries,
-		TTSMaxConcurrency:  ttsMaxConcurrency,
-		MediaDir:           mediaDir,
-=======
 	asrProvider := getenv("ASR_PROVIDER", "XIAOMI")
 	asrAPIURL := getenv("ASR_API_URL", defaultASRBaseURL(asrProvider))
 	asrAPIKey := getenv("ASR_API_KEY", "")
@@ -330,7 +276,6 @@ func defaultASRModel(provider string) string {
 		return "gpt-4o-mini-transcribe"
 	default:
 		return ""
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -337,32 +336,6 @@ func (s *PostgresStore) SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig
 	return config, nil
 }
 
-<<<<<<< HEAD
-func (s *PostgresStore) ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	rows, err := s.pool.Query(
-		ctx,
-		`SELECT id::text, email, provider, client_id, refresh_token, created_at, updated_at
-		 FROM oauth_accounts
-		 WHERE ($1 = '' OR LOWER(provider) = LOWER($1))
-		 ORDER BY LOWER(email), LOWER(provider), client_id`,
-		strings.TrimSpace(provider),
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := make([]domain.OAuthAccount, 0)
-	for rows.Next() {
-		var account domain.OAuthAccount
-		if scanErr := rows.Scan(&account.ID, &account.Email, &account.Provider, &account.ClientID, &account.RefreshToken, &account.CreatedAt, &account.UpdatedAt); scanErr != nil {
-			return nil, scanErr
-		}
-		result = append(result, account)
-	}
-	return result, rows.Err()
-=======
 func (s *PostgresStore) GetASRConfig() (domain.ASRConfig, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -390,7 +363,6 @@ func (s *PostgresStore) SaveASRConfig(config domain.ASRConfig) (domain.ASRConfig
 		return domain.ASRConfig{}, err
 	}
 	return config, nil
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func (s *PostgresStore) SaveTheater(theater domain.Theater) (domain.Theater, error) {
@@ -722,20 +694,11 @@ func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (do
 	err = s.pool.QueryRow(
 		ctx,
 		`INSERT INTO reading_materials (
-<<<<<<< HEAD
-            id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family,
-            title, passage, vocabulary, questions, source_ids,
-            generation_note, audio_url, audio_urls, audio_status, vocabulary_items, association_sentences, grammar_insights, created_at
-        ) VALUES (
-            $1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-            $13, $14, $15::jsonb, $16::jsonb, $17::jsonb, $18, $19, $20::jsonb, $21, $22::jsonb, $23::jsonb, $24::jsonb, $25
-=======
             id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
 			generation_note, audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
         ) VALUES (
             $1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb,
 			$12, $13, $14::jsonb, $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21::jsonb, $22
->>>>>>> 73c0fbd (feat: prepare mini program production release)
         )
         ON CONFLICT (id) DO UPDATE SET
             user_id = EXCLUDED.user_id,
@@ -765,22 +728,6 @@ func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (do
             association_sentences = EXCLUDED.association_sentences,
             grammar_insights = EXCLUDED.grammar_insights,
             created_at = EXCLUDED.created_at
-<<<<<<< HEAD
-        RETURNING id::text, user_id::text, exam, language, level, topic,
-            COALESCE(band, 0), COALESCE(stage, ''), COALESCE(section, ''), COALESCE(skill_focus, ''), COALESCE(question_type, ''), COALESCE(scenario_family, ''),
-            title, passage, vocabulary, questions, source_ids,
-            COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status,
-            COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at`,
-		material.ID, material.UserID, material.Exam, material.Language, material.Level, material.Topic,
-		material.Band, material.Stage, material.Section, material.SkillFocus, material.QuestionType, material.ScenarioFamily,
-		material.Title, material.Passage, string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote,
-		material.AudioURL, string(audioURLsJSON), material.AudioStatus, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), material.CreatedAt,
-	).Scan(
-		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic,
-		&material.Band, &material.Stage, &material.Section, &material.SkillFocus, &material.QuestionType, &material.ScenarioFamily,
-		&material.Title, &material.Passage,
-		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus,
-=======
         RETURNING id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
 			COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status, status, generation_progress, generation_message,
 			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at`,
@@ -790,7 +737,6 @@ func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (do
 	).Scan(
 		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Title, &material.Passage,
 		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus, &material.Status, &material.GenerationProgress, &material.GenerationMessage,
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &material.CreatedAt,
 	)
 	if err != nil {
@@ -856,30 +802,15 @@ func (s *PostgresStore) GetReadingMaterial(id string, userID string) (domain.Rea
 	var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON []byte
 	err := s.pool.QueryRow(
 		ctx,
-<<<<<<< HEAD
-		`SELECT id::text, user_id::text, exam, language, level, topic,
-            COALESCE(band, 0), COALESCE(stage, ''), COALESCE(section, ''), COALESCE(skill_focus, ''), COALESCE(question_type, ''), COALESCE(scenario_family, ''),
-            title, passage, vocabulary, questions, source_ids,
-            COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status,
-            COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
-=======
 		`SELECT id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
 			COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status, status, generation_progress, generation_message,
 			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
->>>>>>> 73c0fbd (feat: prepare mini program production release)
          FROM reading_materials
          WHERE id = $1::uuid AND ($2 = '' OR user_id = NULLIF($2, '')::uuid)`,
 		id, userID,
 	).Scan(
-<<<<<<< HEAD
-		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic,
-		&material.Band, &material.Stage, &material.Section, &material.SkillFocus, &material.QuestionType, &material.ScenarioFamily,
-		&material.Title, &material.Passage,
-		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus,
-=======
 		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Title, &material.Passage,
 		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus, &material.Status, &material.GenerationProgress, &material.GenerationMessage,
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &material.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -903,17 +834,9 @@ func (s *PostgresStore) ListReadingMaterialsByUser(userID string, exam string) (
 	defer cancel()
 	rows, err := s.pool.Query(
 		ctx,
-<<<<<<< HEAD
-		`SELECT id::text, user_id::text, exam, language, level, topic,
-            COALESCE(band, 0), COALESCE(stage, ''), COALESCE(section, ''), COALESCE(skill_focus, ''), COALESCE(question_type, ''), COALESCE(scenario_family, ''),
-            title, passage, vocabulary, questions, source_ids,
-            COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status,
-            COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
-=======
 		`SELECT id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
 			COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status, status, generation_progress, generation_message,
 			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
->>>>>>> 73c0fbd (feat: prepare mini program production release)
          FROM reading_materials
          WHERE user_id = $1::uuid AND ($2 = '' OR exam = $2)
          ORDER BY created_at DESC`,
@@ -930,15 +853,8 @@ func (s *PostgresStore) ListReadingMaterialsByUser(userID string, exam string) (
 		var vocabularyJSON, questionsJSON, sourceIDsJSON []byte
 		var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON []byte
 		if scanErr := rows.Scan(
-<<<<<<< HEAD
-			&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic,
-			&item.Band, &item.Stage, &item.Section, &item.SkillFocus, &item.QuestionType, &item.ScenarioFamily,
-			&item.Title, &item.Passage,
-			&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &item.GenerationNote, &item.AudioURL, &audioURLsJSON, &item.AudioStatus,
-=======
 			&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic, &item.Title, &item.Passage,
 			&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &item.GenerationNote, &item.AudioURL, &audioURLsJSON, &item.AudioStatus, &item.Status, &item.GenerationProgress, &item.GenerationMessage,
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 			&vocabularyItemsJSON, &associationJSON, &grammarJSON, &item.CreatedAt,
 		); scanErr != nil {
 			return nil, scanErr

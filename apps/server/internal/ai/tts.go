@@ -309,8 +309,6 @@ func (t *APITTS) synthesizeCustom(ctx context.Context, config domain.TTSConfig, 
 }
 
 func (t *APITTS) synthesizeXiaomi(ctx context.Context, config domain.TTSConfig, text string, language string, requestedVoice string) (string, error) {
-<<<<<<< HEAD
-=======
 	if isAudioDataURL(requestedVoice) {
 		messages, audio, buildErr := buildXiaomiMessagesAndAudio(xiaomiTTSVoiceCloneModel, requestedVoice, config.AudioFormat, text, language, "")
 		if buildErr != nil {
@@ -321,7 +319,6 @@ func (t *APITTS) synthesizeXiaomi(ctx context.Context, config domain.TTSConfig, 
 	if shouldUseXiaomiDesignedCloneFlow(requestedVoice) {
 		return t.synthesizeXiaomiWithDesignedClone(ctx, config, text, language, requestedVoice)
 	}
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	model := normalizeTTSModel(ttsProviderXiaomi, config.Model)
 	messages, audio, buildErr := buildXiaomiMessagesAndAudio(model, config.Voice, config.AudioFormat, text, language, requestedVoice)
 	if buildErr != nil {

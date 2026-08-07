@@ -14,17 +14,6 @@ import (
 )
 
 type MemoryStore struct {
-<<<<<<< HEAD
-	mu       sync.RWMutex
-	users    map[string]domain.User
-	byEmail  map[string]string
-	theater  map[string]domain.Theater
-	readings map[string]domain.ReadingMaterial
-	sessions map[string]domain.RoleplaySession
-	oauth    map[string]domain.OAuthAccount
-	model    domain.ModelConfig
-	tts      domain.TTSConfig
-=======
 	mu                  sync.RWMutex
 	users               map[string]domain.User
 	byEmail             map[string][]string
@@ -59,19 +48,10 @@ type memoryCreditUse struct {
 	Amount    int
 	IsFree    bool
 	CreatedAt time.Time
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-<<<<<<< HEAD
-		users:    map[string]domain.User{},
-		byEmail:  map[string]string{},
-		theater:  map[string]domain.Theater{},
-		readings: map[string]domain.ReadingMaterial{},
-		sessions: map[string]domain.RoleplaySession{},
-		oauth:    map[string]domain.OAuthAccount{},
-=======
 		users:               map[string]domain.User{},
 		byEmail:             map[string][]string{},
 		byUsername:          map[string]string{},
@@ -87,7 +67,6 @@ func NewMemoryStore() *MemoryStore {
 		xpEvents:            map[string]domain.XPEvent{},
 		modelUsageDaily:     map[string]analytics.ModelUsage{},
 		productMetricsDaily: map[string]analytics.ProductMetric{},
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 	}
 }
 
@@ -166,30 +145,6 @@ func (s *MemoryStore) SaveTTSConfig(config domain.TTSConfig) (domain.TTSConfig, 
 	return s.tts, nil
 }
 
-<<<<<<< HEAD
-func (s *MemoryStore) SaveOAuthAccount(account domain.OAuthAccount) domain.OAuthAccount {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if account.ID == "" {
-		account.ID = uuid.NewString()
-	}
-	s.oauth[account.ID] = account
-	return account
-}
-
-func (s *MemoryStore) ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
-	result := make([]domain.OAuthAccount, 0, len(s.oauth))
-	for _, account := range s.oauth {
-		if normalizedProvider != "" && strings.ToLower(strings.TrimSpace(account.Provider)) != normalizedProvider {
-			continue
-		}
-		result = append(result, account)
-	}
-	return result, nil
-=======
 func (s *MemoryStore) GetASRConfig() (domain.ASRConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -204,7 +159,6 @@ func (s *MemoryStore) SaveASRConfig(config domain.ASRConfig) (domain.ASRConfig, 
 	defer s.mu.Unlock()
 	s.asr = config
 	return s.asr, nil
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 func (s *MemoryStore) GetUserByEmail(email string) (domain.User, error) {

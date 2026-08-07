@@ -1,11 +1,6 @@
 import type { AICreditCost, ASRConfig, AdPlacement, AuthResult, BillingProduct, BillingStatus, ContentSource, Course, EmailActionResult, LoginCandidate, ModelConfig, PaymentOrder, PracticeResult, ReadingMaterial, RoleplaySession, TTSConfig, Theater, User, VoiceProfile, WritingSession, XPEvent } from "./types";
 
-<<<<<<< HEAD
-const DEFAULT_REMOTE_API_URL = "http://61.244.24.7/graphql";
-const API_REQUEST_TIMEOUT_MS = 320000;
-=======
 export const DESKTOP_API_CONFIGURATION_ERROR = "桌面端 API 未配置，请联系管理员重新构建应用。";
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 
 export function resolveApiUrl(
 	envUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim(),
@@ -91,13 +86,6 @@ type GraphQLResponse<T> = {
   errors?: { message: string }[];
 };
 
-<<<<<<< HEAD
-type RequestOptions = {
-  retryWithGuest?: boolean;
-};
-
-let guestTokenPromise: Promise<string> | undefined;
-=======
 function clearStoredSession(): void {
 	localStorage.removeItem("accessToken");
 	localStorage.removeItem("refreshToken");
@@ -139,74 +127,19 @@ async function refreshAccessToken(refreshToken: string): Promise<{ accessToken: 
 		return undefined;
 	}
 }
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 
 async function ensureAccessToken(): Promise<string> {
   const existing = localStorage.getItem("accessToken");
   if (existing) {
     return existing;
   }
-<<<<<<< HEAD
-  if (guestTokenPromise) {
-    return guestTokenPromise;
-  }
-  const seed = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  const email = `guest_${seed}@linguaquest.local`;
-  guestTokenPromise = register(email, "guest1234")
-    .then((token) => {
-      localStorage.setItem("accessToken", token);
-      return token;
-    })
-    .finally(() => {
-      guestTokenPromise = undefined;
-    });
-  return guestTokenPromise;
-}
-
-async function request<T>(query: string, variables?: Record<string, unknown>, options: RequestOptions = {}): Promise<T> {
-  const retryWithGuest = options.retryWithGuest ?? true;
-  async function sendRequest(token?: string | null): Promise<GraphQLResponse<T>> {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
-    try {
-      const response = await fetch(API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ query, variables }),
-        signal: controller.signal
-      });
-      return response.json();
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        throw new Error("request timeout");
-      }
-      throw error;
-    } finally {
-      window.clearTimeout(timeout);
-    }
-  }
-
-=======
   throw new Error("请先登录后再继续操作");
 }
 
 async function request<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
->>>>>>> 73c0fbd (feat: prepare mini program production release)
   const currentToken = localStorage.getItem("accessToken");
   let result = await sendRequest<T>(query, variables, currentToken);
 
-<<<<<<< HEAD
-  // Token may be stale after backend JWT secret rotation; refresh once automatically.
-  if (result.errors?.[0]?.message?.toLowerCase().includes("unauthorized") && currentToken) {
-    localStorage.removeItem("accessToken");
-    if (retryWithGuest) {
-      const renewedToken = await ensureAccessToken();
-      result = await sendRequest(renewedToken);
-    }
-=======
   if (isUnauthorized(result) && currentToken) {
 		const refreshToken = localStorage.getItem("refreshToken");
 		const refreshed = refreshToken ? await refreshAccessToken(refreshToken) : undefined;
@@ -220,8 +153,7 @@ async function request<T>(query: string, variables?: Record<string, unknown>): P
 		if (isUnauthorized(result)) {
 			clearStoredSession();
 			throw new Error("登录状态已失效，请重新登录");
-		}
->>>>>>> 73c0fbd (feat: prepare mini program production release)
+  }
   }
 
   if (result.errors?.length) {
@@ -332,13 +264,7 @@ export async function requestUsernameRecovery(email: string): Promise<boolean> {
 
 export async function me(): Promise<User> {
   const data = await request<{ me: User }>(
-<<<<<<< HEAD
-    `query Me { me { id email nickname avatarUrl bio totalXP } }`,
-    undefined,
-    { retryWithGuest: false }
-=======
 		`query Me { me { id username email emailVerified nickname avatarUrl bio totalXP level xpIntoLevel xpToNextLevel levelProgress rankCode rankLabel } }`
->>>>>>> 73c0fbd (feat: prepare mini program production release)
   );
   return data.me;
 }
@@ -454,7 +380,6 @@ export async function updateTTSConfig(input: {
   return data.updateTTSConfig;
 }
 
-<<<<<<< HEAD
 export async function exportOAuthAccounts(provider?: string): Promise<string> {
   await ensureAccessToken();
   const normalizedProvider = provider?.trim() || undefined;
@@ -465,7 +390,8 @@ export async function exportOAuthAccounts(provider?: string): Promise<string> {
     { provider: normalizedProvider }
   );
   return data.oauthAccountsExport;
-=======
+}
+
 export async function getASRConfig(): Promise<ASRConfig> {
   await ensureAccessToken();
   const data = await request<{ asrConfig: ASRConfig }>(`query ASRConfig { asrConfig { provider model baseURL hasApiKey apiKeyPreview appId updatedAt } }`);
@@ -514,7 +440,6 @@ export async function deleteVoiceProfile(id: string): Promise<void> {
     `mutation DeleteVoiceProfile($id: ID!) { deleteVoiceProfile(id: $id) }`,
     { id }
   );
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 export async function generateTheater(input: {
@@ -738,11 +663,7 @@ export async function generateReading(input: {
   await ensureAccessToken();
   const query = `mutation GenerateReading($exam: String!, $topic: String!, $level: String, $sourceIds: [String!]) {
       generateReading(exam: $exam, topic: $topic, level: $level, sourceIds: $sourceIds) {
-<<<<<<< HEAD
-        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
-=======
-		id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus status generationProgress generationMessage
->>>>>>> 73c0fbd (feat: prepare mini program production release)
+        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus status generationProgress generationMessage
         vocabularyItems { word pos meanings }
         associationSentences
         grammarInsights { sentence difficultyPoints studySuggestions }
@@ -757,11 +678,7 @@ export async function readingMaterials(exam?: string): Promise<ReadingMaterial[]
   await ensureAccessToken();
   const query = `query ReadingMaterials($exam: String) {
       readingMaterials(exam: $exam) {
-<<<<<<< HEAD
-        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
-=======
-		id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus status generationProgress generationMessage
->>>>>>> 73c0fbd (feat: prepare mini program production release)
+        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus status generationProgress generationMessage
         vocabularyItems { word pos meanings }
         associationSentences
         grammarInsights { sentence difficultyPoints studySuggestions }
@@ -776,11 +693,7 @@ export async function readingMaterial(id: string): Promise<ReadingMaterial> {
   await ensureAccessToken();
   const query = `query ReadingMaterial($id: ID!) {
       readingMaterial(id: $id) {
-<<<<<<< HEAD
-        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
-=======
-		id exam language level topic title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus status generationProgress generationMessage
->>>>>>> 73c0fbd (feat: prepare mini program production release)
+        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus status generationProgress generationMessage
         vocabularyItems { word pos meanings }
         associationSentences
         grammarInsights { sentence difficultyPoints studySuggestions }

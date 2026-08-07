@@ -172,7 +172,6 @@ type TTSConfigUpdate struct {
 	ClearAPIKey bool
 }
 
-<<<<<<< HEAD
 type OAuthAccount struct {
 	ID           string
 	Email        string
@@ -181,7 +180,8 @@ type OAuthAccount struct {
 	RefreshToken string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
-=======
+}
+
 // ASRConfig is kept separately from TTS because providers often use different
 // credentials, request formats, and supported languages.
 type ASRConfig struct {
@@ -233,7 +233,6 @@ type VoiceProfile struct {
 	Status            string
 	GenerationMessage string
 	CreatedAt         time.Time
->>>>>>> 73c0fbd (feat: prepare mini program production release)
 }
 
 type Dialogue struct {
