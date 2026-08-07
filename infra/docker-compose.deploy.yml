@@ -7,6 +7,8 @@ services:
       - "80:80"
     depends_on:
       - server
+    networks:
+      - linguaquest-network
 
   server:
     image: ${DOCKERHUB_USERNAME}/linguaquest-server:${SERVER_IMAGE_TAG:-latest}
@@ -16,7 +18,7 @@ services:
       APP_EDITION: ${APP_EDITION:-COMMERCIAL}
       PORT: "8177"
       JWT_SECRET: ${JWT_SECRET}
-      REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
+      REDIS_ADDR: ${REDIS_ADDR:-linguaquest-redis:6379}
       SUPABASE_DB_URL: ${SUPABASE_DB_URL}
       SQLITE_PATH: ${SQLITE_PATH:-}
       MIGRATIONS_DIR: migrations
@@ -78,31 +80,16 @@ services:
       AD_LIBRARY_SLOT: ${AD_LIBRARY_SLOT:-}
       AD_RESULT_SLOT: ${AD_RESULT_SLOT:-}
       SENTRY_DSN: ${SENTRY_DSN:-}
-    depends_on:
-      - redis
-      - rabbitmq
     volumes:
       - server-media:/srv/media
       - server-data:/srv/data
-
-  redis:
-    image: redis:7-alpine
-    container_name: linguaquest-redis
-    restart: unless-stopped
-    volumes:
-      - redis-data:/data
-
-  rabbitmq:
-    image: rabbitmq:3.13-management
-    container_name: linguaquest-rabbitmq
-    restart: unless-stopped
-    ports:
-      - "15672:15672"
-    volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - linguaquest-network
 
 volumes:
   server-data:
-  redis-data:
-  rabbitmq-data:
   server-media:
+
+networks:
+  linguaquest-network:
+    external: true
