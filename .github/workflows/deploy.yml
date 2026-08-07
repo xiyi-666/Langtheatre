@@ -135,14 +135,14 @@ jobs:
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       ANALYTICS_ADMIN_TOKEN: ${{ secrets.ANALYTICS_ADMIN_TOKEN }}
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL }}
-      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
-      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
-      SMTP_HOST: ${{ vars.SMTP_HOST }}
-      SMTP_PORT: ${{ vars.SMTP_PORT }}
-      SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
-      SMTP_FROM: ${{ vars.SMTP_FROM }}
-      EMAIL_VERIFICATION_REQUIRED: ${{ vars.EMAIL_VERIFICATION_REQUIRED }}
+      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL || secrets.PUBLIC_APP_URL }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || secrets.OPENAI_MODEL }}
+      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
+      SMTP_HOST: ${{ vars.SMTP_HOST || secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ vars.SMTP_PORT || secrets.SMTP_PORT }}
+      SMTP_USERNAME: ${{ vars.SMTP_USERNAME || secrets.SMTP_USERNAME }}
+      SMTP_FROM: ${{ vars.SMTP_FROM || secrets.SMTP_FROM }}
+      EMAIL_VERIFICATION_REQUIRED: ${{ vars.EMAIL_VERIFICATION_REQUIRED || secrets.EMAIL_VERIFICATION_REQUIRED }}
     steps:
       - uses: actions/checkout@v4
 

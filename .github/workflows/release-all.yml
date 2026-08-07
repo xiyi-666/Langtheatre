@@ -45,7 +45,7 @@ jobs:
             artifact_name: tauri-macos
     env:
       DESKTOP_API_URL: ${{ secrets.DESKTOP_API_URL }}
-      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL }}
+      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL || secrets.PUBLIC_APP_URL }}
       VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
       VITE_APP_EDITION: MINI_PROGRAM
     steps:
@@ -124,7 +124,7 @@ jobs:
       contents: read
     env:
       DESKTOP_API_URL: ${{ secrets.DESKTOP_API_URL }}
-      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL }}
+      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL || secrets.PUBLIC_APP_URL }}
       VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
       VITE_APP_EDITION: MINI_PROGRAM
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
