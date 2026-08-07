@@ -66,24 +66,32 @@ func TestGenerateTheaterMarksFailedWhenAIGenerationFails(t *testing.T) {
 	t.Fatal("theater did not reach FAILED after AI generation error")
 }
 
-func TestGenerateReadingMaterialReturnsErrorWhenAIGenerationFails(t *testing.T) {
+func TestGenerateReadingMaterialMarksFailedWhenAIGenerationFails(t *testing.T) {
 	mem := store.NewMemoryStore()
 	svc := New(mem, nil, failingGenerator{err: errors.New("upstream unavailable")}, nil, "secret")
 
-	_, err := svc.GenerateReadingMaterial("user-1", "IELTS", "[Band 7.0][Matching Headings] urban transport resilience", "advanced", nil)
-	if err == nil {
-		t.Fatal("expected reading generation error")
+	created, err := svc.GenerateReadingMaterial("user-1", "IELTS", "[Band 7.0][Matching Headings] urban transport resilience", "advanced", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "reading ai generation failed") {
-		t.Fatalf("error = %q, want reading ai generation failed", err.Error())
+	if created.Status != "GENERATING" {
+		t.Fatalf("initial status = %q, want GENERATING", created.Status)
 	}
-	items, listErr := mem.ListReadingMaterialsByUser("user-1", "IELTS")
-	if listErr != nil {
-		t.Fatal(listErr)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		current, getErr := mem.GetReadingMaterial(created.ID, "user-1")
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if current.Status == "FAILED" {
+			if current.Passage != "" || len(current.Questions) != 0 {
+				t.Fatalf("failed reading material should not contain generated content: passage=%d questions=%d", len(current.Passage), len(current.Questions))
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	if len(items) != 0 {
-		t.Fatalf("reading material should not be saved after AI failure, got %d", len(items))
-	}
+	t.Fatal("reading material did not reach FAILED after AI generation error")
 }
 
 func TestMaterializeAudioDataURLStoresMediaFile(t *testing.T) {

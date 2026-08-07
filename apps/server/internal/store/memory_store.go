@@ -23,6 +23,7 @@ type MemoryStore struct {
 	readings            map[string]domain.ReadingMaterial
 	voices              map[string]domain.VoiceProfile
 	sessions            map[string]domain.RoleplaySession
+	oauth               map[string]domain.OAuthAccount
 	writings            map[string]domain.WritingSession
 	orders              map[string]domain.PaymentOrder
 	billing             map[string]domain.BillingStatus
@@ -60,6 +61,7 @@ func NewMemoryStore() *MemoryStore {
 		readings:            map[string]domain.ReadingMaterial{},
 		voices:              map[string]domain.VoiceProfile{},
 		sessions:            map[string]domain.RoleplaySession{},
+		oauth:               map[string]domain.OAuthAccount{},
 		writings:            map[string]domain.WritingSession{},
 		orders:              map[string]domain.PaymentOrder{},
 		billing:             map[string]domain.BillingStatus{},
@@ -68,6 +70,34 @@ func NewMemoryStore() *MemoryStore {
 		modelUsageDaily:     map[string]analytics.ModelUsage{},
 		productMetricsDaily: map[string]analytics.ProductMetric{},
 	}
+}
+
+func (s *MemoryStore) SaveOAuthAccount(account domain.OAuthAccount) domain.OAuthAccount {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if account.ID == "" {
+		account.ID = uuid.NewString()
+	}
+	if account.CreatedAt.IsZero() {
+		account.CreatedAt = time.Now()
+	}
+	account.UpdatedAt = time.Now()
+	s.oauth[account.ID] = account
+	return account
+}
+
+func (s *MemoryStore) ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
+	result := make([]domain.OAuthAccount, 0, len(s.oauth))
+	for _, account := range s.oauth {
+		if normalizedProvider != "" && strings.ToLower(strings.TrimSpace(account.Provider)) != normalizedProvider {
+			continue
+		}
+		result = append(result, account)
+	}
+	return result, nil
 }
 
 func (s *MemoryStore) CreateUser(username string, email string, passwordHash string, emailVerified bool) (domain.User, error) {

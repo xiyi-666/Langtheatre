@@ -521,6 +521,30 @@ func (s *SQLiteStore) GetUserByEmail(email string) (domain.User, error) {
 	return scanUser(row)
 }
 
+func (s *SQLiteStore) ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error) {
+	query := `SELECT id, email, provider, client_id, refresh_token, created_at, updated_at FROM oauth_accounts`
+	args := []any{}
+	if strings.TrimSpace(provider) != "" {
+		query += ` WHERE LOWER(provider) = LOWER(?)`
+		args = append(args, strings.TrimSpace(provider))
+	}
+	query += ` ORDER BY LOWER(email), LOWER(provider), client_id`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]domain.OAuthAccount, 0)
+	for rows.Next() {
+		item, scanErr := scanOAuthAccount(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 func (s *SQLiteStore) ListUsersByEmail(email string) ([]domain.User, error) {
 	rows, err := s.db.Query(`SELECT id, username, email, email_verified, password_hash, nickname, avatar_url, bio, total_xp, created_at FROM users WHERE LOWER(email) = LOWER(?) ORDER BY datetime(created_at)`, email)
 	if err != nil {

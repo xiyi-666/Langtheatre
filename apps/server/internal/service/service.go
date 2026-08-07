@@ -123,6 +123,7 @@ type Options struct {
 	Mailer                   AuthMailer
 	PublicAppURL             string
 	MediaDir                 string
+	TTSMaxConcurrency        int
 	RequireEmailVerification bool
 	TaskConcurrency          int
 	TaskTimeout              time.Duration
@@ -131,6 +132,10 @@ type Options struct {
 	UsageProtection          UsageProtectionOptions
 	Analytics                *analytics.Reporter
 }
+
+// ServiceOptions is kept as a compatibility alias for callers that configured
+// media and TTS behavior before the broader Options type was introduced.
+type ServiceOptions = Options
 
 type Service struct {
 	store                    Store
@@ -876,6 +881,33 @@ func (s *Service) UpdateTTSConfig(input domain.TTSConfigUpdate) (domain.TTSConfi
 	}
 	s.ttsConfig.UpdateTTSConfig(saved)
 	return buildTTSConfigView(saved), nil
+}
+
+type oauthAccountLister interface {
+	ListOAuthAccounts(provider string) ([]domain.OAuthAccount, error)
+}
+
+func (s *Service) ExportOAuthAccounts(provider string) (string, error) {
+	lister, ok := s.store.(oauthAccountLister)
+	if !ok {
+		return "", errors.New("oauth account export unavailable")
+	}
+	accounts, err := lister.ListOAuthAccounts(provider)
+	if err != nil {
+		return "", err
+	}
+	lines := make([]string, 0, len(accounts))
+	for _, account := range accounts {
+		email := strings.TrimSpace(account.Email)
+		accountProvider := strings.TrimSpace(account.Provider)
+		clientID := strings.TrimSpace(account.ClientID)
+		refreshToken := strings.TrimSpace(account.RefreshToken)
+		if email == "" || accountProvider == "" || clientID == "" || refreshToken == "" {
+			continue
+		}
+		lines = append(lines, strings.Join([]string{email, accountProvider, clientID, refreshToken}, "----"))
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 func (s *Service) GetASRConfig() (domain.ASRConfigView, error) {
@@ -1936,7 +1968,7 @@ func (s *Service) generateReadingAsync(ctx context.Context, material domain.Read
 		return
 	}
 	s.cacheReadingMaterial(current)
-	s.generateReadingAudio(ctx, current)
+	s.generateReadingAudioWithContext(ctx, current)
 }
 
 func extractReadingVocabulary(passage string) []string {
@@ -2341,7 +2373,21 @@ var readingMeaningDict = map[string][]string{
 	"outcomes":       {"n. 结果（复数）", "n. 学习产出（教育语境）"},
 }
 
-func (s *Service) generateReadingAudio(ctx context.Context, material domain.ReadingMaterial) {
+func (s *Service) generateReadingAudio(materialID string, text string, language string) {
+	material, err := s.store.GetReadingMaterial(materialID, "")
+	if err != nil {
+		material = domain.ReadingMaterial{ID: materialID, Passage: text, Language: language}
+	}
+	if strings.TrimSpace(material.Passage) == "" {
+		material.Passage = text
+	}
+	if strings.TrimSpace(material.Language) == "" {
+		material.Language = language
+	}
+	s.generateReadingAudioWithContext(context.Background(), material)
+}
+
+func (s *Service) generateReadingAudioWithContext(ctx context.Context, material domain.ReadingMaterial) {
 	if s.tts == nil || strings.TrimSpace(material.Passage) == "" {
 		if err := s.updateReadingMaterial(material.ID, material.UserID, func(m *domain.ReadingMaterial) {
 			m.AudioStatus = "FAILED"
@@ -2355,23 +2401,52 @@ func (s *Service) generateReadingAudio(ctx context.Context, material domain.Read
 		return
 	}
 
+	if existing, err := s.store.GetReadingMaterial(material.ID, material.UserID); err == nil {
+		material = existing
+	} else if existing, fallbackErr := s.store.GetReadingMaterial(material.ID, ""); fallbackErr == nil {
+		material = existing
+	}
+	if migrated, err := s.migrateReadingAudioDataURLs(material); err == nil {
+		material = migrated
+	} else {
+		log.Printf("reading audio data migration failed material_id=%s err=%v", material.ID, err)
+	}
 	chunks := splitTextChunks(material.Passage, 420)
-	audioURLs := make([]string, 0, len(chunks))
-	for index, chunk := range chunks {
+	audioURLs := append(make([]string, 0, len(chunks)), material.AudioURLs...)
+	if len(audioURLs) > len(chunks) {
+		audioURLs = audioURLs[:len(chunks)]
+	}
+	if len(chunks) > 0 && len(audioURLs) >= len(chunks) {
+		if err := s.updateReadingMaterial(material.ID, material.UserID, func(m *domain.ReadingMaterial) {
+			m.AudioStatus = "READY"
+			m.Status = "READY"
+			m.GenerationProgress = 100
+			m.GenerationMessage = "生成完成"
+			m.GenerationNote = trimReadingAudioProgressNote(m.GenerationNote)
+			m.AudioURLs = append([]string(nil), audioURLs...)
+			m.AudioURL = audioURLs[0]
+		}); err != nil {
+			log.Printf("reading audio resume ready persist failed material_id=%s err=%v", material.ID, err)
+		}
+		return
+	}
+	for index := len(audioURLs); index < len(chunks); index++ {
+		chunk := chunks[index]
 		progress := 65 + ((index * 30) / max(1, len(chunks)))
 		_ = s.updateReadingProgress(material.ID, material.UserID, "GENERATING", progress, fmt.Sprintf("正在合成音频 %d/%d", index+1, len(chunks)))
 		audioURL, err := s.tts.Synthesize(ctx, chunk, material.Language, "")
 		if err != nil || strings.TrimSpace(audioURL) == "" {
 			updateErr := s.updateReadingMaterial(material.ID, material.UserID, func(m *domain.ReadingMaterial) {
-				m.AudioStatus = "FAILED"
-				m.Status = "READY"
-				m.GenerationProgress = 100
-				m.GenerationMessage = "文本已生成，音频合成失败"
-				if err != nil {
-					m.GenerationNote = strings.TrimSpace(m.GenerationNote + " | audio error: " + err.Error())
+				m.AudioURLs = append([]string(nil), audioURLs...)
+				if len(audioURLs) > 0 {
+					m.AudioURL = audioURLs[0]
+					m.AudioStatus = "PENDING"
 				} else {
 					m.AudioStatus = "FAILED"
 				}
+				m.Status = "READY"
+				m.GenerationProgress = 100
+				m.GenerationMessage = "文本已生成，音频合成失败"
 				if err != nil {
 					m.GenerationNote = strings.TrimSpace(m.GenerationNote + fmt.Sprintf(" | audio chunk %d/%d error: %s", index+1, len(chunks), err.Error()))
 				} else {
@@ -2407,7 +2482,8 @@ func (s *Service) generateReadingAudio(ctx context.Context, material domain.Read
 		m.Status = "READY"
 		m.GenerationProgress = 100
 		m.GenerationMessage = "生成完成"
-		m.AudioURLs = audioURLs
+		m.GenerationNote = trimReadingAudioProgressNote(m.GenerationNote)
+		m.AudioURLs = append([]string(nil), audioURLs...)
 		if len(audioURLs) > 0 {
 			m.AudioURL = audioURLs[0]
 		}
@@ -2544,7 +2620,7 @@ func (s *Service) queueReadingAudioGenerationWithCooldown(materialID string, tex
 	}
 	if !s.tasks.enqueue(func(ctx context.Context) {
 		defer s.finishReadingAudioJob(materialID)
-		s.generateReadingAudio(ctx, material)
+		s.generateReadingAudioWithContext(ctx, material)
 	}) {
 		s.finishReadingAudioJob(materialID)
 		return false

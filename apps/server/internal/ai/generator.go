@@ -821,6 +821,100 @@ func extractModelUsageFromResponse(body []byte) (promptTokens int64, completionT
 	return promptTokens, completionTokens, totalTokens, true
 }
 
+func modelPayloadWithStreaming(payload map[string]any) map[string]any {
+	out := make(map[string]any, len(payload)+1)
+	for key, value := range payload {
+		out[key] = value
+	}
+	out["stream"] = true
+	return out
+}
+
+func extractModelTextFromStreamResponse(body []byte) (string, error) {
+	text := strings.TrimSpace(string(body))
+	if !strings.Contains(text, "data:") {
+		return "", fmt.Errorf("model stream response has no data events")
+	}
+
+	var chunks []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, ":") || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		chunk, err := extractModelTextFromStreamChunk([]byte(data))
+		if err != nil {
+			return "", err
+		}
+		if chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+	}
+	if len(chunks) == 0 {
+		snippet := text
+		if len(snippet) > 320 {
+			snippet = snippet[:320]
+		}
+		return "", fmt.Errorf("model stream response returned no text chunks, snippet=%q", snippet)
+	}
+	return strings.Join(chunks, ""), nil
+}
+
+func extractModelTextFromStreamChunk(body []byte) (string, error) {
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return "", err
+	}
+	if choices, ok := raw["choices"].([]any); ok && len(choices) > 0 {
+		var chunks []string
+		for _, choice := range choices {
+			first, ok := choice.(map[string]any)
+			if !ok {
+				continue
+			}
+			if delta, ok := first["delta"].(map[string]any); ok {
+				if content, ok := rawString(delta["content"]); ok && content != "" {
+					chunks = append(chunks, content)
+				}
+			}
+			if text, ok := rawString(first["text"]); ok && text != "" {
+				chunks = append(chunks, text)
+			}
+		}
+		if len(chunks) > 0 {
+			return strings.Join(chunks, ""), nil
+		}
+	}
+	if output, ok := raw["output"].([]any); ok && len(output) > 0 {
+		var chunks []string
+		for _, item := range output {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if content, ok := entry["content"].([]any); ok {
+				for _, value := range content {
+					block, ok := value.(map[string]any)
+					if !ok {
+						continue
+					}
+					if text, ok := rawString(firstNonNil(block["text"], block["content"])); ok && text != "" {
+						chunks = append(chunks, text)
+					}
+				}
+			}
+		}
+		if len(chunks) > 0 {
+			return strings.Join(chunks, ""), nil
+		}
+	}
+	return "", nil
+}
+
 func extractModelTextFromResponse(body []byte) (string, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(body, &raw); err != nil {

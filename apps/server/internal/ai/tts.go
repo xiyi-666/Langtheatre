@@ -609,7 +609,7 @@ func xiaomiVoiceDesignPrompt(style string, language string) string {
 	base := fmt.Sprintf("请设计一个%s的声音，音色真实自然，情绪稳定，吐字清晰，保持中速偏自然的稳定语速，不要忽快忽慢，不要拖长句尾，不要播报腔，适合语言学习场景。", normalizedStyle)
 	switch strings.ToUpper(strings.TrimSpace(language)) {
 	case "CANTONESE":
-		return base + "這個聲音必須自然適配香港粵語口語，只用粵語/廣東話發音，不要使用普通話或國語腔；每句按標點作短停頓，整段保持一致節奏，接近香港日常生活對話。"
+		return base + "這個聲音必須自然適配香港粵語口語（即广东话），只用粵語/廣東話發音，不要使用普通話或國語腔；每句按標點作短停頓，整段保持一致節奏，接近香港日常生活對話。"
 	case "ENGLISH":
 		return base + "This voice should also sound warm and clear for English learning dialogues, with steady pacing and no sudden speed changes."
 	default:
