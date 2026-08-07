@@ -135,14 +135,14 @@ jobs:
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       ANALYTICS_ADMIN_TOKEN: ${{ secrets.ANALYTICS_ADMIN_TOKEN }}
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL }}
-      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
-      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
-      SMTP_HOST: ${{ vars.SMTP_HOST }}
-      SMTP_PORT: ${{ vars.SMTP_PORT }}
-      SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
-      SMTP_FROM: ${{ vars.SMTP_FROM }}
-      EMAIL_VERIFICATION_REQUIRED: ${{ vars.EMAIL_VERIFICATION_REQUIRED }}
+      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL || secrets.PUBLIC_APP_URL }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.4' }}
+      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || 'http://43.172.5.210:3000/v1' }}
+      SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.qq.com' }}
+      SMTP_PORT: ${{ vars.SMTP_PORT || '465' }}
+      SMTP_USERNAME: ${{ vars.SMTP_USERNAME || secrets.SMTP_USERNAME }}
+      SMTP_FROM: ${{ vars.SMTP_FROM || secrets.SMTP_FROM }}
+      EMAIL_VERIFICATION_REQUIRED: ${{ vars.EMAIL_VERIFICATION_REQUIRED || 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -156,7 +156,7 @@ jobs:
               exit 1
             fi
           }
-          for name in DEPLOY_USER DEPLOY_SSH_KEY DOCKERHUB_USERNAME DOCKERHUB_TOKEN JWT_SECRET OPENAI_API_KEY TTS_API_KEY ASR_API_KEY SMTP_PASSWORD ANALYTICS_ADMIN_TOKEN PUBLIC_APP_URL OPENAI_MODEL OPENAI_BASE_URL SMTP_USERNAME SMTP_FROM EMAIL_VERIFICATION_REQUIRED; do
+          for name in DEPLOY_USER DEPLOY_SSH_KEY DOCKERHUB_USERNAME DOCKERHUB_TOKEN JWT_SECRET OPENAI_API_KEY TTS_API_KEY ASR_API_KEY SMTP_PASSWORD ANALYTICS_ADMIN_TOKEN PUBLIC_APP_URL; do
             require_value "$name"
           done
           case "$PUBLIC_APP_URL" in
