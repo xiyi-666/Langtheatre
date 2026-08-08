@@ -135,7 +135,7 @@ jobs:
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
       ANALYTICS_ADMIN_TOKEN: ${{ secrets.ANALYTICS_ADMIN_TOKEN }}
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL || secrets.PUBLIC_APP_URL }}
+      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL || secrets.PUBLIC_APP_URL || 'https://langquest.cloudaihub.dpdns.org' }}
       OPENAI_MODEL: ${{ vars.OPENAI_MODEL || secrets.OPENAI_MODEL }}
       OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
       SMTP_HOST: ${{ vars.SMTP_HOST || secrets.SMTP_HOST }}
