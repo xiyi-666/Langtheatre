@@ -15,12 +15,14 @@ tests/
 # Environment files
 .env
 .env.*
+!infra/.env.mini-program.example
 
 # Build artifacts
 apps/client/src-tauri/target/
 apps/client/src-tauri/gen/
 apps/server/tmp/
 apps/server/bin/
+apps/server/.go-build-cache/
 apps/server/linguaquest.db
 *.log
 *.out

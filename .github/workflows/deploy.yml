@@ -1,19 +1,11 @@
-name: deploy-mini-program
+name: publish-mini-program-images
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  DEPLOY_HOST: 61.244.24.7
-  DEPLOY_DIR: /opt/linguaquest
   DOCKER_PLATFORMS: linux/amd64,linux/arm64
 
 on:
   workflow_dispatch:
-    inputs:
-      publish_latest:
-        description: "Tag Docker images as latest from the selected ref before deploying."
-        required: true
-        type: boolean
-        default: true
   push:
     branches: [main]
     paths:
@@ -23,7 +15,7 @@ on:
       - .github/workflows/deploy.yml
 
 concurrency:
-  group: mini-program-production
+  group: mini-program-image-publish
   cancel-in-progress: true
 
 jobs:
@@ -116,153 +108,3 @@ jobs:
           cache-to: type=gha,mode=max,scope=linguaquest-client
           tags: ${{ steps.meta-client.outputs.tags }}
           labels: ${{ steps.meta-client.outputs.labels }}
-
-  deploy-to-server:
-    runs-on: ubuntu-latest
-    needs: [build-and-push-images]
-    permissions:
-      contents: read
-    env:
-      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-      JWT_SECRET: ${{ secrets.JWT_SECRET }}
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      TTS_API_KEY: ${{ secrets.TTS_API_KEY }}
-      ASR_API_KEY: ${{ secrets.ASR_API_KEY }}
-      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-      ANALYTICS_ADMIN_TOKEN: ${{ secrets.ANALYTICS_ADMIN_TOKEN }}
-      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-      PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL || secrets.PUBLIC_APP_URL || 'https://langquest.cloudaihub.dpdns.org' }}
-      OPENAI_MODEL: ${{ vars.OPENAI_MODEL || secrets.OPENAI_MODEL }}
-      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL || secrets.OPENAI_BASE_URL }}
-      SMTP_HOST: ${{ vars.SMTP_HOST || secrets.SMTP_HOST }}
-      SMTP_PORT: ${{ vars.SMTP_PORT || secrets.SMTP_PORT }}
-      SMTP_USERNAME: ${{ vars.SMTP_USERNAME || secrets.SMTP_USERNAME }}
-      SMTP_FROM: ${{ vars.SMTP_FROM || secrets.SMTP_FROM }}
-      EMAIL_VERIFICATION_REQUIRED: ${{ vars.EMAIL_VERIFICATION_REQUIRED || secrets.EMAIL_VERIFICATION_REQUIRED }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate production prerequisites
-        shell: bash
-        run: |
-          set -euo pipefail
-          require_value() {
-            if [ -z "${!1:-}" ]; then
-              echo "Missing required GitHub Actions secret or variable: $1" >&2
-              exit 1
-            fi
-          }
-          for name in DEPLOY_USER DEPLOY_SSH_KEY DOCKERHUB_USERNAME DOCKERHUB_TOKEN JWT_SECRET OPENAI_API_KEY TTS_API_KEY ASR_API_KEY SMTP_PASSWORD ANALYTICS_ADMIN_TOKEN PUBLIC_APP_URL OPENAI_MODEL OPENAI_BASE_URL SMTP_USERNAME SMTP_FROM EMAIL_VERIFICATION_REQUIRED; do
-            require_value "$name"
-          done
-          case "$PUBLIC_APP_URL" in
-            https://*) ;;
-            *) echo "PUBLIC_APP_URL must use an HTTPS domain before Mini Program deployment." >&2; exit 1 ;;
-          esac
-
-      - name: Prepare private deployment configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .deploy
-          cp infra/docker-compose.deploy.yml .deploy/docker-compose.deploy.yml
-          IMAGE_TAG="mini-${GITHUB_SHA::7}"
-          write_env() { printf '%s=%s\n' "$1" "$2" >> .deploy/.env.production; }
-          : > .deploy/.env.production
-          write_env DOCKERHUB_USERNAME "$DOCKERHUB_USERNAME"
-          write_env CLIENT_IMAGE_TAG "$IMAGE_TAG"
-          write_env SERVER_IMAGE_TAG "$IMAGE_TAG"
-          write_env APP_EDITION MINI_PROGRAM
-          write_env JWT_SECRET "$JWT_SECRET"
-          write_env SUPABASE_DB_URL "$SUPABASE_DB_URL"
-          write_env SQLITE_PATH /srv/data/linguaquest.db
-          write_env REDIS_ADDR linguaquest-redis:6379
-          write_env PUBLIC_APP_URL "$PUBLIC_APP_URL"
-          write_env TRUST_PROXY_HEADERS true
-          write_env OPENAI_API_KEY "$OPENAI_API_KEY"
-          write_env OPENAI_MODEL "$OPENAI_MODEL"
-          write_env OPENAI_BASE_URL "$OPENAI_BASE_URL"
-          write_env TTS_API_KEY "$TTS_API_KEY"
-          write_env ASR_API_KEY "$ASR_API_KEY"
-          write_env SMTP_HOST "$SMTP_HOST"
-          write_env SMTP_PORT "$SMTP_PORT"
-          write_env SMTP_USERNAME "$SMTP_USERNAME"
-          write_env SMTP_PASSWORD "$SMTP_PASSWORD"
-          write_env SMTP_FROM "$SMTP_FROM"
-          write_env EMAIL_VERIFICATION_REQUIRED "$EMAIL_VERIFICATION_REQUIRED"
-          write_env GENERATION_CONCURRENCY 8
-          write_env BACKGROUND_TASK_TIMEOUT_SECONDS 1200
-          write_env HTTP_RATE_LIMIT_PER_MINUTE 120
-          write_env AUTH_RATE_LIMIT_PER_MINUTE 10
-          write_env AI_REQUEST_RATE_LIMIT_PER_MINUTE 12
-          write_env MINI_PROGRAM_DAILY_AI_USES 20
-          write_env MINI_PROGRAM_AI_COOLDOWN_SECONDS 12
-          write_env MINI_PROGRAM_MAX_ACTIVE_TASKS 2
-          write_env MINI_AD_FREE_DAILY_USES 999999
-          write_env BILLING_ENABLED false
-          write_env AD_PROVIDER NONE
-          write_env ANALYTICS_ENABLED true
-          write_env ANALYTICS_TIMEZONE Asia/Shanghai
-          write_env ANALYTICS_ADMIN_TOKEN "$ANALYTICS_ADMIN_TOKEN"
-          write_env SENTRY_DSN "$SENTRY_DSN"
-          docker compose --env-file .deploy/.env.production -f .deploy/docker-compose.deploy.yml config --quiet
-
-      - name: Upload private deployment configuration
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ env.DEPLOY_HOST }}
-          username: ${{ env.DEPLOY_USER }}
-          key: ${{ env.DEPLOY_SSH_KEY }}
-          source: ".deploy/.env.production,.deploy/docker-compose.deploy.yml"
-          target: ${{ env.DEPLOY_DIR }}
-          strip_components: 1
-
-      - name: Pull and restart Mini Program services
-        uses: appleboy/ssh-action@v1.2.0
-        env:
-          DEPLOY_DIR: ${{ env.DEPLOY_DIR }}
-          DOCKERHUB_USERNAME: ${{ env.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ env.DOCKERHUB_TOKEN }}
-        with:
-          host: ${{ env.DEPLOY_HOST }}
-          username: ${{ env.DEPLOY_USER }}
-          key: ${{ env.DEPLOY_SSH_KEY }}
-          envs: DEPLOY_DIR,DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
-          script: |
-            set -e
-            mkdir -p "$DEPLOY_DIR"
-            cd "$DEPLOY_DIR"
-            printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-            docker network inspect linguaquest-network >/dev/null 2>&1 || docker network create linguaquest-network
-            attach_existing_container() {
-              container_name="$1"
-              required="$2"
-              if ! docker container inspect "$container_name" >/dev/null 2>&1; then
-                if [ "$required" = "true" ]; then
-                  echo "Required container $container_name does not exist." >&2
-                  exit 1
-                fi
-                echo "Optional container $container_name does not exist; skipping network attachment."
-                return 0
-              fi
-              if docker inspect --format '{{json .NetworkSettings.Networks}}' "$container_name" | grep -q '"linguaquest-network"'; then
-                echo "$container_name is already connected to linguaquest-network."
-                return 0
-              fi
-              if ! docker network connect linguaquest-network "$container_name"; then
-                if [ "$required" = "true" ]; then
-                  echo "Failed to connect required container $container_name to linguaquest-network." >&2
-                  exit 1
-                fi
-                echo "Could not connect optional container $container_name; continuing deployment." >&2
-              fi
-            }
-            attach_existing_container linguaquest-redis true
-            attach_existing_container linguaquest-rabbitmq false
-            docker compose --env-file .env.production -f docker-compose.deploy.yml pull
-            docker compose --env-file .env.production -f docker-compose.deploy.yml up -d
-            docker image prune -f

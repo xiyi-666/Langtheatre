@@ -3,11 +3,11 @@
 ## 1. 部署目标
 
 - 服务器地址：`61.244.24.7`
-- 对外统一入口：`http://61.244.24.7`
+- 对外统一入口：`https://langquest.cloudaihub.dpdns.org`
 - Web、Windows、Linux、macOS、Android 客户端统一访问：
 
 ```text
-http://61.244.24.7/graphql
+https://langquest.cloudaihub.dpdns.org/graphql
 ```
 
 - Docker 部署模式：
@@ -17,7 +17,7 @@ http://61.244.24.7/graphql
 
 ## 2. GitHub Actions 约定
 
-### 自动部署流程
+### 镜像发布流程
 
 - 工作流：`.github/workflows/deploy.yml`
 - 触发条件：
@@ -26,16 +26,12 @@ http://61.244.24.7/graphql
 
 执行内容：
 
-1. 构建并推送 `linguaquest-server` Docker 镜像到 Docker Hub
-2. 构建并推送 `linguaquest-client` Docker 镜像到 Docker Hub
-3. 生成部署 bundle：
-   - `docker-compose.deploy.yml`
-   - `.env.production`
-   - 渲染后的 compose 配置
-4. 若配置了 SSH 秘钥，则自动 SSH 到 `61.244.24.7` 执行：
-   - `docker compose pull`
-   - `docker compose up -d --remove-orphans`
-5. 若未配置 `DEPLOY_USER` / `DEPLOY_SSH_KEY`，workflow 仍会构建并推送镜像、生成部署 bundle，但不会执行远程重启
+1. 校验前端和后端代码
+2. 构建并推送 `linguaquest-server:mini-program` 到 Docker Hub
+3. 构建并推送 `linguaquest-client:mini-program` 到 Docker Hub
+4. 同时推送 `mini-<commit sha>` 标签，供需要时固定或回滚版本
+
+该工作流不会连接线上服务器，不会上传 `.env.production`，也不会执行 `docker compose up`。服务器更新完全由管理员手动控制。
 
 ### 发布打包流程
 
@@ -54,20 +50,15 @@ http://61.244.24.7/graphql
 3. 自动推送 Docker 镜像
 4. 自动创建 GitHub Release 并上传构建产物
 
-## 3. 必要 Secrets / Variables
+## 3. GitHub Actions 配置
 
 ### GitHub Secrets
 
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
-- `JWT_SECRET`
-- `SUPABASE_DB_URL`
-- `OPENAI_API_KEY`
-- `TTS_API_KEY`
-- `SENTRY_DSN`
 - `VITE_SENTRY_DSN`
-- `DEPLOY_USER`
-- `DEPLOY_SSH_KEY`
+
+线上运行时使用的 JWT、数据库、模型、TTS、ASR、SMTP、统计和支付密钥不需要配置到镜像发布工作流。这些值只保存在服务器的 `/opt/linguaquest/.env.production`。
 
 Android release 签名可选：
 
@@ -77,23 +68,6 @@ Android release 签名可选：
 - `ANDROID_KEY_PASSWORD`
 
 未配置上述 Android 签名 secrets 时，release workflow 会退回为调试版 APK 构建。
-
-### GitHub Variables
-
-- `OPENAI_MODEL`
-- `OPENAI_BASE_URL`
-- `TTS_PROVIDER`
-- `TTS_API_URL`
-- `TTS_VOICE`
-- `TTS_MODEL`
-- `TTS_AUDIO_FORMAT`
-- `TTS_MAX_CONCURRENCY`
-- `MEDIA_DIR`
-- `TTS_USE_UPLOAD_PROMPT`
-- `TTS_PROMPT_AUDIO_PATH`
-- `TTS_RETURN_JSON`
-- `TTS_TIMEOUT_SECONDS`
-- `TTS_MAX_RETRIES`
 
 ## 4. 服务器前置条件
 
@@ -109,14 +83,38 @@ sudo mkdir -p /opt/linguaquest
 sudo chown -R $USER:$USER /opt/linguaquest
 ```
 
-## 5. 手动部署兜底命令
+首次部署时，将以下文件放入 `/opt/linguaquest`：
 
-即使不走自动 SSH 部署，也可以在服务器上手动执行：
+- `infra/docker-compose.deploy.yml`，线上文件名保持 `docker-compose.deploy.yml`
+- 根据 `infra/.env.mini-program.example` 创建的 `.env.production`
+- `infra/deploy-manual.sh`
+
+`.env.production` 至少应使用：
+
+```dotenv
+DOCKERHUB_USERNAME=jasper177
+CLIENT_IMAGE_TAG=mini-program
+SERVER_IMAGE_TAG=mini-program
+APP_EDITION=MINI_PROGRAM
+REDIS_ADDR=linguaquest-redis:6379
+PUBLIC_APP_URL=https://langquest.cloudaihub.dpdns.org
+```
+
+## 5. 手动部署
+
+Actions 镜像发布成功后，SSH 登录服务器并执行：
 
 ```bash
 cd /opt/linguaquest
-docker compose --env-file .env.production -f docker-compose.deploy.yml pull
-docker compose --env-file .env.production -f docker-compose.deploy.yml up -d --remove-orphans
+bash deploy-manual.sh
+```
+
+脚本会创建或复用 `linguaquest-network`，连接现有 `linguaquest-redis`，可选连接 `linguaquest-rabbitmq`，然后拉取镜像并更新前后端。脚本不会删除现有 Redis、RabbitMQ、数据卷或数据库。
+
+如 Docker Hub 镜像为私有仓库，首次执行前登录：
+
+```bash
+docker login -u jasper177
 ```
 
 ## 6. 部署后检查
@@ -124,14 +122,14 @@ docker compose --env-file .env.production -f docker-compose.deploy.yml up -d --r
 检查入口：
 
 ```bash
-curl http://61.244.24.7/healthz
-curl http://61.244.24.7/readyz
+curl https://langquest.cloudaihub.dpdns.org/healthz
+curl https://langquest.cloudaihub.dpdns.org/readyz
 ```
 
 检查 GraphQL：
 
 ```bash
-curl http://61.244.24.7/graphql
+curl https://langquest.cloudaihub.dpdns.org/graphql
 ```
 
 检查桌面/移动端：
