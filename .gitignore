@@ -23,6 +23,7 @@ apps/client/src-tauri/gen/
 apps/server/tmp/
 apps/server/bin/
 apps/server/.go-build-cache/
+apps/server/.tmp-*
 apps/server/linguaquest.db
 *.log
 *.out

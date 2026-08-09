@@ -47,6 +47,7 @@ var stageRE = regexp.MustCompile(`(?i)\bstage\s*[-_ ]*([0-9]{1,3})`)
 var sectionRE = regexp.MustCompile(`(?i)\bsection\s*([1-4])`)
 var focusRE = regexp.MustCompile(`(?i)\bfocus\s*[:=-]?\s*([^\]\|;]+)`)
 var taskDesignRE = regexp.MustCompile(`(?i)\btask\s*design\s*[:=-]?\s*([^\]\|;]+)`)
+var scenarioRE = regexp.MustCompile(`(?i)\bscenario\s*[:=-]?\s*([^\]\|;]+)`)
 var bracketRE = regexp.MustCompile(`\[[^\]]+\]`)
 
 func ListeningProfileFromTopic(topic string, difficulty float64) ListeningProfile {
@@ -133,14 +134,48 @@ func ReadingMetadataFromTopic(exam string, topic string, level string) ReadingMe
 	if focus == "" {
 		focus = defaultReadingFocus(questionType)
 	}
+	scenario := extractScenarioFamily(topic)
+	if scenario == "" {
+		scenario = scenarioFamily(topic, questionType)
+	}
 	return ReadingMetadata{
 		Band:           band,
 		Stage:          stage,
 		Section:        sectionText,
 		SkillFocus:     focus,
 		QuestionType:   questionType,
-		ScenarioFamily: scenarioFamily(topic, questionType),
+		ScenarioFamily: scenario,
 	}
+}
+
+func extractScenarioFamily(topic string) string {
+	if match := scenarioRE.FindStringSubmatch(topic); len(match) == 2 {
+		return strings.TrimSpace(match[1])
+	}
+	return ""
+}
+
+func NormalizeReadingMetadata(exam string, topic string, level string, explicit ReadingMetadata) ReadingMetadata {
+	metadata := ReadingMetadataFromTopic(exam, topic, level)
+	if explicit.Band > 0 {
+		metadata.Band = math.Round(explicit.Band*10) / 10
+	}
+	if value := strings.TrimSpace(explicit.Stage); value != "" {
+		metadata.Stage = value
+	}
+	if value := strings.TrimSpace(explicit.Section); value != "" {
+		metadata.Section = value
+	}
+	if value := strings.TrimSpace(explicit.SkillFocus); value != "" {
+		metadata.SkillFocus = value
+	}
+	if value := strings.TrimSpace(explicit.QuestionType); value != "" {
+		metadata.QuestionType = value
+	}
+	if value := strings.TrimSpace(explicit.ScenarioFamily); value != "" {
+		metadata.ScenarioFamily = value
+	}
+	return metadata
 }
 
 func ReadingLengthLimitsFromMetadata(exam string, topic string, meta ReadingMetadata) ReadingLengthLimits {

@@ -108,11 +108,18 @@ export function ReadingGeneratePage() {
     setGenerateError("");
     setLoading(true);
     try {
+      const requestedBand = Number.parseFloat(searchParams.get("band") ?? "");
       const generated = await generateReading({
         exam: safeExam,
         topic,
         level: safeExam === "IELTS" ? "upper-intermediate" : "intermediate",
-        sourceIds: selectedSourceIds.length > 0 ? selectedSourceIds : visibleSources.slice(0, 5).map((s) => s.id)
+        sourceIds: selectedSourceIds.length > 0 ? selectedSourceIds : visibleSources.slice(0, 5).map((s) => s.id),
+        band: Number.isFinite(requestedBand) && requestedBand > 0 ? requestedBand : undefined,
+        stage: searchParams.get("stageName")?.trim() || `Stage ${activeStage + 1}`,
+        section: searchParams.get("section")?.trim() || undefined,
+        skillFocus: searchParams.get("skillFocus")?.trim() || undefined,
+        questionType: searchParams.get("questionType")?.trim() || undefined,
+        scenarioFamily: searchParams.get("scenarioFamily")?.trim() || undefined
       });
 		setMaterials((current) => [generated, ...current.filter((item) => item.id !== generated.id)]);
       navigate(`/reading/${generated.id}/article`);

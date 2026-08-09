@@ -1,4 +1,4 @@
-import type { AICreditCost, ASRConfig, AdPlacement, AuthResult, BillingProduct, BillingStatus, ContentSource, Course, EmailActionResult, LoginCandidate, ModelConfig, PaymentOrder, PracticeResult, ReadingMaterial, RoleplaySession, TTSConfig, Theater, User, VoiceProfile, WritingSession, XPEvent } from "./types";
+import type { AICreditCost, ASRConfig, AdPlacement, AuthResult, BillingProduct, BillingStatus, ContentSource, Course, EmailActionResult, LoginCandidate, ModelConfig, PaymentOrder, PracticeResult, ReadingMaterial, RoleplaySession, TTSConfig, Theater, TheaterSummary, User, VoiceProfile, WritingSession, XPEvent } from "./types";
 
 export const DESKTOP_API_CONFIGURATION_ERROR = "桌面端 API 未配置，请联系管理员重新构建应用。";
 
@@ -380,18 +380,6 @@ export async function updateTTSConfig(input: {
   return data.updateTTSConfig;
 }
 
-export async function exportOAuthAccounts(provider?: string): Promise<string> {
-  await ensureAccessToken();
-  const normalizedProvider = provider?.trim() || undefined;
-  const data = await request<{ oauthAccountsExport: string }>(
-    `query OAuthAccountsExport($provider: String) {
-      oauthAccountsExport(provider: $provider)
-    }`,
-    { provider: normalizedProvider }
-  );
-  return data.oauthAccountsExport;
-}
-
 export async function getASRConfig(): Promise<ASRConfig> {
   await ensureAccessToken();
   const data = await request<{ asrConfig: ASRConfig }>(`query ASRConfig { asrConfig { provider model baseURL hasApiKey apiKeyPreview appId updatedAt } }`);
@@ -497,12 +485,12 @@ export async function myTheaters(filter?: {
   language?: "CANTONESE" | "ENGLISH";
   status?: "GENERATING" | "READY" | "FAILED";
   favorite?: boolean;
-}): Promise<Theater[]> {
+}): Promise<TheaterSummary[]> {
   await ensureAccessToken();
-  const data = await request<{ myTheaters: Theater[] }>(
+  const data = await request<{ myTheaters: TheaterSummary[] }>(
     `query MyTheaters($language: String, $status: String, $favorite: Boolean) {
       myTheaters(language: $language, status: $status, favorite: $favorite) {
-		id language topic difficulty mode status generationProgress generationMessage isFavorite shareCode sceneDescription characters { name role color } dialogues { speaker text zhSubtitle audioUrl timestamp } quizQuestions { question options }
+		id language topic difficulty mode status generationProgress generationMessage isFavorite shareCode sceneDescription
       }
     }`,
     filter
@@ -659,10 +647,16 @@ export async function generateReading(input: {
   topic: string;
   level?: string;
   sourceIds?: string[];
+  band?: number;
+  stage?: string;
+  section?: string;
+  skillFocus?: string;
+  questionType?: string;
+  scenarioFamily?: string;
 }): Promise<ReadingMaterial> {
   await ensureAccessToken();
-  const query = `mutation GenerateReading($exam: String!, $topic: String!, $level: String, $sourceIds: [String!]) {
-      generateReading(exam: $exam, topic: $topic, level: $level, sourceIds: $sourceIds) {
+  const query = `mutation GenerateReading($exam: String!, $topic: String!, $level: String, $sourceIds: [String!], $band: Float, $stage: String, $section: String, $skillFocus: String, $questionType: String, $scenarioFamily: String) {
+      generateReading(exam: $exam, topic: $topic, level: $level, sourceIds: $sourceIds, band: $band, stage: $stage, section: $section, skillFocus: $skillFocus, questionType: $questionType, scenarioFamily: $scenarioFamily) {
         id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus status generationProgress generationMessage
         vocabularyItems { word pos meanings }
         associationSentences
@@ -717,7 +711,7 @@ export async function retryReadingAudio(materialId: string): Promise<ReadingMate
   await ensureAccessToken();
   const query = `mutation RetryReadingAudio($materialId: ID!) {
       retryReadingAudio(materialId: $materialId) {
-        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus
+        id exam language level topic band stage section skillFocus questionType scenarioFamily title passage vocabulary sourceIds generationNote audioUrl audioUrls audioStatus status generationProgress generationMessage
         vocabularyItems { word pos meanings }
         associationSentences
         grammarInsights { sentence difficultyPoints studySuggestions }

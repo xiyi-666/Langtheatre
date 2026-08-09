@@ -362,6 +362,9 @@ func (s *MemoryStore) ListTheatersByUser(userID string, language string, status 
 		if favorite != nil && theater.IsFavorite != *favorite {
 			continue
 		}
+		theater.Characters = nil
+		theater.Dialogues = nil
+		theater.QuizQuestions = nil
 		result = append(result, theater)
 	}
 	return result, nil

@@ -13,7 +13,8 @@ https://langquest.cloudaihub.dpdns.org/graphql
 - Docker 部署模式：
   - `client` 容器对外暴露 `80`
   - `server` 容器仅在 Docker 网络内监听 `8177`
-  - `/graphql`、`/healthz`、`/readyz`、`/media-proxy` 全部由 `client` 容器反向代理到 `server`
+  - `/graphql`、`/healthz`、`/readyz`、`/media-proxy` 由 `client` 容器反向代理到唯一 `server`
+  - `/media/` 由 client/Nginx 从共享只读媒体目录直接提供，server 以读写方式挂载同一宿主目录
 
 ## 2. GitHub Actions 约定
 
@@ -80,6 +81,7 @@ Android release 签名可选：
 
 ```bash
 sudo mkdir -p /opt/linguaquest
+sudo mkdir -p /opt/linguaquest/media
 sudo chown -R $USER:$USER /opt/linguaquest
 ```
 
@@ -98,6 +100,7 @@ SERVER_IMAGE_TAG=mini-program
 APP_EDITION=MINI_PROGRAM
 REDIS_ADDR=linguaquest-redis:6379
 PUBLIC_APP_URL=https://langquest.cloudaihub.dpdns.org
+MEDIA_HOST_PATH=/opt/linguaquest/media
 ```
 
 ## 5. 手动部署

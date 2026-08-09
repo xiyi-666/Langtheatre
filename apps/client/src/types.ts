@@ -187,6 +187,8 @@ export interface Theater {
   quizQuestions?: TheaterQuizQuestion[];
 }
 
+export type TheaterSummary = Omit<Theater, "characters" | "dialogues" | "quizQuestions">;
+
 export interface PracticeResult {
   score: number;
   xpEarned: number;

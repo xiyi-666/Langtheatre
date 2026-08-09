@@ -6,6 +6,7 @@ linguaquest.db
 *.sqlite3
 linguaquest-api
 tmp/
+.tmp-*
 dist/
 coverage/
 *.log

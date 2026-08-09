@@ -755,7 +755,7 @@ func (s *SQLiteStore) GetTheaterByShareCode(shareCode string) (domain.Theater, e
 }
 
 func (s *SQLiteStore) ListTheatersByUser(userID string, language string, status string, favorite *bool) ([]domain.Theater, error) {
-	query := `SELECT id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, is_favorite, share_code, scene_description, characters, dialogues, quiz_questions, created_at FROM theaters WHERE user_id = ?`
+	query := `SELECT id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, is_favorite, share_code, scene_description, created_at FROM theaters WHERE user_id = ?`
 	args := []any{userID}
 	if language != "" {
 		query += " AND language = ?"
@@ -777,10 +777,16 @@ func (s *SQLiteStore) ListTheatersByUser(userID string, language string, status 
 	defer rows.Close()
 	result := make([]domain.Theater, 0)
 	for rows.Next() {
-		theater, err := scanTheater(rows)
-		if err != nil {
+		var theater domain.Theater
+		var createdAt string
+		if err := rows.Scan(
+			&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode,
+			&theater.Status, &theater.GenerationProgress, &theater.GenerationMessage, &theater.IsFavorite,
+			&theater.ShareCode, &theater.SceneDescription, &createdAt,
+		); err != nil {
 			return nil, err
 		}
+		theater.CreatedAt = parseSQLiteTime(createdAt)
 		result = append(result, theater)
 	}
 	if err := rows.Err(); err != nil {
@@ -910,9 +916,9 @@ func (s *SQLiteStore) SaveReadingMaterial(material domain.ReadingMaterial) (doma
 	}
 	_, err = s.db.Exec(
 		`INSERT INTO reading_materials (
-            id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
-            generation_note, audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids,
+			generation_note, audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             user_id=excluded.user_id,
             exam=excluded.exam,
@@ -1006,8 +1012,8 @@ func (s *SQLiteStore) UpdateReadingMaterialExisting(material domain.ReadingMater
 		return domain.ReadingMaterial{}, err
 	}
 
-	res, err := s.db.Exec(`UPDATE reading_materials SET exam = ?, language = ?, level = ?, topic = ?, title = ?, passage = ?, vocabulary = ?, questions = ?, source_ids = ?, generation_note = ?, audio_url = ?, audio_urls = ?, audio_status = ?, status = ?, generation_progress = ?, generation_message = ?, vocabulary_items = ?, association_sentences = ?, grammar_insights = ? WHERE id = ? AND user_id = ?`,
-		material.Exam, material.Language, material.Level, material.Topic, material.Title, material.Passage, string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL, string(audioURLsJSON), material.AudioStatus, material.Status, material.GenerationProgress, material.GenerationMessage, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), material.ID, material.UserID)
+	res, err := s.db.Exec(`UPDATE reading_materials SET exam = ?, language = ?, level = ?, topic = ?, band = ?, stage = ?, section = ?, skill_focus = ?, question_type = ?, scenario_family = ?, title = ?, passage = ?, vocabulary = ?, questions = ?, source_ids = ?, generation_note = ?, audio_url = ?, audio_urls = ?, audio_status = ?, status = ?, generation_progress = ?, generation_message = ?, vocabulary_items = ?, association_sentences = ?, grammar_insights = ? WHERE id = ? AND user_id = ?`,
+		material.Exam, material.Language, material.Level, material.Topic, material.Band, material.Stage, material.Section, material.SkillFocus, material.QuestionType, material.ScenarioFamily, material.Title, material.Passage, string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL, string(audioURLsJSON), material.AudioStatus, material.Status, material.GenerationProgress, material.GenerationMessage, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), material.ID, material.UserID)
 	if err != nil {
 		return domain.ReadingMaterial{}, err
 	}
@@ -1019,7 +1025,7 @@ func (s *SQLiteStore) UpdateReadingMaterialExisting(material domain.ReadingMater
 
 func (s *SQLiteStore) GetReadingMaterial(id string, userID string) (domain.ReadingMaterial, error) {
 	row := s.db.QueryRow(
-		`SELECT id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids, generation_note,
+		`SELECT id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids, generation_note,
 			audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
          FROM reading_materials WHERE id = ? AND (? = '' OR user_id = ?)`,
 		id, userID, userID,
@@ -1029,7 +1035,7 @@ func (s *SQLiteStore) GetReadingMaterial(id string, userID string) (domain.Readi
 
 func (s *SQLiteStore) ListReadingMaterialsByUser(userID string, exam string) ([]domain.ReadingMaterial, error) {
 	rows, err := s.db.Query(
-		`SELECT id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids, generation_note,
+		`SELECT id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids, generation_note,
 			audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
          FROM reading_materials
          WHERE user_id = ? AND (? = '' OR exam = ?)

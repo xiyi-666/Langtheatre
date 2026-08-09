@@ -43,3 +43,32 @@ func TestReadingMetadataPrefersMixedQuestionSetTagOverFocusHints(t *testing.T) {
 		t.Fatalf("QuestionType = %q, want Mixed Question Set", meta.QuestionType)
 	}
 }
+
+func TestNormalizeReadingMetadataPrefersExplicitValues(t *testing.T) {
+	meta := NormalizeReadingMetadata(
+		"IELTS",
+		"[Band 6.0][Stage 2][Matching Headings] urban resilience",
+		"upper-intermediate",
+		ReadingMetadata{
+			Band:           7.26,
+			Stage:          "Stage 9",
+			Section:        "Section 3",
+			SkillFocus:     "author stance",
+			QuestionType:   "TFNG",
+			ScenarioFamily: "urban policy",
+		},
+	)
+	if meta.Band != 7.3 || meta.Stage != "Stage 9" || meta.Section != "Section 3" {
+		t.Fatalf("normalized numeric/stage metadata = %+v", meta)
+	}
+	if meta.SkillFocus != "author stance" || meta.QuestionType != "TFNG" || meta.ScenarioFamily != "urban policy" {
+		t.Fatalf("explicit metadata did not win: %+v", meta)
+	}
+}
+
+func TestReadingMetadataParsesExplicitScenarioTag(t *testing.T) {
+	meta := ReadingMetadataFromTopic("IELTS", "[Scenario: coastal planning] [TFNG] flood resilience", "advanced")
+	if meta.ScenarioFamily != "coastal planning" {
+		t.Fatalf("ScenarioFamily = %q, want coastal planning", meta.ScenarioFamily)
+	}
+}

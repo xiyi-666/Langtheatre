@@ -41,12 +41,17 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version-file: apps/server/go.mod
           cache-dependency-path: apps/server/go.sum
 
-      - name: Verify server
+      - name: Verify server and Linux cross-compilation
         working-directory: apps/server
-        run: go test ./... -cover
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./... -cover
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -p=1 -mod=readonly -trimpath -o /tmp/linguaquest-api-amd64 ./cmd/server
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -v -p=1 -mod=readonly -trimpath -o /tmp/linguaquest-api-arm64 ./cmd/server
 
   build-and-push-images:
     runs-on: ubuntu-latest

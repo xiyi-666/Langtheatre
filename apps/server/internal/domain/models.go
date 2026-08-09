@@ -351,6 +351,32 @@ type ReadingMaterial struct {
 	CreatedAt            time.Time
 }
 
+type ReadingGenerationInput struct {
+	Exam           string
+	Topic          string
+	Level          string
+	SourceIDs      []string
+	Band           float64
+	Stage          string
+	Section        string
+	SkillFocus     string
+	QuestionType   string
+	ScenarioFamily string
+}
+
+type ReadingGenerationRequest struct {
+	Exam           string
+	Language       string
+	Topic          string
+	Level          string
+	Band           float64
+	Stage          string
+	Section        string
+	SkillFocus     string
+	QuestionType   string
+	ScenarioFamily string
+}
+
 type VocabularyItem struct {
 	Word     string   `json:"word"`
 	POS      string   `json:"pos"`

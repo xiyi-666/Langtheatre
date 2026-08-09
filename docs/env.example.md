@@ -19,7 +19,8 @@
 - `TTS_MODEL=mimo-v2.5-tts`
 - `TTS_AUDIO_FORMAT=mp3`
 - `TTS_MAX_CONCURRENCY=2`
-- `MEDIA_DIR=media`
+- `MEDIA_DIR=/srv/media`（容器内规范媒体目录）
+- `MEDIA_HOST_PATH=/opt/linguaquest/media`（Compose 使用的宿主机数据盘目录；client 只读、server 读写）
 - `TTS_TIMEOUT_SECONDS=300`
 - `TTS_MAX_RETRIES=1`
 - `ASR_PROVIDER=XIAOMI`（支持 `XIAOMI` / `ALIYUN` / `DOUBAO` / `GEMINI` / `MINIMAX` / `OPENAI` / `OPENAI_COMPATIBLE`）

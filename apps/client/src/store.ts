@@ -1,18 +1,18 @@
 import { create } from "zustand";
 import { me } from "./api";
-import type { Course, PracticeResult, RoleplaySession, Theater, User } from "./types";
+import type { Course, PracticeResult, RoleplaySession, Theater, TheaterSummary, User } from "./types";
 
 type AppState = {
   user?: User;
   theater?: Theater;
-  theaters: Theater[];
+  theaters: TheaterSummary[];
   courses: Course[];
   roleplay?: RoleplaySession;
   result?: PracticeResult;
   loading: boolean;
   setUser: (user?: User) => void;
   setTheater: (theater?: Theater) => void;
-  setTheaters: (theaters: Theater[]) => void;
+  setTheaters: (theaters: TheaterSummary[]) => void;
   setCourses: (courses: Course[]) => void;
   setRoleplay: (roleplay?: RoleplaySession) => void;
   setResult: (result?: PracticeResult) => void;

@@ -337,6 +337,42 @@ Rules for quiz:
 	return nil, nil, lastErr
 }
 
+func (g *OpenAIGenerator) GenerateReading(ctx context.Context, request domain.ReadingGenerationRequest) ([]domain.Dialogue, []domain.QuizQuestion, error) {
+	metadata := ielts.NormalizeReadingMetadata(request.Exam, request.Topic, request.Level, ielts.ReadingMetadata{
+		Band: request.Band, Stage: request.Stage, Section: request.Section, SkillFocus: request.SkillFocus,
+		QuestionType: request.QuestionType, ScenarioFamily: request.ScenarioFamily,
+	})
+	parts := []string{fmt.Sprintf("[%s Reading]", strings.ToUpper(strings.TrimSpace(request.Exam)))}
+	if metadata.Stage != "" {
+		parts = append(parts, "["+metadata.Stage+"]")
+	}
+	if metadata.Band > 0 {
+		parts = append(parts, fmt.Sprintf("[Band %.1f]", metadata.Band))
+	}
+	if metadata.Section != "" {
+		parts = append(parts, "["+metadata.Section+"]")
+	}
+	if metadata.QuestionType != "" {
+		parts = append(parts, "["+metadata.QuestionType+"]")
+	}
+	if metadata.SkillFocus != "" {
+		parts = append(parts, "[Focus: "+metadata.SkillFocus+"]")
+	}
+	if metadata.ScenarioFamily != "" {
+		parts = append(parts, "[Scenario: "+metadata.ScenarioFamily+"]")
+	}
+	cleanTopic := ielts.CleanTopic(request.Topic)
+	if cleanTopic == "" {
+		cleanTopic = strings.TrimSpace(request.Topic)
+	}
+	parts = append(parts, cleanTopic)
+	language := strings.TrimSpace(request.Language)
+	if language == "" {
+		language = "ENGLISH"
+	}
+	return g.Generate(ctx, language, strings.Join(parts, " "), metadata.Band, "APPRECIATION")
+}
+
 func isTransientModelError(err error) bool {
 	if err == nil {
 		return false

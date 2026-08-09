@@ -7,6 +7,8 @@ services:
       - "80:80"
     depends_on:
       - server
+    volumes:
+      - ${MEDIA_HOST_PATH:-./media}:/srv/media:ro
     networks:
       - linguaquest-network
 
@@ -81,14 +83,13 @@ services:
       AD_RESULT_SLOT: ${AD_RESULT_SLOT:-}
       SENTRY_DSN: ${SENTRY_DSN:-}
     volumes:
-      - server-media:/srv/media
+      - ${MEDIA_HOST_PATH:-./media}:/srv/media
       - server-data:/srv/data
     networks:
       - linguaquest-network
 
 volumes:
   server-data:
-  server-media:
 
 networks:
   linguaquest-network:

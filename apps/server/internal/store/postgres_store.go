@@ -532,7 +532,7 @@ func (s *PostgresStore) ListTheatersByUser(userID string, language string, statu
 	}
 	rows, err := s.pool.Query(
 		ctx,
-		`SELECT id::text, user_id::text, language, topic, difficulty, mode, status, generation_progress, generation_message, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), COALESCE(characters, '[]'::jsonb), dialogues, COALESCE(quiz_questions, '[]'::jsonb), created_at
+		`SELECT id::text, user_id::text, language, topic, difficulty, mode, status, generation_progress, generation_message, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), created_at
 		 FROM theaters
 		 WHERE user_id = $1::uuid
 		   AND ($2 = '' OR language = $2)
@@ -549,29 +549,11 @@ func (s *PostgresStore) ListTheatersByUser(userID string, language string, statu
 	result := make([]domain.Theater, 0)
 	for rows.Next() {
 		var item domain.Theater
-		var charactersRaw []byte
-		var dialoguesRaw []byte
-		var quizRaw []byte
 		if scanErr := rows.Scan(
 			&item.ID, &item.UserID, &item.Language, &item.Topic, &item.Difficulty, &item.Mode,
-			&item.Status, &item.GenerationProgress, &item.GenerationMessage, &item.IsFavorite, &item.ShareCode, &item.SceneDescription, &charactersRaw, &dialoguesRaw, &quizRaw, &item.CreatedAt,
+			&item.Status, &item.GenerationProgress, &item.GenerationMessage, &item.IsFavorite, &item.ShareCode, &item.SceneDescription, &item.CreatedAt,
 		); scanErr != nil {
 			return nil, scanErr
-		}
-		if len(charactersRaw) > 0 {
-			if unmarshalErr := json.Unmarshal(charactersRaw, &item.Characters); unmarshalErr != nil {
-				return nil, unmarshalErr
-			}
-		}
-		if len(dialoguesRaw) > 0 {
-			if unmarshalErr := json.Unmarshal(dialoguesRaw, &item.Dialogues); unmarshalErr != nil {
-				return nil, unmarshalErr
-			}
-		}
-		if len(quizRaw) > 0 {
-			if unmarshalErr := json.Unmarshal(quizRaw, &item.QuizQuestions); unmarshalErr != nil {
-				return nil, unmarshalErr
-			}
 		}
 		result = append(result, item)
 	}
@@ -729,11 +711,11 @@ func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (do
 	err = s.pool.QueryRow(
 		ctx,
 		`INSERT INTO reading_materials (
-            id, user_id, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+			id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids,
 			generation_note, audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
-        ) VALUES (
-            $1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb,
-			$12, $13, $14::jsonb, $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21::jsonb, $22
+		) VALUES (
+			$1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb,
+			$18, $19, $20::jsonb, $21, $22, $23, $24, $25::jsonb, $26::jsonb, $27::jsonb, $28
         )
         ON CONFLICT (id) DO UPDATE SET
             user_id = EXCLUDED.user_id,
@@ -763,14 +745,14 @@ func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (do
             association_sentences = EXCLUDED.association_sentences,
             grammar_insights = EXCLUDED.grammar_insights,
             created_at = EXCLUDED.created_at
-        RETURNING id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+		RETURNING id::text, user_id::text, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids,
 			COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status, status, generation_progress, generation_message,
 			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at`,
-		material.ID, material.UserID, material.Exam, material.Language, material.Level, material.Topic, material.Title, material.Passage,
+		material.ID, material.UserID, material.Exam, material.Language, material.Level, material.Topic, material.Band, material.Stage, material.Section, material.SkillFocus, material.QuestionType, material.ScenarioFamily, material.Title, material.Passage,
 		string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL,
 		string(audioURLsJSON), material.AudioStatus, material.Status, material.GenerationProgress, material.GenerationMessage, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), material.CreatedAt,
 	).Scan(
-		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Title, &material.Passage,
+		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Band, &material.Stage, &material.Section, &material.SkillFocus, &material.QuestionType, &material.ScenarioFamily, &material.Title, &material.Passage,
 		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus, &material.Status, &material.GenerationProgress, &material.GenerationMessage,
 		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &material.CreatedAt,
 	)
@@ -818,8 +800,8 @@ func (s *PostgresStore) UpdateReadingMaterialExisting(material domain.ReadingMat
 	if err != nil {
 		return domain.ReadingMaterial{}, err
 	}
-	result, err := s.pool.Exec(ctx, `UPDATE reading_materials SET exam = $3, language = $4, level = $5, topic = $6, title = $7, passage = $8, vocabulary = $9::jsonb, questions = $10::jsonb, source_ids = $11::jsonb, generation_note = $12, audio_url = $13, audio_urls = $14::jsonb, audio_status = $15, status = $16, generation_progress = $17, generation_message = $18, vocabulary_items = $19::jsonb, association_sentences = $20::jsonb, grammar_insights = $21::jsonb WHERE id = $1::uuid AND user_id = $2::uuid`,
-		material.ID, material.UserID, material.Exam, material.Language, material.Level, material.Topic, material.Title, material.Passage, string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL, string(audioURLsJSON), material.AudioStatus, material.Status, material.GenerationProgress, material.GenerationMessage, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON))
+	result, err := s.pool.Exec(ctx, `UPDATE reading_materials SET exam = $3, language = $4, level = $5, topic = $6, band = $7, stage = $8, section = $9, skill_focus = $10, question_type = $11, scenario_family = $12, title = $13, passage = $14, vocabulary = $15::jsonb, questions = $16::jsonb, source_ids = $17::jsonb, generation_note = $18, audio_url = $19, audio_urls = $20::jsonb, audio_status = $21, status = $22, generation_progress = $23, generation_message = $24, vocabulary_items = $25::jsonb, association_sentences = $26::jsonb, grammar_insights = $27::jsonb WHERE id = $1::uuid AND user_id = $2::uuid`,
+		material.ID, material.UserID, material.Exam, material.Language, material.Level, material.Topic, material.Band, material.Stage, material.Section, material.SkillFocus, material.QuestionType, material.ScenarioFamily, material.Title, material.Passage, string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL, string(audioURLsJSON), material.AudioStatus, material.Status, material.GenerationProgress, material.GenerationMessage, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON))
 	if err != nil {
 		return domain.ReadingMaterial{}, err
 	}
@@ -837,14 +819,14 @@ func (s *PostgresStore) GetReadingMaterial(id string, userID string) (domain.Rea
 	var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON []byte
 	err := s.pool.QueryRow(
 		ctx,
-		`SELECT id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+		`SELECT id::text, user_id::text, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids,
 			COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status, status, generation_progress, generation_message,
 			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
          FROM reading_materials
          WHERE id = $1::uuid AND ($2 = '' OR user_id = NULLIF($2, '')::uuid)`,
 		id, userID,
 	).Scan(
-		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Title, &material.Passage,
+		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Band, &material.Stage, &material.Section, &material.SkillFocus, &material.QuestionType, &material.ScenarioFamily, &material.Title, &material.Passage,
 		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus, &material.Status, &material.GenerationProgress, &material.GenerationMessage,
 		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &material.CreatedAt,
 	)
@@ -869,7 +851,7 @@ func (s *PostgresStore) ListReadingMaterialsByUser(userID string, exam string) (
 	defer cancel()
 	rows, err := s.pool.Query(
 		ctx,
-		`SELECT id::text, user_id::text, exam, language, level, topic, title, passage, vocabulary, questions, source_ids,
+		`SELECT id::text, user_id::text, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids,
 			COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status, status, generation_progress, generation_message,
 			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
          FROM reading_materials
@@ -888,7 +870,7 @@ func (s *PostgresStore) ListReadingMaterialsByUser(userID string, exam string) (
 		var vocabularyJSON, questionsJSON, sourceIDsJSON []byte
 		var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON []byte
 		if scanErr := rows.Scan(
-			&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic, &item.Title, &item.Passage,
+			&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic, &item.Band, &item.Stage, &item.Section, &item.SkillFocus, &item.QuestionType, &item.ScenarioFamily, &item.Title, &item.Passage,
 			&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &item.GenerationNote, &item.AudioURL, &audioURLsJSON, &item.AudioStatus, &item.Status, &item.GenerationProgress, &item.GenerationMessage,
 			&vocabularyItemsJSON, &associationJSON, &grammarJSON, &item.CreatedAt,
 		); scanErr != nil {

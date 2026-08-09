@@ -82,6 +82,10 @@ type TheaterGenerator interface {
 	Generate(ctx context.Context, language string, topic string, difficulty float64, mode string) ([]domain.Dialogue, []domain.QuizQuestion, error)
 }
 
+type ReadingGenerator interface {
+	GenerateReading(ctx context.Context, request domain.ReadingGenerationRequest) ([]domain.Dialogue, []domain.QuizQuestion, error)
+}
+
 type ReadingAnalyzer interface {
 	AnalyzeReading(ctx context.Context, exam string, topic string, passage string, vocabulary []string) (domain.ReadingAnalysis, error)
 }
@@ -1844,12 +1848,19 @@ func (s *Service) ListContentSources(exam string, category string) ([]domain.Con
 }
 
 func (s *Service) GenerateReadingMaterial(userID string, exam string, topic string, level string, sourceIDs []string) (domain.ReadingMaterial, error) {
-	exam = strings.TrimSpace(strings.ToUpper(exam))
-	level = strings.TrimSpace(level)
+	return s.GenerateReadingMaterialWithInput(userID, domain.ReadingGenerationInput{
+		Exam: exam, Topic: topic, Level: level, SourceIDs: sourceIDs,
+	})
+}
+
+func (s *Service) GenerateReadingMaterialWithInput(userID string, input domain.ReadingGenerationInput) (domain.ReadingMaterial, error) {
+	exam := strings.TrimSpace(strings.ToUpper(input.Exam))
+	topic := strings.TrimSpace(input.Topic)
+	level := strings.TrimSpace(input.Level)
 	if exam == "" {
 		exam = "IELTS"
 	}
-	if strings.TrimSpace(topic) == "" {
+	if topic == "" {
 		return domain.ReadingMaterial{}, errors.New("topic is required")
 	}
 	if level == "" {
@@ -1859,6 +1870,10 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 			level = "upper-intermediate"
 		}
 	}
+	metadata := ielts.NormalizeReadingMetadata(exam, topic, level, ielts.ReadingMetadata{
+		Band: input.Band, Stage: input.Stage, Section: input.Section, SkillFocus: input.SkillFocus,
+		QuestionType: input.QuestionType, ScenarioFamily: input.ScenarioFamily,
+	})
 
 	material := domain.ReadingMaterial{
 		ID:                 uuid.NewString(),
@@ -1867,8 +1882,14 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 		Language:           "ENGLISH",
 		Level:              level,
 		Topic:              topic,
-		Title:              fmt.Sprintf("%s Reading Drill: %s", exam, topic),
-		SourceIDs:          sourceIDs,
+		Band:               metadata.Band,
+		Stage:              metadata.Stage,
+		Section:            metadata.Section,
+		SkillFocus:         metadata.SkillFocus,
+		QuestionType:       metadata.QuestionType,
+		ScenarioFamily:     metadata.ScenarioFamily,
+		Title:              readingMaterialTitle(exam, topic, metadata),
+		SourceIDs:          input.SourceIDs,
 		GenerationNote:     "任务已创建，正在后台生成阅读材料。",
 		AudioStatus:        "PENDING",
 		Status:             "GENERATING",
@@ -1908,11 +1929,29 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 
 func (s *Service) generateReadingAsync(ctx context.Context, material domain.ReadingMaterial) {
 	_ = s.updateReadingProgress(material.ID, material.UserID, "GENERATING", 15, "正在生成阅读文本")
-	difficulty := 6.5
-	if material.Exam == "CET" {
-		difficulty = 5.5
+	difficulty := material.Band
+	if difficulty <= 0 {
+		difficulty = 6.5
+		if material.Exam == "CET" {
+			difficulty = 5.5
+		}
 	}
-	generated, questions, err := s.generator.Generate(ctx, material.Language, fmt.Sprintf("[%s Reading] %s", material.Exam, material.Topic), difficulty, "APPRECIATION")
+	request := domain.ReadingGenerationRequest{
+		Exam: material.Exam, Language: material.Language, Topic: material.Topic, Level: material.Level,
+		Band: material.Band, Stage: material.Stage, Section: material.Section, SkillFocus: material.SkillFocus,
+		QuestionType: material.QuestionType, ScenarioFamily: material.ScenarioFamily,
+	}
+	var generated []domain.Dialogue
+	var questions []domain.QuizQuestion
+	var err error
+	if generator, ok := s.generator.(ReadingGenerator); ok {
+		generated, questions, err = generator.GenerateReading(ctx, request)
+	} else {
+		generated, questions, err = s.generator.Generate(ctx, material.Language, readingGenerationTopic(material.Exam, material.Topic, ielts.ReadingMetadata{
+			Band: material.Band, Stage: material.Stage, Section: material.Section, SkillFocus: material.SkillFocus,
+			QuestionType: material.QuestionType, ScenarioFamily: material.ScenarioFamily,
+		}), difficulty, "APPRECIATION")
+	}
 	if err != nil || len(generated) == 0 || len(questions) < 5 {
 		if err == nil {
 			err = errors.New("reading generation returned insufficient content")
@@ -2030,7 +2069,10 @@ func readingGenerationTopic(exam string, topic string, metadata ielts.ReadingMet
 		parts = append(parts, "["+metadata.QuestionType+"]")
 	}
 	if metadata.SkillFocus != "" {
-		parts = append(parts, "Focus: "+metadata.SkillFocus)
+		parts = append(parts, "[Focus: "+metadata.SkillFocus+"]")
+	}
+	if metadata.ScenarioFamily != "" {
+		parts = append(parts, "[Scenario: "+metadata.ScenarioFamily+"]")
 	}
 	cleanTopic := ielts.CleanTopic(topic)
 	if cleanTopic == "" {
@@ -2557,7 +2599,6 @@ func (s *Service) ReadingMaterials(userID string, exam string) ([]domain.Reading
 	queued := 0
 	allowListRetry := s.allowReadingListAudioRetry(userID, exam, readingListRetryCooldown)
 	for i := range result {
-		ensureReadingMetadata(&result[i])
 		if migrated, migrateErr := s.migrateReadingAudioDataURLs(result[i]); migrateErr == nil {
 			result[i] = migrated
 		} else {
@@ -2690,31 +2731,6 @@ func (s *Service) allowReadingListAudioRetry(userID string, exam string, cooldow
 	return true
 }
 
-func ensureReadingMetadata(material *domain.ReadingMaterial) {
-	if material == nil {
-		return
-	}
-	meta := ielts.ReadingMetadataFromTopic(material.Exam, material.Topic, material.Level)
-	if material.Band <= 0 {
-		material.Band = meta.Band
-	}
-	if strings.TrimSpace(material.Stage) == "" {
-		material.Stage = meta.Stage
-	}
-	if strings.TrimSpace(material.Section) == "" {
-		material.Section = meta.Section
-	}
-	if strings.TrimSpace(material.SkillFocus) == "" {
-		material.SkillFocus = meta.SkillFocus
-	}
-	if strings.TrimSpace(material.QuestionType) == "" {
-		material.QuestionType = meta.QuestionType
-	}
-	if strings.TrimSpace(material.ScenarioFamily) == "" {
-		material.ScenarioFamily = meta.ScenarioFamily
-	}
-}
-
 func (s *Service) ReadingMaterial(userID string, materialID string) (domain.ReadingMaterial, error) {
 	item, err := s.store.GetReadingMaterial(materialID, userID)
 	if err != nil {
@@ -2727,7 +2743,6 @@ func (s *Service) ReadingMaterial(userID string, materialID string) (domain.Read
 		}
 		log.Printf("reading material loaded by id fallback material_id=%s user_id=%s", materialID, userID)
 	}
-	ensureReadingMetadata(&item)
 	if migrated, migrateErr := s.migrateReadingAudioDataURLs(item); migrateErr == nil {
 		item = migrated
 	} else {

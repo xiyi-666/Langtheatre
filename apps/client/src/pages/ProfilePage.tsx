@@ -1,9 +1,9 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { AudioLines, BadgeCheck, BrainCircuit, ChevronDown, ChevronUp, Crown, Download, Eye, EyeOff, History, IdCard, LogOut, Mail, SlidersHorizontal, UserRound, Waves } from "lucide-react";
+import { AudioLines, BadgeCheck, BrainCircuit, ChevronDown, ChevronUp, Crown, Eye, EyeOff, History, IdCard, LogOut, Mail, SlidersHorizontal, UserRound, Waves } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { isCommercialEdition, isMiniProgramEdition } from "../edition";
-import { exportOAuthAccounts, getASRConfig, getModelConfig, getTTSConfig, logout, me, updateASRConfig, updateModelConfig, updateProfile, updateTTSConfig } from "../api";
+import { getASRConfig, getModelConfig, getTTSConfig, logout, me, updateASRConfig, updateModelConfig, updateProfile, updateTTSConfig } from "../api";
 import { ASR_PROVIDER_PRESETS, getASRProviderPreset, type ASRProviderId } from "../asrProviders";
 import { getModelProviderPreset, MODEL_PROVIDER_PRESETS, type ModelProviderId } from "../modelProviders";
 import { useAppStore } from "../store";
@@ -69,9 +69,6 @@ export function ProfilePage() {
   const [asrAPIKey, setASRAPIKey] = useState("");
   const [asrAppID, setASRAppID] = useState("");
   const [ttsVoiceFileLabel, setTTSVoiceFileLabel] = useState("");
-  const [oauthProviderFilter, setOAuthProviderFilter] = useState("");
-  const [oauthExporting, setOAuthExporting] = useState(false);
-  const [oauthMessage, setOAuthMessage] = useState("");
   const currentModelPreset = useMemo(() => getModelProviderPreset(modelProvider), [modelProvider]);
   const currentTTSPreset = useMemo(() => getTTSProviderPreset(ttsProvider), [ttsProvider]);
   const currentXiaomiModelPreset = useMemo(() => getXiaomiTTSModelPreset(ttsModel), [ttsModel]);
@@ -195,30 +192,6 @@ export function ProfilePage() {
     } catch (e) {
       console.error("update tts config failed", e);
       setTTSMessage("TTS 配置更新失败，请检查 Base URL 和 Key。");
-    }
-  }
-
-  async function handleOAuthExport() {
-    setOAuthMessage("");
-    setOAuthExporting(true);
-    try {
-      const text = await exportOAuthAccounts(oauthProviderFilter);
-      const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "oauth-accounts.txt";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      const count = text.trim() ? text.trim().split(/\r?\n/).length : 0;
-      setOAuthMessage(count > 0 ? `已导出 ${count} 个 OAuth 账号。` : "没有可导出的 OAuth 账号。");
-    } catch (e) {
-      console.error("export oauth accounts failed", e);
-      setOAuthMessage("OAuth 账号导出失败，请确认当前账号已登录且后端已部署最新版本。");
-    } finally {
-      setOAuthExporting(false);
     }
   }
 
@@ -533,33 +506,6 @@ export function ProfilePage() {
               </div>
             ) : null}
           </form>
-
-          <section className="profile-section-content oauth-export-panel" style={{ marginTop: 18 }}>
-            <article className="stage-banner profile-section-banner">
-              <div>
-                <strong>OAuth 账号导出</strong>
-                <p style={{ margin: "6px 0 0" }}>导出格式为 email----provider----client-id----refresh-token，每行一个账号。</p>
-              </div>
-              <button
-                type="button"
-                className="section-toggle"
-                onClick={handleOAuthExport}
-                disabled={oauthExporting}
-              >
-                <Download size={16} />
-                {oauthExporting ? "导出中" : "导出 TXT"}
-              </button>
-            </article>
-            <label>
-              <span>Provider 过滤</span>
-              <input
-                value={oauthProviderFilter}
-                onChange={(e) => setOAuthProviderFilter(e.target.value)}
-                placeholder="留空导出全部，例如 microsoft"
-              />
-            </label>
-            {oauthMessage ? <p>{oauthMessage}</p> : null}
-          </section>
 
           <form className="settings-service-card" onSubmit={handleTTSSubmit}>
             <article className="stage-banner profile-section-banner settings-service-header tts-service">

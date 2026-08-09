@@ -358,6 +358,12 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 			"language":           &graphql.Field{Type: graphql.String},
 			"level":              &graphql.Field{Type: graphql.String},
 			"topic":              &graphql.Field{Type: graphql.String},
+			"band":               &graphql.Field{Type: graphql.Float},
+			"stage":              &graphql.Field{Type: graphql.String},
+			"section":            &graphql.Field{Type: graphql.String},
+			"skillFocus":         &graphql.Field{Type: graphql.String},
+			"questionType":       &graphql.Field{Type: graphql.String},
+			"scenarioFamily":     &graphql.Field{Type: graphql.String},
 			"title":              &graphql.Field{Type: graphql.String},
 			"passage":            &graphql.Field{Type: graphql.String},
 			"vocabulary":         &graphql.Field{Type: graphql.NewList(graphql.String)},
@@ -935,10 +941,16 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 		"generateReading": &graphql.Field{
 			Type: readingMaterialType,
 			Args: graphql.FieldConfigArgument{
-				"exam":      &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
-				"topic":     &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
-				"level":     &graphql.ArgumentConfig{Type: graphql.String},
-				"sourceIds": &graphql.ArgumentConfig{Type: graphql.NewList(graphql.String)},
+				"exam":           &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+				"topic":          &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+				"level":          &graphql.ArgumentConfig{Type: graphql.String},
+				"sourceIds":      &graphql.ArgumentConfig{Type: graphql.NewList(graphql.String)},
+				"band":           &graphql.ArgumentConfig{Type: graphql.Float},
+				"stage":          &graphql.ArgumentConfig{Type: graphql.String},
+				"section":        &graphql.ArgumentConfig{Type: graphql.String},
+				"skillFocus":     &graphql.ArgumentConfig{Type: graphql.String},
+				"questionType":   &graphql.ArgumentConfig{Type: graphql.String},
+				"scenarioFamily": &graphql.ArgumentConfig{Type: graphql.String},
 			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				userID, _ := p.Context.Value(UserIDKey).(string)
@@ -952,7 +964,16 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 					}
 				}
 				level, _ := p.Args["level"].(string)
-				return svc.GenerateReadingMaterial(userID, p.Args["exam"].(string), p.Args["topic"].(string), level, sourceIDs)
+				band, _ := p.Args["band"].(float64)
+				stage, _ := p.Args["stage"].(string)
+				section, _ := p.Args["section"].(string)
+				skillFocus, _ := p.Args["skillFocus"].(string)
+				questionType, _ := p.Args["questionType"].(string)
+				scenarioFamily, _ := p.Args["scenarioFamily"].(string)
+				return svc.GenerateReadingMaterialWithInput(userID, domain.ReadingGenerationInput{
+					Exam: p.Args["exam"].(string), Topic: p.Args["topic"].(string), Level: level, SourceIDs: sourceIDs,
+					Band: band, Stage: stage, Section: section, SkillFocus: skillFocus, QuestionType: questionType, ScenarioFamily: scenarioFamily,
+				})
 			},
 		},
 		"deleteReadingMaterial": &graphql.Field{

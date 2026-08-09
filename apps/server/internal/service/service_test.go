@@ -94,6 +94,41 @@ func TestGenerateReadingMaterialMarksFailedWhenAIGenerationFails(t *testing.T) {
 	t.Fatal("reading material did not reach FAILED after AI generation error")
 }
 
+func TestGenerateReadingMaterialPersistsNormalizedMetadataBeforeQueueing(t *testing.T) {
+	mem := store.NewMemoryStore()
+	svc := New(mem, nil, failingGenerator{err: errors.New("upstream unavailable")}, nil, "secret")
+	created, err := svc.GenerateReadingMaterialWithInput("user-1", domain.ReadingGenerationInput{
+		Exam:           "IELTS",
+		Topic:          "[Band 6.0][Matching Headings] urban transport resilience",
+		Level:          "advanced",
+		Band:           7.26,
+		Stage:          "Stage 12",
+		Section:        "Section 3",
+		SkillFocus:     "author stance",
+		QuestionType:   "TFNG",
+		ScenarioFamily: "urban policy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Band != 7.3 || created.Stage != "Stage 12" || created.Section != "Section 3" {
+		t.Fatalf("created metadata = %+v", created)
+	}
+	if created.SkillFocus != "author stance" || created.QuestionType != "TFNG" || created.ScenarioFamily != "urban policy" {
+		t.Fatalf("explicit metadata missing from created material: %+v", created)
+	}
+	if strings.Contains(created.Title, "[Band") || strings.Contains(created.Title, "Matching Headings") {
+		t.Fatalf("title leaked control metadata: %q", created.Title)
+	}
+	persisted, err := mem.GetReadingMaterial(created.ID, created.UserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Band != created.Band || persisted.QuestionType != created.QuestionType || persisted.ScenarioFamily != created.ScenarioFamily {
+		t.Fatalf("persisted metadata = %+v, created = %+v", persisted, created)
+	}
+}
+
 func TestMaterializeAudioDataURLStoresMediaFile(t *testing.T) {
 	svc := NewWithOptions(store.NewMemoryStore(), nil, nil, nil, "secret", ServiceOptions{MediaDir: t.TempDir()})
 	url, err := svc.materializeAudioURL("data:audio/mpeg;base64,SGVsbG8=", "reading", "material-1")
