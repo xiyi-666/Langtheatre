@@ -9,7 +9,7 @@ tests/
 **/*.test.tsx
 **/*.spec.ts
 **/*.spec.tsx
-**/*_test.go
+
 .DS_Store
 
 # Environment files
