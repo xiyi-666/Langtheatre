@@ -1151,6 +1151,11 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 			},
 		},
 	}
+	if !svc.UserServiceConfigurationEnabled() {
+		delete(mutationFields, "updateModelConfig")
+		delete(mutationFields, "updateTTSConfig")
+		delete(mutationFields, "updateASRConfig")
+	}
 	if svc.SubscriptionFeaturesEnabled() {
 		mutationFields["createPaymentOrder"] = &graphql.Field{Type: paymentOrderType, Args: graphql.FieldConfigArgument{
 			"productCode": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},

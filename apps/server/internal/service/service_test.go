@@ -219,6 +219,22 @@ func TestExportOAuthAccountsUsesPlainTextImportFormat(t *testing.T) {
 	}
 }
 
+func TestMiniProgramRejectsUserServiceConfigurationUpdates(t *testing.T) {
+	svc := NewWithOptions(store.NewMemoryStore(), nil, nil, nil, "secret", Options{
+		Billing: BillingOptions{MiniProgramEdition: true},
+	})
+
+	if _, err := svc.UpdateModelConfig(domain.ModelConfigUpdate{}); err == nil || !strings.Contains(err.Error(), "managed by the online service") {
+		t.Fatalf("UpdateModelConfig error = %v, want mini program configuration restriction", err)
+	}
+	if _, err := svc.UpdateTTSConfig(domain.TTSConfigUpdate{}); err == nil || !strings.Contains(err.Error(), "managed by the online service") {
+		t.Fatalf("UpdateTTSConfig error = %v, want mini program configuration restriction", err)
+	}
+	if _, err := svc.UpdateASRConfig(domain.ASRConfigUpdate{}); err == nil || !strings.Contains(err.Error(), "managed by the online service") {
+		t.Fatalf("UpdateASRConfig error = %v, want mini program configuration restriction", err)
+	}
+}
+
 func TestFallbackReadingContentMatchesQuestionType(t *testing.T) {
 	meta := ielts.ReadingMetadataFromTopic("IELTS", "[Band 7.0][Matching Headings] urban transport", "advanced")
 	dialogues, quiz := fallbackReadingContentWithMetadata("urban transport", meta, 5)

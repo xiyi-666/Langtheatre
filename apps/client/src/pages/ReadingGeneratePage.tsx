@@ -4,6 +4,7 @@ import { BookMarked, Filter, Sparkles } from "lucide-react";
 import { contentSources, generateReading, readingMaterials } from "../api";
 import { AICreditCostNotice } from "../components/AICreditCostNotice";
 import { useAppStore } from "../store";
+import { isMiniProgramEdition } from "../edition";
 import type { ContentSource } from "../types";
 import { calculateStageProgress, getStageRequirement } from "../xp";
 
@@ -125,7 +126,7 @@ export function ReadingGeneratePage() {
       navigate(`/reading/${generated.id}/article`);
     } catch (e) {
       console.error("reading generate failed", e);
-      setGenerateError("真实阅读材料生成失败，请检查模型配置、API Key 或稍后重试。");
+      setGenerateError(isMiniProgramEdition ? "阅读材料生成失败，线上 AI 服务暂时不可用，请稍后重试。" : "真实阅读材料生成失败，请检查模型配置、API Key 或稍后重试。");
     } finally {
       setLoading(false);
     }

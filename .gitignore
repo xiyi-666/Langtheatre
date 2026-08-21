@@ -53,6 +53,7 @@ go.work.sum
 .dev-logs/
 .workflow/
 tmp/
+.tmp-go-*
 profile-*.png
 output/
 

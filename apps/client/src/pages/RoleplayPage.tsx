@@ -6,6 +6,7 @@ import { endRoleplay, getRoleplaySession, getTheater, startRoleplay, submitRolep
 import { AICreditCostNotice } from "../components/AICreditCostNotice";
 import { recordingToWavDataURL } from "../audioRecorder";
 import { useAppStore } from "../store";
+import { isMiniProgramEdition } from "../edition";
 
 export function RoleplayPage() {
   const { theaterId = "" } = useParams();
@@ -106,7 +107,7 @@ export function RoleplayPage() {
       setVoiceMessage("已提交后台识别，完成后会自动显示文字与语音回复。");
     } catch (error) {
       console.error("submit roleplay audio failed", error);
-      setVoiceMessage((error as Error).message || "语音提交失败，请检查麦克风与 ASR 配置。");
+      setVoiceMessage((error as Error).message || (isMiniProgramEdition ? "语音提交失败，线上语音服务暂时不可用，请稍后重试。" : "语音提交失败，请检查麦克风与 ASR 配置。"));
     } finally { setSubmitting(false); }
   }
 

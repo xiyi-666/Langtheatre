@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "VITE_");
-  const edition = String(env.VITE_APP_EDITION || (mode === "open-source" ? "OPEN_SOURCE" : mode === "mini-program" ? "MINI_PROGRAM" : "COMMERCIAL"))
+  const edition = String(process.env.VITE_APP_EDITION || env.VITE_APP_EDITION || (mode === "open-source" ? "OPEN_SOURCE" : mode === "mini-program" ? "MINI_PROGRAM" : "COMMERCIAL"))
     .trim()
     .toUpperCase()
     .replace(/-/g, "_");

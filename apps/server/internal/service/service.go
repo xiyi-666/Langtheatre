@@ -165,6 +165,7 @@ type Service struct {
 	billing                  *billingService
 	usageGuard               *aiRequestGuard
 	analytics                *analytics.Reporter
+	miniProgramEdition       bool
 }
 
 const (
@@ -226,6 +227,7 @@ func NewWithOptions(store Store, session SessionStore, generator TheaterGenerato
 		mediaDir:                 mediaDir,
 		usageGuard:               newAIRequestGuard(options.UsageProtection),
 		analytics:                options.Analytics,
+		miniProgramEdition:       options.Billing.MiniProgramEdition,
 	}
 	if billingStore, ok := store.(BillingStore); ok && !options.Billing.OpenSourceEdition {
 		service.billing = newBillingService(billingStore, options.Billing, publicURL)
@@ -237,6 +239,12 @@ func (s *Service) trackFeature(name string) {
 	if s != nil && s.analytics != nil {
 		s.analytics.RecordProductMetric(analytics.MetricCategoryFeature, name)
 	}
+}
+
+// UserServiceConfigurationEnabled reports whether the current product allows
+// authenticated users to change the server-side model and speech providers.
+func (s *Service) UserServiceConfigurationEnabled() bool {
+	return s != nil && !s.miniProgramEdition
 }
 
 var usernamePattern = regexp.MustCompile(`^[\p{L}\p{N}_-]{3,24}$`)
@@ -678,6 +686,9 @@ func (s *Service) GetModelConfig() (domain.ModelConfigView, error) {
 }
 
 func (s *Service) UpdateModelConfig(input domain.ModelConfigUpdate) (domain.ModelConfigView, error) {
+	if s.miniProgramEdition {
+		return domain.ModelConfigView{}, errors.New("model configuration is managed by the online service in mini program edition")
+	}
 	if s.modelConfig == nil {
 		return domain.ModelConfigView{}, errors.New("model management unavailable")
 	}
@@ -817,6 +828,9 @@ func (s *Service) GetTTSConfig() (domain.TTSConfigView, error) {
 }
 
 func (s *Service) UpdateTTSConfig(input domain.TTSConfigUpdate) (domain.TTSConfigView, error) {
+	if s.miniProgramEdition {
+		return domain.TTSConfigView{}, errors.New("tts configuration is managed by the online service in mini program edition")
+	}
 	if s.ttsConfig == nil {
 		return domain.TTSConfigView{}, errors.New("tts management unavailable")
 	}
@@ -922,6 +936,9 @@ func (s *Service) GetASRConfig() (domain.ASRConfigView, error) {
 }
 
 func (s *Service) UpdateASRConfig(input domain.ASRConfigUpdate) (domain.ASRConfigView, error) {
+	if s.miniProgramEdition {
+		return domain.ASRConfigView{}, errors.New("asr configuration is managed by the online service in mini program edition")
+	}
 	if s.asrConfig == nil {
 		return domain.ASRConfigView{}, errors.New("asr management unavailable")
 	}

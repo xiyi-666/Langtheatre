@@ -408,7 +408,18 @@ export function ProfilePage() {
           </form>
           </section>
 
-          <section className="settings-service-stack" aria-label="AI 服务设置">
+          {isMiniProgramEdition ? (
+            <section className="settings-service-stack" aria-label="线上 AI 服务">
+              <article className="stage-banner profile-section-banner settings-service-header model-service">
+                <div>
+                  <strong><BrainCircuit size={17} /> 线上 AI 服务</strong>
+                  <p style={{ margin: "6px 0 0" }}>当前为小程序免费版，模型、TTS 和 ASR 由线上服务统一配置，你无需填写任何模型或厂商信息。</p>
+                </div>
+                <span className="settings-section-hint">已连接线上服务</span>
+              </article>
+            </section>
+          ) : null}
+          {!isMiniProgramEdition ? <section className="settings-service-stack" aria-label="AI 服务设置">
           <form className="settings-service-card" onSubmit={handleModelSubmit}>
             <article className="stage-banner profile-section-banner settings-service-header model-service">
               <div>
@@ -724,7 +735,7 @@ export function ProfilePage() {
               </div>
             </div> : null}
           </form>
-          </section>
+          </section> : null}
 
 			{isCommercialEdition && !isMiniProgramEdition ? <article className="stage-banner profile-voice-library-link settings-voice-library-card membership-profile-link">
 				<div><strong><Crown size={16} /> 会员与 AI 点数</strong><p style={{ margin: "6px 0 0" }}>免费用户每日 20 点；开通会员可去广告并提升生成、评分和语音服务额度。</p></div>

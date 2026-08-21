@@ -3,6 +3,7 @@ import { FilePenLine, Search, Sparkles } from "lucide-react";
 import { listWritingSessions, startWritingSession } from "../api";
 import type { WritingSession } from "../types";
 import { useLocation, useNavigate } from "react-router-dom";
+import { isMiniProgramEdition } from "../edition";
 
 function parseWritingMinutes(value: string): { value?: number; error?: string } {
   const normalized = value.trim();
@@ -101,7 +102,7 @@ export function WritingPage() {
     try {
       const created = await startWritingSession(exam, parsedMinutes.value * 60);
       navigate(`/writing/${created.id}`);
-    } catch (error) { setMessage((error as Error).message || "题目生成失败，请检查模型配置。"); }
+    } catch (error) { setMessage((error as Error).message || (isMiniProgramEdition ? "题目生成失败，线上 AI 服务暂时不可用，请稍后重试。" : "题目生成失败，请检查模型配置。")); }
     finally { setStarting(false); }
   }
 

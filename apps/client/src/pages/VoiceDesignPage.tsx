@@ -19,7 +19,7 @@ export function VoiceDesignPage() {
       .then(setTTSConfig)
       .catch((error) => {
         console.error("load tts config failed", error);
-        setMessage("无法读取 TTS 配置，请返回个人中心检查设置。");
+        setMessage("无法读取线上语音服务状态，请稍后重试。");
       });
   }, []);
 
@@ -28,7 +28,7 @@ export function VoiceDesignPage() {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!canCreate) {
-      setMessage("请先在个人中心配置带 API Key 的小米 TTS。");
+      setMessage("当前线上语音服务暂未就绪，请稍后再试。");
       return;
     }
     setCreating(true);
@@ -38,7 +38,7 @@ export function VoiceDesignPage() {
       navigate("/voices", { state: { message: "音色已加入后台创建队列；完成后可在这里试听并用于剧场。" } });
     } catch (error) {
       console.error("create voice profile failed", error);
-      setMessage((error as Error).message || "创建失败，请检查提示词与 TTS 配置。");
+      setMessage((error as Error).message || "创建失败，请检查音色描述后稍后重试。");
     } finally {
       setCreating(false);
     }
@@ -82,7 +82,7 @@ export function VoiceDesignPage() {
             <button type="submit" disabled={creating || !canCreate}><Sparkles size={16} /> {creating ? "正在创建…" : "创建音色"}</button>
             <small>支持 8–500 字的角色描述，生成过程不阻塞其他服务。</small>
           </div>
-          {!canCreate ? <p className="error">当前需要已配置 API Key 的小米 TTS 才能创建音色。</p> : null}
+          {!canCreate ? <p className="error">线上音色服务暂未就绪，请稍后再试。</p> : null}
           {message ? <p className="muted-note" role="status">{message}</p> : null}
         </form>
       </section>
