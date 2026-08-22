@@ -1,6 +1,11 @@
 package ai
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -192,6 +197,72 @@ func TestListeningRegenerationInstructionRequiresCompleteCompactJSON(t *testing.
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("listeningRegenerationInstruction() = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestValidateCantoneseDialoguesRejectsMandarinWrittenInTraditionalChinese(t *testing.T) {
+	dialogues := []domain.Dialogue{
+		{Text: "我們現在去餐廳，可以嗎？"},
+		{Text: "好的，這裡是菜單，請問您想吃什麼？"},
+		{Text: "我沒有問題，你們先點餐。"},
+		{Text: "知道了，我們現在開始。"},
+	}
+	err := validateCantoneseDialogues(dialogues)
+	if !errors.Is(err, errGeneratedCantoneseQuality) {
+		t.Fatalf("validateCantoneseDialogues() error = %v, want Cantonese quality error", err)
+	}
+}
+
+func TestValidateCantoneseDialoguesAcceptsColloquialHongKongCantonese(t *testing.T) {
+	dialogues := []domain.Dialogue{
+		{Text: "唔該，我想問下而家仲有冇位呀？"},
+		{Text: "有呀，你哋兩位可以坐嗰邊張枱。"},
+		{Text: "好呀，咁我哋可唔可以先睇下餐牌？"},
+		{Text: "梗係得啦，陣間想落單再叫我。"},
+	}
+	if err := validateCantoneseDialogues(dialogues); err != nil {
+		t.Fatalf("validateCantoneseDialogues() error = %v", err)
+	}
+}
+
+func TestRewriteDialoguesToCantonese(t *testing.T) {
+	rewrittenPayload, err := json.Marshal(map[string]any{
+		"dialogues": []map[string]string{
+			{"speaker": "顧客", "text": "唔該，我想問下而家仲有冇位呀？", "zhSubtitle": "请问现在还有位置吗？"},
+			{"speaker": "店員", "text": "有呀，你哋可以坐嗰邊張枱。", "zhSubtitle": "有，你们可以坐那边。"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": string(rewrittenPayload)}}},
+		})
+	}))
+	defer server.Close()
+
+	generator := NewOpenAIGenerator("test-key", "test-model", server.URL)
+	generator.Client = server.Client()
+	got, err := generator.rewriteDialoguesToCantonese(context.Background(), []domain.Dialogue{
+		{Speaker: "顧客", Text: "请问现在还有位置吗？", ZhSubtitle: "请问现在还有位置吗？"},
+		{Speaker: "店員", Text: "有，你们可以坐那边。", ZhSubtitle: "有，你们可以坐那边。"},
+	})
+	if err != nil {
+		t.Fatalf("rewriteDialoguesToCantonese() error = %v", err)
+	}
+	if len(got) != 2 || !strings.Contains(got[0].Text, "唔該") || !strings.Contains(got[1].Text, "你哋") {
+		t.Fatalf("unexpected rewritten dialogues: %+v", got)
+	}
+}
+
+func TestCantoneseRegenerationInstructionRejectsMandarinGrammar(t *testing.T) {
+	got := cantoneseRegenerationInstruction()
+	for _, want := range []string{"authentic colloquial Hong Kong Cantonese", "我哋", "zhSubtitle", "Mandarin wording"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("cantoneseRegenerationInstruction() = %q, want %q", got, want)
 		}
 	}
 }

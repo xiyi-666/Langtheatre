@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -45,6 +46,8 @@ const (
 	defaultModelName     = "gpt-5.4"
 	defaultBaseURL       = "http://43.172.5.210:3000/v1"
 )
+
+var errGeneratedCantoneseQuality = errors.New("generated dialogue is not authentic Hong Kong Cantonese")
 
 func NewOpenAIGenerator(apiKey string, model string, baseURL string) *OpenAIGenerator {
 	generator := &OpenAIGenerator{
@@ -257,6 +260,8 @@ For conversational listening sections, each turn should either ask for concrete 
 If the IELTS controls specify a single-speaker monologue, split it into 8 consecutive lecture chunks from the same speaker; each chunk should develop notes, contrasts, causes, evidence, or examples instead of asking or answering questions.
 For a single-speaker monologue, start directly with lecture content. Do not mention recording booths, upload deadlines, timers, worksheets, classroom logistics, apologies, or interruptions.
 If the topic is written in Simplified Chinese and the language is CANTONESE, first reinterpret the topic into a natural Hong Kong Cantonese life scenario internally, then write the dialogue in authentic Hong Kong Cantonese.
+For CANTONESE, dialogue text must use genuinely colloquial Hong Kong Cantonese wording and grammar, with natural expressions such as 我哋、你哋、而家、唔該、冇、係咪、喺、嘅、咗、啲、嗰個 when contextually appropriate.
+Do not write Mandarin sentences and merely convert them to Traditional Chinese. For example, avoid dialogue patterns such as 我們現在、請問您、可以嗎、沒有問題、這裡是; rewrite them as natural spoken Cantonese instead.
 All dialogue turns must stay consistent with the provided scenario brief.
 Produce exactly 8 dialogue turns and exactly %d listening comprehension single-choice questions based ONLY on those dialogues.
 Use clear speaker roles like 店员/顾客 for Cantonese or Barista/Customer for English.
@@ -292,6 +297,9 @@ Rules for quiz:
 				attemptUser += readingRegenerationInstruction(quizCount, topic)
 			} else {
 				attemptUser += listeningRegenerationInstruction(quizCount)
+				if strings.EqualFold(strings.TrimSpace(language), "CANTONESE") {
+					attemptUser += cantoneseRegenerationInstruction()
+				}
 			}
 		}
 		payload := map[string]any{
@@ -319,6 +327,18 @@ Rules for quiz:
 			dialogues, quiz, parseErr := parseAndValidateModelContent(language, topic, readingMode, quizCount, content)
 			if parseErr == nil {
 				return dialogues, quiz[:quizCount], nil
+			}
+			if errors.Is(parseErr, errGeneratedCantoneseQuality) && len(dialogues) > 0 {
+				rewritten, rewriteErr := g.rewriteDialoguesToCantonese(ctx, dialogues)
+				if rewriteErr == nil {
+					if validationErr := validateGeneratedOutput(language, false, rewritten, quiz); validationErr == nil {
+						log.Printf("rewrote model dialogue into authentic Hong Kong Cantonese turns=%d", len(rewritten))
+						return rewritten, quiz[:quizCount], nil
+					} else {
+						rewriteErr = validationErr
+					}
+				}
+				log.Printf("cantonese dialogue rewrite failed attempt=%d err=%v", attempt+1, rewriteErr)
 			}
 			lastErr = parseErr
 		}
@@ -399,6 +419,15 @@ Critical requirements for this retry:
 - Keep the same difficulty by using corrections, delayed answers, competing details, and paraphrased quiz wording.`, quizCount)
 }
 
+func cantoneseRegenerationInstruction() string {
+	return `
+
+The previous dialogue was rejected because it sounded like Mandarin written with Traditional Chinese characters.
+Rewrite every dialogues[].text line as authentic colloquial Hong Kong Cantonese.
+Use Cantonese vocabulary, sentence structure, pronouns and particles naturally (for example 我哋、你哋、而家、唔該、冇、係咪、喺、嘅、咗、啲、嗰個).
+Keep dialogues[].zhSubtitle and all quiz text in readable Simplified Chinese. Do not put Mandarin wording into dialogues[].text.`
+}
+
 func readingRegenerationInstruction(quizCount int, topic string) string {
 	metadata := ielts.ReadingMetadataFromTopic(readingExamFromTopic(topic), topic, "")
 	mixedInstruction := ""
@@ -436,6 +465,9 @@ func parseAndValidateModelContent(language string, topic string, readingMode boo
 		return nil, nil, fmt.Errorf("model output parsing failed: missing quiz questions")
 	}
 	if err := validateGeneratedOutput(language, readingMode, dialogues, quiz); err != nil {
+		if errors.Is(err, errGeneratedCantoneseQuality) {
+			return dialogues, quiz, err
+		}
 		return nil, nil, err
 	}
 	if readingMode {
@@ -671,7 +703,111 @@ func validateGeneratedOutput(language string, readingMode bool, dialogues []doma
 	if readingMode && genericReadingQuestions >= 2 {
 		return fmt.Errorf("reading generation returned too many generic questions: %d", genericReadingQuestions)
 	}
+	if !readingMode && strings.EqualFold(strings.TrimSpace(language), "CANTONESE") {
+		if err := validateCantoneseDialogues(dialogues); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func validateCantoneseDialogues(dialogues []domain.Dialogue) error {
+	markers := []string{
+		"我哋", "你哋", "佢哋", "而家", "唔該", "唔好", "唔係", "唔知", "冇", "係咪",
+		"喺", "嘅", "咗", "啲", "嗰個", "呢個", "邊個", "乜嘢", "點解", "點樣",
+		"畀", "攞", "睇", "嚟", "返去", "落單", "埋單", "即刻", "陣間", "搞掂",
+		"得唔得", "可唔可以", "使唔使", "好唔好", "啦", "喎", "啫", "吓",
+	}
+	mandarinPatterns := []string{
+		"我們現在", "你們現在", "他們現在", "請問您", "可以嗎", "是不是", "沒有問題",
+		"這裡是", "那裡是", "什麼時候", "怎麼辦", "知道了", "好的，", "好的。",
+	}
+	nonEmptyLines := 0
+	markerLines := 0
+	markerHits := 0
+	mandarinHits := 0
+	for _, dialogue := range dialogues {
+		text := strings.TrimSpace(dialogue.Text)
+		if text == "" {
+			continue
+		}
+		nonEmptyLines++
+		lineHasMarker := false
+		for _, marker := range markers {
+			if strings.Contains(text, marker) {
+				markerHits += strings.Count(text, marker)
+				lineHasMarker = true
+			}
+		}
+		if lineHasMarker {
+			markerLines++
+		}
+		for _, pattern := range mandarinPatterns {
+			mandarinHits += strings.Count(text, pattern)
+		}
+	}
+	if nonEmptyLines == 0 {
+		return fmt.Errorf("%w: no dialogue text", errGeneratedCantoneseQuality)
+	}
+	minimumMarkerLines := max(2, (nonEmptyLines+1)/2)
+	if markerLines < minimumMarkerLines || markerHits < minimumMarkerLines || mandarinHits >= 2 {
+		return fmt.Errorf("%w: marker_lines=%d/%d marker_hits=%d mandarin_hits=%d", errGeneratedCantoneseQuality, markerLines, nonEmptyLines, markerHits, mandarinHits)
+	}
+	return nil
+}
+
+func (g *OpenAIGenerator) rewriteDialoguesToCantonese(ctx context.Context, dialogues []domain.Dialogue) ([]domain.Dialogue, error) {
+	type rewriteDialogue struct {
+		Speaker    string `json:"speaker"`
+		Text       string `json:"text"`
+		ZhSubtitle string `json:"zhSubtitle"`
+	}
+	input := make([]rewriteDialogue, 0, len(dialogues))
+	for _, dialogue := range dialogues {
+		input = append(input, rewriteDialogue{
+			Speaker: dialogue.Speaker, Text: dialogue.Text, ZhSubtitle: dialogue.ZhSubtitle,
+		})
+	}
+	rawInput, err := json.Marshal(map[string]any{"dialogues": input})
+	if err != nil {
+		return nil, err
+	}
+	payload := map[string]any{
+		"model": g.modelName(),
+		"messages": []map[string]string{
+			{
+				"role":    "system",
+				"content": "你係專業香港粵語編劇。將對白改寫成自然、地道、口語化嘅香港粵語，唔可以只將普通話轉做繁體字。只返回完整 JSON。",
+			},
+			{
+				"role":    "user",
+				"content": `Rewrite the following dialogues[].text into authentic colloquial Hong Kong Cantonese in Traditional Chinese. Preserve every factual detail, intent, speaker, turn count and order. Use natural Cantonese grammar and expressions such as 我哋、你哋、而家、唔該、冇、係咪、喺、嘅、咗、啲 where appropriate. Keep zhSubtitle as concise Mandarin-style Simplified Chinese. Return exactly {"dialogues":[{"speaker":"...","text":"...","zhSubtitle":"..."}]}. Input: ` + string(rawInput),
+			},
+		},
+		"temperature": 0.2,
+		"max_tokens":  3000,
+	}
+	content, err := g.callModelJSONPayload(ctx, payload, "CANTONESE_REWRITE")
+	if err != nil {
+		return nil, err
+	}
+	rewritten, _ := parseModelOutput(content)
+	if len(rewritten) != len(dialogues) {
+		return nil, fmt.Errorf("cantonese rewrite changed turn count: got %d want %d", len(rewritten), len(dialogues))
+	}
+	for i := range rewritten {
+		if strings.TrimSpace(rewritten[i].Speaker) == "" {
+			rewritten[i].Speaker = dialogues[i].Speaker
+		}
+		if strings.TrimSpace(rewritten[i].ZhSubtitle) == "" {
+			rewritten[i].ZhSubtitle = dialogues[i].ZhSubtitle
+		}
+		rewritten[i].Timestamp = dialogues[i].Timestamp
+	}
+	if err := validateCantoneseDialogues(rewritten); err != nil {
+		return nil, err
+	}
+	return rewritten, nil
 }
 
 func (g *OpenAIGenerator) expandConversationScenario(ctx context.Context, language string, topic string, difficulty float64, mode string) (string, error) {
