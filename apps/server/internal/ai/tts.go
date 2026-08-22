@@ -49,6 +49,7 @@ const (
 	xiaomiTTSVoiceCloneModel     = "mimo-v2.5-tts-voiceclone"
 	defaultXiaomiTTSVoice        = "mimo_default"
 	defaultXiaomiVoiceDesignText = "20 多岁女性，声音亲和自然，吐字清晰，适合粤语和英文学习内容。"
+	defaultXiaomiCantoneseStyle  = "温柔女生"
 	defaultMiniMaxTTSModel       = "speech-2.8-hd"
 	defaultMiniMaxTTSVoice       = "Cantonese_GentleLady"
 	defaultAliyunTTSModel        = "cosyvoice-v3-flash"
@@ -316,10 +317,19 @@ func (t *APITTS) synthesizeXiaomi(ctx context.Context, config domain.TTSConfig, 
 		}
 		return t.doXiaomiSynthesis(ctx, config, xiaomiTTSVoiceCloneModel, messages, audio)
 	}
-	if shouldUseXiaomiDesignedCloneFlow(requestedVoice) {
+	model := normalizeTTSModel(ttsProviderXiaomi, config.Model)
+	// VoiceDesign and VoiceClone are explicit administrator choices. Do not
+	// replace them with the automatic fallback below.
+	if isXiaomiVoiceDesignModel(model) || isXiaomiVoiceCloneModel(model) {
+		messages, audio, buildErr := buildXiaomiMessagesAndAudio(model, config.Voice, config.AudioFormat, text, language, requestedVoice)
+		if buildErr != nil {
+			return "", buildErr
+		}
+		return t.doXiaomiSynthesis(ctx, config, model, messages, audio)
+	}
+	if shouldUseXiaomiDesignedCloneFlow(requestedVoice, language) {
 		return t.synthesizeXiaomiWithDesignedClone(ctx, config, text, language, requestedVoice)
 	}
-	model := normalizeTTSModel(ttsProviderXiaomi, config.Model)
 	messages, audio, buildErr := buildXiaomiMessagesAndAudio(model, config.Voice, config.AudioFormat, text, language, requestedVoice)
 	if buildErr != nil {
 		return "", buildErr
@@ -330,7 +340,14 @@ func (t *APITTS) synthesizeXiaomi(ctx context.Context, config domain.TTSConfig, 
 func (t *APITTS) synthesizeXiaomiWithDesignedClone(ctx context.Context, config domain.TTSConfig, text string, language string, requestedVoice string) (string, error) {
 	style := normalizeVoiceStyle(requestedVoice)
 	if style == "" {
-		return "", errors.New("xiaomi designed clone flow requires a normalized voice style")
+		// MiMo does not expose a Cantonese locale or a Cantonese preset voice.
+		// Seed an explicitly Cantonese VoiceDesign sample for automatic flows such
+		// as reading materials, where no character style is provided.
+		if isCantoneseLanguage(language) {
+			style = defaultXiaomiCantoneseStyle
+		} else {
+			return "", errors.New("xiaomi designed clone flow requires a normalized voice style")
+		}
 	}
 	cacheKey := xiaomiDesignedCloneCacheKey(style, language)
 	seedAudio := t.getXiaomiCloneSeed(cacheKey)
@@ -578,7 +595,7 @@ func buildXiaomiMessagesAndAudio(model string, configuredVoice string, format st
 			},
 			map[string]any{
 				"format": audioFormat,
-				"voice":  cloneSample,
+				"voice":  xiaomiVoiceCloneSample(cloneSample),
 			}, nil
 	default:
 		instruction := buildInstruction(text, language, requestedVoice)
@@ -593,8 +610,12 @@ func buildXiaomiMessagesAndAudio(model string, configuredVoice string, format st
 	}
 }
 
-func shouldUseXiaomiDesignedCloneFlow(requestedVoice string) bool {
-	return normalizeVoiceStyle(requestedVoice) != ""
+func shouldUseXiaomiDesignedCloneFlow(requestedVoice string, language string) bool {
+	return normalizeVoiceStyle(requestedVoice) != "" || isCantoneseLanguage(language)
+}
+
+func isCantoneseLanguage(language string) bool {
+	return strings.EqualFold(strings.TrimSpace(language), "CANTONESE")
 }
 
 func xiaomiDesignedCloneCacheKey(style string, language string) string {
@@ -743,17 +764,11 @@ func extractAliyunAudioURL(body []byte, format string) (string, error) {
 }
 
 func xiaomiSynthesisText(text string, language string) string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return ""
-	}
-	if !strings.EqualFold(strings.TrimSpace(language), "CANTONESE") {
-		return trimmed
-	}
-	if strings.HasPrefix(trimmed, "(粤语)") || strings.HasPrefix(trimmed, "(粵語)") {
-		return trimmed
-	}
-	return "(粤语)" + trimmed
+	// MiMo consumes the assistant message as the exact text to synthesize. A
+	// "(粤语)" prefix can leak into the spoken output and does not act as a
+	// language selector. Cantonese is controlled by the designed/clone voice
+	// and the user instruction instead.
+	return strings.TrimSpace(text)
 }
 
 func minimaxLanguageBoost(language string) string {
@@ -884,6 +899,14 @@ func isXiaomiVoiceCloneModel(model string) bool {
 
 func isAudioDataURL(value string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "data:audio/")
+}
+
+func xiaomiVoiceCloneSample(dataURL string) string {
+	trimmed := strings.TrimSpace(dataURL)
+	if markerIndex := strings.Index(strings.ToLower(trimmed), ";base64,"); markerIndex >= 0 {
+		return strings.TrimSpace(trimmed[markerIndex+len(";base64,"):])
+	}
+	return trimmed
 }
 
 func normalizeTTSAudioFormat(format string) string {

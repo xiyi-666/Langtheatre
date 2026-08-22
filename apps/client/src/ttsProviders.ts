@@ -32,7 +32,7 @@ export const XIAOMI_TTS_MODEL_PRESETS: XiaomiTTSModelPreset[] = [
   {
     id: "mimo-v2.5-tts",
     label: "预制音色",
-    description: "直接选择 MiMo 官方预设音色，适合稳定批量生成。",
+    description: "直接选择 MiMo 官方预设音色，适合稳定批量生成；粤语内容会自动使用 VoiceDesign 音色种子，不依赖普通话预置音色。",
     defaultVoice: "mimo_default",
     voiceFieldLabel: "音色",
     voiceFieldPlaceholder: "请选择官方预设音色"
