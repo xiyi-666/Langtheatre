@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -106,6 +107,7 @@ func main() {
 		tts.UpdateTTSConfig(savedTTSConfig)
 		log.Printf("loaded persisted tts config provider=%s model=%s voice=%s", savedTTSConfig.Provider, savedTTSConfig.Model, savedTTSConfig.Voice)
 	}
+	tts.SetVoiceSeedDir(filepath.Join(cfg.MediaDir, "tts", "voice-seeds"))
 	asr := ai.NewAPIASR(cfg.ASRProvider, cfg.ASRAPIURL, cfg.ASRAPIKey, cfg.ASRAppID, cfg.ASRModel)
 	if savedASRConfig, err := dataStore.GetASRConfig(); err == nil {
 		asr.UpdateASRConfig(savedASRConfig)
@@ -127,6 +129,8 @@ func main() {
 		log.Printf("SMTP is not configured; new registrations will require SMTP configuration")
 	}
 	svc := service.NewWithOptions(dataStore, redisClient, generator, tts, cfg.JWTSecret, service.Options{
+		MediaDir:                 cfg.MediaDir,
+		TTSMaxConcurrency:        cfg.TTSMaxConcurrency,
 		Mailer:                   authMailer,
 		PublicAppURL:             cfg.PublicAppURL,
 		RequireEmailVerification: cfg.RequireEmailVerification,
@@ -188,7 +192,7 @@ func main() {
 			Timestamp: result.Timestamp,
 			Checks:    result.Checks,
 		}
-	}, httpserver.MuxOptions{Security: securityOptions, Analytics: analyticsReporter, AnalyticsAdminToken: cfg.AnalyticsAdminToken})
+	}, httpserver.MuxOptions{Security: securityOptions, Analytics: analyticsReporter, AnalyticsAdminToken: cfg.AnalyticsAdminToken, MediaDir: cfg.MediaDir})
 	log.Printf("LinguaQuest API listening on :%s", cfg.Port)
 	if err = http.ListenAndServe(":"+cfg.Port, httpserver.WrapWithBaseMiddleware(mux, securityOptions)); err != nil {
 		log.Fatal(err)

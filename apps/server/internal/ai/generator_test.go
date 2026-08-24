@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/linguaquest/server/internal/domain"
+	"github.com/linguaquest/server/internal/ielts"
 )
 
 func TestReadingMinWordsProgressesByBand(t *testing.T) {
@@ -215,23 +216,82 @@ func TestValidateCantoneseDialoguesRejectsMandarinWrittenInTraditionalChinese(t 
 }
 
 func TestValidateCantoneseDialoguesAcceptsColloquialHongKongCantonese(t *testing.T) {
-	dialogues := []domain.Dialogue{
-		{Text: "唔該，我想問下而家仲有冇位呀？"},
-		{Text: "有呀，你哋兩位可以坐嗰邊張枱。"},
-		{Text: "好呀，咁我哋可唔可以先睇下餐牌？"},
-		{Text: "梗係得啦，陣間想落單再叫我。"},
-	}
+	dialogues := validCantoneseConversation()
 	if err := validateCantoneseDialogues(dialogues); err != nil {
 		t.Fatalf("validateCantoneseDialogues() error = %v", err)
 	}
 }
 
+func TestValidateCantoneseDialoguesRejectsEnglishText(t *testing.T) {
+	dialogues := validCantoneseConversation()
+	dialogues[2].Text = "我哋可以用 MTR 去中環，陣間再傾啦。"
+	err := validateCantoneseDialogues(dialogues)
+	if !errors.Is(err, errGeneratedCantoneseQuality) {
+		t.Fatalf("validateCantoneseDialogues() error = %v, want Cantonese quality error", err)
+	}
+}
+
+func TestNormalizeGeneratedCantoneseDialoguesForSpeech(t *testing.T) {
+	dialogues := []domain.Dialogue{{Speaker: "**梁姐（女侍應）**", Gender: "female", Text: "搭 MTR 去中環……到時再傾；好唔好？？"}}
+	got := normalizeGeneratedDialogues("CANTONESE", dialogues)
+	want := "搭港鐵去中環，到時再傾，好唔好？"
+	if got[0].Text != want {
+		t.Fatalf("normalizeGeneratedDialogues() = %q, want %q", got[0].Text, want)
+	}
+	if got[0].Speaker != "梁姐（女侍應）" || got[0].Gender != "FEMALE" {
+		t.Fatalf("speaker identity was not normalized: %+v", got[0])
+	}
+}
+
+func TestValidateCantoneseDialoguesRejectsMonologue(t *testing.T) {
+	dialogues := validCantoneseConversation()
+	for index := range dialogues {
+		dialogues[index].Speaker = "Lecturer"
+	}
+	err := validateCantoneseDialogues(dialogues)
+	if !errors.Is(err, errGeneratedCantoneseQuality) {
+		t.Fatalf("validateCantoneseDialogues() error = %v, want Cantonese quality error", err)
+	}
+}
+
+func TestValidateCantoneseDialoguesRejectsThirdSpeaker(t *testing.T) {
+	dialogues := validCantoneseConversation()
+	dialogues[4].Speaker = "陳經理（男經理）"
+	dialogues[4].Gender = "MALE"
+	err := validateCantoneseDialogues(dialogues)
+	if !errors.Is(err, errGeneratedCantoneseQuality) || !strings.Contains(err.Error(), "speaker_count=3") {
+		t.Fatalf("validateCantoneseDialogues() error = %v, want three-speaker quality error", err)
+	}
+}
+
+func TestValidateCantoneseDialoguesRejectsMissingOrInconsistentGender(t *testing.T) {
+	dialogues := validCantoneseConversation()
+	dialogues[0].Gender = ""
+	if err := validateCantoneseDialogues(dialogues); !errors.Is(err, errGeneratedCantoneseQuality) {
+		t.Fatalf("missing gender error = %v, want Cantonese quality error", err)
+	}
+
+	dialogues = validCantoneseConversation()
+	dialogues[2].Gender = "MALE"
+	if err := validateCantoneseDialogues(dialogues); !errors.Is(err, errGeneratedCantoneseQuality) || !strings.Contains(err.Error(), "inconsistent gender") {
+		t.Fatalf("inconsistent gender error = %v, want speaker gender mismatch", err)
+	}
+}
+
+func TestCantoneseListeningControlsKeepHighDifficultyInteractive(t *testing.T) {
+	profile := ielts.ListeningProfile{Section: 4}
+	controls := listeningControlsForGeneration("CANTONESE", profile, 7.5)
+	form := listeningFormInstruction("CANTONESE", profile)
+	for _, want := range []string{"exactly two speakers", "competing viewpoints", "exactly two named speakers", "Every dialogue item must include gender", "Never use a Lecturer"} {
+		if !strings.Contains(controls+form, want) {
+			t.Fatalf("Cantonese controls = %q, want %q", controls+form, want)
+		}
+	}
+}
+
 func TestRewriteDialoguesToCantonese(t *testing.T) {
 	rewrittenPayload, err := json.Marshal(map[string]any{
-		"dialogues": []map[string]string{
-			{"speaker": "顧客", "text": "唔該，我想問下而家仲有冇位呀？", "zhSubtitle": "请问现在还有位置吗？"},
-			{"speaker": "店員", "text": "有呀，你哋可以坐嗰邊張枱。", "zhSubtitle": "有，你们可以坐那边。"},
-		},
+		"dialogues": validCantoneseConversation(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -246,15 +306,29 @@ func TestRewriteDialoguesToCantonese(t *testing.T) {
 
 	generator := NewOpenAIGenerator("test-key", "test-model", server.URL)
 	generator.Client = server.Client()
-	got, err := generator.rewriteDialoguesToCantonese(context.Background(), []domain.Dialogue{
-		{Speaker: "顧客", Text: "请问现在还有位置吗？", ZhSubtitle: "请问现在还有位置吗？"},
-		{Speaker: "店員", Text: "有，你们可以坐那边。", ZhSubtitle: "有，你们可以坐那边。"},
-	})
+	source := validCantoneseConversation()
+	for index := range source {
+		source[index].Text = "请问现在还有位置吗？"
+	}
+	got, err := generator.rewriteDialoguesToCantonese(context.Background(), source)
 	if err != nil {
 		t.Fatalf("rewriteDialoguesToCantonese() error = %v", err)
 	}
-	if len(got) != 2 || !strings.Contains(got[0].Text, "唔該") || !strings.Contains(got[1].Text, "你哋") {
+	if len(got) != 8 || !strings.Contains(got[0].Text, "唔該") || !strings.Contains(got[1].Text, "你哋") {
 		t.Fatalf("unexpected rewritten dialogues: %+v", got)
+	}
+}
+
+func validCantoneseConversation() []domain.Dialogue {
+	return []domain.Dialogue{
+		{Speaker: "阿欣（女顧客）", Gender: "FEMALE", Text: "唔該，我想問下而家仲有冇位呀？", ZhSubtitle: "请问现在还有位置吗？"},
+		{Speaker: "阿明（男店員）", Gender: "MALE", Text: "有呀，你哋兩位可以坐嗰邊張枱。", ZhSubtitle: "有，你们两位可以坐那边。"},
+		{Speaker: "阿欣（女顧客）", Gender: "FEMALE", Text: "好呀，咁我哋可唔可以先睇下餐牌？", ZhSubtitle: "好，我们能先看看菜单吗？"},
+		{Speaker: "阿明（男店員）", Gender: "MALE", Text: "梗係得啦，陣間想落單再叫我。", ZhSubtitle: "当然可以，稍后想点单再叫我。"},
+		{Speaker: "阿欣（女顧客）", Gender: "FEMALE", Text: "我哋趕時間，有冇啲快啲嘅套餐？", ZhSubtitle: "我们赶时间，有没有快一点的套餐？"},
+		{Speaker: "阿明（男店員）", Gender: "MALE", Text: "有，不過而家菠蘿油要等十分鐘，粉麵會快啲。", ZhSubtitle: "有，不过菠萝油要等十分钟，粉面会更快。"},
+		{Speaker: "阿欣（女顧客）", Gender: "FEMALE", Text: "咁我哋要兩份粉麵，飲品凍檸茶走甜，得唔得？", ZhSubtitle: "那我们要两份粉面，饮料冰柠茶少糖，可以吗？"},
+		{Speaker: "阿明（男店員）", Gender: "MALE", Text: "得呀，我而家幫你哋落單，大概八分鐘送到。", ZhSubtitle: "可以，我现在帮你们下单，大约八分钟送到。"},
 	}
 }
 

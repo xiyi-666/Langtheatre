@@ -129,10 +129,65 @@ func languageDirective(language string) string {
 	case "ENGLISH":
 		return "Target language: English. Every speaker name, dialogue line, and quiz item MUST be in English only. Do not use Chinese or other languages."
 	case "CANTONESE":
-		return "Target: Hong Kong Cantonese. Write dialogue text in Traditional Chinese (口語化、粵語表達). But quiz questions and options must be in Simplified Chinese (standard Mandarin phrasing) for learner readability."
+		return "Target: Hong Kong Cantonese. Write dialogue text in Traditional Chinese (口語化、粵語表達), with no Latin letters or unnecessary English words. Use exactly two stable speakers. Every dialogue item must include gender as FEMALE or MALE, matching its gender-identifying speaker name or role such as 阿晴（女店員） or 陳先生（男顧客）. Quiz questions and options must be in Simplified Chinese (standard Mandarin phrasing) for learner readability."
 	default:
 		return "Follow the language field strictly for all dialogue and quiz text."
 	}
+}
+
+func isCantonese(language string) bool {
+	return strings.EqualFold(strings.TrimSpace(language), "CANTONESE")
+}
+
+// listeningControlsForGeneration keeps the IELTS listening profile for English,
+// while Cantonese follows its own conversation-first learning progression.
+func listeningControlsForGeneration(language string, profile ielts.ListeningProfile, difficulty float64) string {
+	if !isCantonese(language) {
+		return profile.PromptBlock()
+	}
+
+	switch {
+	case difficulty <= 4.5:
+		return `Cantonese conversation controls:
+- Level 4.0-4.5: two speakers in a concrete daily-life situation. Use complete but accessible spoken sentences, including time, place, price or quantity details.
+- Keep the exchange natural rather than a textbook word-by-word drill. Include one straightforward confirmation or immediate correction.
+- Questions should check useful facts and the final practical arrangement.`
+	case difficulty <= 5.5:
+		return `Cantonese conversation controls:
+- Level 5.0-5.5: two speakers handle a practical situation with schedules, quantities, alternative choices and one self-correction.
+- Use natural colloquial Cantonese and let information emerge across the exchange instead of stating every answer immediately.
+- Questions should test corrected details, constraints and the agreed next step.`
+	case difficulty <= 6.5:
+		return `Cantonese conversation controls:
+- Level 6.0-6.5: two speakers explain reasons, conditions and polite preferences. Add delayed information, clarification and a realistic trade-off.
+- Use longer but still conversational turns, with contextual vocabulary from work, services or community life.
+- Questions should require connecting a reason, condition or correction to the decision.`
+	case difficulty <= 7.5:
+		return `Cantonese conversation controls:
+- Level 7.0-7.5: exactly two speakers coordinate a realistic workplace, community or social decision. Include competing viewpoints, follow-up questions, concessions and a justified choice.
+- Increase difficulty through implicit constraints, comparison and polite disagreement; do not make any speaker give a speech.
+- Questions should test who holds which view, why an option changes, and the final negotiated arrangement.`
+	default:
+		return `Cantonese conversation controls:
+- Level 8.0: exactly two speakers discuss an abstract workplace or social issue through a real decision. Include inference, nuanced stance-taking, a counterpoint, concession, synthesis and a concrete next action.
+- Keep it an authentic interaction: speakers respond to each other, refine claims and reach a decision. Never turn it into a lecture, narration or monologue.
+- Questions should test inference, contrasted viewpoints, conditions and the final decision.`
+	}
+}
+
+func listeningFormInstruction(language string, profile ielts.ListeningProfile) string {
+	if isCantonese(language) {
+		return `For CANTONESE, this must always be a real two-person conversation at every difficulty.
+Use exactly 8 turns with exactly two named speakers. Each speaker must speak at least 3 times and respond directly to the other.
+Use the exact same two speaker labels throughout. Do not add a third person, narrator, temporary role or off-screen speaker.
+Every dialogue item must include gender with the exact value FEMALE or MALE, consistent for that speaker. Speaker labels must be plain text without Markdown such as **, __, backticks or headings.
+Never use a Lecturer, Narrator, Guide, Host, 旁白, 講者, 講解員 or any one-person speech. Higher difficulty must add interaction complexity, not change the conversation into a monologue.`
+	}
+	if profile.Section == 4 {
+		return `If the IELTS controls specify a single-speaker monologue, split it into 8 consecutive lecture chunks from the same speaker; each chunk should develop notes, contrasts, causes, evidence, or examples instead of asking or answering questions.
+For a single-speaker monologue, start directly with lecture content. Do not mention recording booths, upload deadlines, timers, worksheets, classroom logistics, apologies, or interruptions.`
+	}
+	return "For conversational listening sections, each turn should either ask for concrete information, provide clarification, confirm details, or make a practical decision."
 }
 
 func requiredQuizCount(difficulty float64) int {
@@ -173,6 +228,12 @@ func (g *OpenAIGenerator) Generate(ctx context.Context, language string, topic s
 	listeningProfile := ielts.ListeningProfile{}
 	if !readingMode {
 		listeningProfile = ielts.ListeningProfileFromTopic(topic, difficulty)
+		if isCantonese(language) {
+			// Section 3 keeps question defaults conversational. Cantonese difficulty is
+			// defined by its own controls below, not IELTS Section 4's monologue rule.
+			listeningProfile.Section = 3
+			listeningProfile.QuizCount = requiredQuizCount(difficulty)
+		}
 		quizCount = listeningProfile.QuizCount
 	}
 	if readingMode {
@@ -254,19 +315,20 @@ Rules for quiz:
 			`Learning language code: %s. Topic: %s. Scenario brief: %s. Difficulty: %.1f. Mode: %s.
 Scene must be realistic and specific (place, time, roles). Use natural spoken lines for the target language.
 %s
+%s
 Do NOT use classroom/meta narration such as "today's topic is...", "we are discussing...", "welcome to mini theater", or direct topic announcements.
 The first turn must immediately enter a concrete real-life situation with actionable context (for example at a counter, station, office desk, clinic, or phone call).
-For conversational listening sections, each turn should either ask for concrete information, provide clarification, confirm details, or make a practical decision.
-If the IELTS controls specify a single-speaker monologue, split it into 8 consecutive lecture chunks from the same speaker; each chunk should develop notes, contrasts, causes, evidence, or examples instead of asking or answering questions.
-For a single-speaker monologue, start directly with lecture content. Do not mention recording booths, upload deadlines, timers, worksheets, classroom logistics, apologies, or interruptions.
 If the topic is written in Simplified Chinese and the language is CANTONESE, first reinterpret the topic into a natural Hong Kong Cantonese life scenario internally, then write the dialogue in authentic Hong Kong Cantonese.
 For CANTONESE, dialogue text must use genuinely colloquial Hong Kong Cantonese wording and grammar, with natural expressions such as 我哋、你哋、而家、唔該、冇、係咪、喺、嘅、咗、啲、嗰個 when contextually appropriate.
 Do not write Mandarin sentences and merely convert them to Traditional Chinese. For example, avoid dialogue patterns such as 我們現在、請問您、可以嗎、沒有問題、這裡是; rewrite them as natural spoken Cantonese instead.
+For CANTONESE, dialogues[].text must not contain A-Z letters, English words, English abbreviations or bracketed English explanations. Convert common terms into natural Hong Kong Chinese before returning JSON.
+For CANTONESE, keep each turn to one or two naturally connected short sentences. Do not use semicolons, ellipses, bracketed asides or repeated punctuation; use commas only where a real speaker would take a very short breath.
 All dialogue turns must stay consistent with the provided scenario brief.
 Produce exactly 8 dialogue turns and exactly %d listening comprehension single-choice questions based ONLY on those dialogues.
-Use clear speaker roles like 店员/顾客 for Cantonese or Barista/Customer for English.
+For CANTONESE, use exactly two stable gender-identifying speaker labels such as 阿晴（女店員） and 陳先生（男顧客） instead of neutral labels like 店員/顧客. Use the exact same two labels for all 8 turns, with no third person or narrator. Speaker labels must be plain text without Markdown.
+For CANTONESE, every dialogue item must set gender to exactly FEMALE or MALE. The value must match the speaker and remain identical for every turn by that speaker. For English, use clear roles such as Barista/Customer.
 JSON shape:
-{"dialogues":[{"speaker":"...","text":"...","zhSubtitle":"..."}],"quiz":[{"question":"...","options":["...","...","...","..."],"answerKey":"..."}]}
+{"dialogues":[{"speaker":"阿晴（女店員）","gender":"FEMALE","text":"...","zhSubtitle":"..."}],"quiz":[{"question":"...","options":["...","...","...","..."],"answerKey":"..."}]}
 Rules for dialogues.zhSubtitle: must be Simplified Chinese subtitle for the same line.
 For ENGLISH text, zhSubtitle should be natural Chinese translation.
 For CANTONESE text, zhSubtitle should be concise Mandarin-style Chinese paraphrase.
@@ -277,7 +339,7 @@ Rules for quiz:
 4) For CANTONESE, dialogue stays Traditional Chinese, but quiz question and options must use Simplified Chinese.
 5) Avoid generic/meta questions like "主题是什么" unless anchored by concrete dialogue details.
 6) Prefer realistic detail questions: numbers, time, location, preference, constraints, next-step decisions.`,
-			language, cleanTopic, scenarioBrief, difficulty, mode, listeningProfile.PromptBlock(), quizCount,
+			language, cleanTopic, scenarioBrief, difficulty, mode, listeningControlsForGeneration(language, listeningProfile, difficulty), listeningFormInstruction(language, listeningProfile), quizCount,
 		)
 	}
 	model := g.modelName()
@@ -425,6 +487,9 @@ func cantoneseRegenerationInstruction() string {
 The previous dialogue was rejected because it sounded like Mandarin written with Traditional Chinese characters.
 Rewrite every dialogues[].text line as authentic colloquial Hong Kong Cantonese.
 Use Cantonese vocabulary, sentence structure, pronouns and particles naturally (for example 我哋、你哋、而家、唔該、冇、係咪、喺、嘅、咗、啲、嗰個).
+Replace every English word or abbreviation with a natural Cantonese/Chinese equivalent. dialogues[].text must contain no A-Z letters.
+Use exactly two stable speaker labels across all 8 turns, with no Markdown, third person or narrator. Make each speaker's gender explicit through a name, title or role, for example 阿晴（女店員） or 陳先生（男顧客）.
+Every dialogue item must include gender as exactly FEMALE or MALE, matching the speaker and staying consistent across that speaker's turns.
 Keep dialogues[].zhSubtitle and all quiz text in readable Simplified Chinese. Do not put Mandarin wording into dialogues[].text.`
 }
 
@@ -454,6 +519,9 @@ func parseAndValidateModelContent(language string, topic string, readingMode boo
 		quiz = applyReadingQuestionDefaults(metadata.QuestionType, quiz)
 	} else {
 		profile := ielts.ListeningProfileFromTopic(topic, 0)
+		if isCantonese(language) {
+			profile.Section = 3
+		}
 		quiz = applyListeningQuestionDefaults(profile.Section, quiz)
 	}
 	if len(dialogues) == 0 {
@@ -637,13 +705,34 @@ func answerInSet(answer string, allowed []string) bool {
 }
 
 func normalizeGeneratedDialogues(language string, dialogues []domain.Dialogue) []domain.Dialogue {
-	if !strings.EqualFold(strings.TrimSpace(language), "ENGLISH") {
-		return dialogues
-	}
 	for i := range dialogues {
-		dialogues[i].Text = contentquality.NormalizeEnglishSpacing(dialogues[i].Text)
+		dialogues[i].Speaker = contentquality.NormalizeSpeakerLabel(dialogues[i].Speaker)
+		dialogues[i].Gender = normalizeDialogueGender(dialogues[i].Gender)
+	}
+	switch strings.ToUpper(strings.TrimSpace(language)) {
+	case "ENGLISH":
+		for i := range dialogues {
+			dialogues[i].Text = contentquality.NormalizeEnglishSpacing(dialogues[i].Text)
+		}
+	case "CANTONESE":
+		for i := range dialogues {
+			dialogues[i].Text = contentquality.NormalizeCantoneseSpeechText(dialogues[i].Text)
+		}
 	}
 	return dialogues
+}
+
+func normalizeDialogueGender(value string) string {
+	clean := strings.ToUpper(strings.TrimSpace(value))
+	clean = strings.Trim(clean, "`*_#：:()（）[]【】 ")
+	switch clean {
+	case "FEMALE", "F", "WOMAN", "GIRL", "女", "女性", "女聲", "女声":
+		return "FEMALE"
+	case "MALE", "M", "MAN", "BOY", "男", "男性", "男聲", "男声":
+		return "MALE"
+	default:
+		return ""
+	}
 }
 
 func normalizeGeneratedQuiz(language string, quiz []domain.QuizQuestion) []domain.QuizQuestion {
@@ -712,6 +801,14 @@ func validateGeneratedOutput(language string, readingMode bool, dialogues []doma
 }
 
 func validateCantoneseDialogues(dialogues []domain.Dialogue) error {
+	if len(dialogues) != 8 {
+		return fmt.Errorf("%w: dialogue_turns=%d want=8", errGeneratedCantoneseQuality, len(dialogues))
+	}
+	forbiddenSpeakerTerms := []string{
+		"lecturer", "narrator", "guide", "host", "speaker", "旁白", "講者", "讲者", "講解", "讲解", "主持",
+	}
+	speakerTurns := make(map[string]int)
+	speakerGenders := make(map[string]string)
 	markers := []string{
 		"我哋", "你哋", "佢哋", "而家", "唔該", "唔好", "唔係", "唔知", "冇", "係咪",
 		"喺", "嘅", "咗", "啲", "嗰個", "呢個", "邊個", "乜嘢", "點解", "點樣",
@@ -727,9 +824,31 @@ func validateCantoneseDialogues(dialogues []domain.Dialogue) error {
 	markerHits := 0
 	mandarinHits := 0
 	for _, dialogue := range dialogues {
+		speaker := contentquality.NormalizeSpeakerLabel(dialogue.Speaker)
+		if speaker == "" {
+			return fmt.Errorf("%w: dialogue has an empty speaker", errGeneratedCantoneseQuality)
+		}
+		lowerSpeaker := strings.ToLower(speaker)
+		for _, term := range forbiddenSpeakerTerms {
+			if strings.Contains(lowerSpeaker, term) {
+				return fmt.Errorf("%w: forbidden monologue speaker=%q", errGeneratedCantoneseQuality, speaker)
+			}
+		}
+		speakerTurns[lowerSpeaker]++
+		gender := normalizeDialogueGender(dialogue.Gender)
+		if gender == "" {
+			return fmt.Errorf("%w: speaker=%q has missing or invalid gender", errGeneratedCantoneseQuality, speaker)
+		}
+		if existing := speakerGenders[lowerSpeaker]; existing != "" && existing != gender {
+			return fmt.Errorf("%w: speaker=%q has inconsistent gender %s/%s", errGeneratedCantoneseQuality, speaker, existing, gender)
+		}
+		speakerGenders[lowerSpeaker] = gender
 		text := strings.TrimSpace(dialogue.Text)
 		if text == "" {
 			continue
+		}
+		if contentquality.ContainsLatinLetters(text) {
+			return fmt.Errorf("%w: dialogue contains English text speaker=%q", errGeneratedCantoneseQuality, speaker)
 		}
 		nonEmptyLines++
 		lineHasMarker := false
@@ -749,6 +868,18 @@ func validateCantoneseDialogues(dialogues []domain.Dialogue) error {
 	if nonEmptyLines == 0 {
 		return fmt.Errorf("%w: no dialogue text", errGeneratedCantoneseQuality)
 	}
+	if len(speakerTurns) != 2 {
+		return fmt.Errorf("%w: speaker_count=%d want=2", errGeneratedCantoneseQuality, len(speakerTurns))
+	}
+	mainSpeakers := 0
+	for _, turns := range speakerTurns {
+		if turns >= 3 {
+			mainSpeakers++
+		}
+	}
+	if mainSpeakers != 2 {
+		return fmt.Errorf("%w: main_speakers=%d want=2", errGeneratedCantoneseQuality, mainSpeakers)
+	}
 	minimumMarkerLines := max(2, (nonEmptyLines+1)/2)
 	if markerLines < minimumMarkerLines || markerHits < minimumMarkerLines || mandarinHits >= 2 {
 		return fmt.Errorf("%w: marker_lines=%d/%d marker_hits=%d mandarin_hits=%d", errGeneratedCantoneseQuality, markerLines, nonEmptyLines, markerHits, mandarinHits)
@@ -759,13 +890,14 @@ func validateCantoneseDialogues(dialogues []domain.Dialogue) error {
 func (g *OpenAIGenerator) rewriteDialoguesToCantonese(ctx context.Context, dialogues []domain.Dialogue) ([]domain.Dialogue, error) {
 	type rewriteDialogue struct {
 		Speaker    string `json:"speaker"`
+		Gender     string `json:"gender"`
 		Text       string `json:"text"`
 		ZhSubtitle string `json:"zhSubtitle"`
 	}
 	input := make([]rewriteDialogue, 0, len(dialogues))
 	for _, dialogue := range dialogues {
 		input = append(input, rewriteDialogue{
-			Speaker: dialogue.Speaker, Text: dialogue.Text, ZhSubtitle: dialogue.ZhSubtitle,
+			Speaker: dialogue.Speaker, Gender: dialogue.Gender, Text: dialogue.Text, ZhSubtitle: dialogue.ZhSubtitle,
 		})
 	}
 	rawInput, err := json.Marshal(map[string]any{"dialogues": input})
@@ -777,11 +909,11 @@ func (g *OpenAIGenerator) rewriteDialoguesToCantonese(ctx context.Context, dialo
 		"messages": []map[string]string{
 			{
 				"role":    "system",
-				"content": "你係專業香港粵語編劇。將對白改寫成自然、地道、口語化嘅香港粵語，唔可以只將普通話轉做繁體字。只返回完整 JSON。",
+				"content": "你係專業香港粵語編劇。將對白改寫成自然、地道、口語化嘅香港粵語，唔可以只將普通話轉做繁體字，亦唔可以保留英文單字或縮寫。全程只可以有兩個角色，角色名稱要穩定並清楚反映性別。每輪都要返回 FEMALE 或 MALE。只返回完整 JSON。",
 			},
 			{
 				"role":    "user",
-				"content": `Rewrite the following dialogues[].text into authentic colloquial Hong Kong Cantonese in Traditional Chinese. Preserve every factual detail, intent, speaker, turn count and order. Use natural Cantonese grammar and expressions such as 我哋、你哋、而家、唔該、冇、係咪、喺、嘅、咗、啲 where appropriate. Keep zhSubtitle as concise Mandarin-style Simplified Chinese. Return exactly {"dialogues":[{"speaker":"...","text":"...","zhSubtitle":"..."}]}. Input: ` + string(rawInput),
+				"content": `Rewrite the following dialogues[].text into authentic colloquial Hong Kong Cantonese in Traditional Chinese. Preserve every factual detail, intent, turn count and order. Use exactly two stable speakers and never add a third person or narrator. Replace every English word and abbreviation with a natural Cantonese/Chinese equivalent, so text contains no A-Z letters. Keep each speaker stable, plain text without Markdown, and use a gender-identifying name, title or role. Set every item's gender to exactly FEMALE or MALE and keep it consistent for that speaker. Use natural Cantonese grammar and expressions such as 我哋、你哋、而家、唔該、冇、係咪、喺、嘅、咗、啲 where appropriate. Keep zhSubtitle as concise Mandarin-style Simplified Chinese. Return exactly {"dialogues":[{"speaker":"阿晴（女店員）","gender":"FEMALE","text":"...","zhSubtitle":"..."}]}. Input: ` + string(rawInput),
 			},
 		},
 		"temperature": 0.2,
@@ -799,11 +931,15 @@ func (g *OpenAIGenerator) rewriteDialoguesToCantonese(ctx context.Context, dialo
 		if strings.TrimSpace(rewritten[i].Speaker) == "" {
 			rewritten[i].Speaker = dialogues[i].Speaker
 		}
+		if normalizeDialogueGender(rewritten[i].Gender) == "" {
+			rewritten[i].Gender = dialogues[i].Gender
+		}
 		if strings.TrimSpace(rewritten[i].ZhSubtitle) == "" {
 			rewritten[i].ZhSubtitle = dialogues[i].ZhSubtitle
 		}
 		rewritten[i].Timestamp = dialogues[i].Timestamp
 	}
+	rewritten = normalizeGeneratedDialogues("CANTONESE", rewritten)
 	if err := validateCantoneseDialogues(rewritten); err != nil {
 		return nil, err
 	}
@@ -1155,6 +1291,8 @@ func extractModelTextFromResponse(body []byte) (string, error) {
 
 type genDialogue struct {
 	Speaker    string `json:"speaker"`
+	Gender     string `json:"gender"`
+	Sex        string `json:"sex"`
 	Text       string `json:"text"`
 	ZhSubtitle string `json:"zhSubtitle"`
 	SubtitleZh string `json:"subtitleZh"`
@@ -1308,6 +1446,7 @@ func parseDialogueAliases(content string) ([]domain.Dialogue, []domain.QuizQuest
 			continue
 		}
 		speaker := asString(firstNonNil(entry["speaker"], entry["role"], entry["character"], entry["name"]))
+		gender := asString(firstNonNil(entry["gender"], entry["sex"]))
 		text := asString(firstNonNil(entry["text"], entry["content"], entry["utterance"], entry["line"], entry["message"], entry["reply"]))
 		zh := asString(firstNonNil(entry["zhSubtitle"], entry["subtitle"], entry["translation"], entry["zh"], entry["中文"]))
 		if text == "" {
@@ -1318,6 +1457,7 @@ func parseDialogueAliases(content string) ([]domain.Dialogue, []domain.QuizQuest
 		}
 		dialogues = append(dialogues, domain.Dialogue{
 			Speaker:    speaker,
+			Gender:     normalizeDialogueGender(gender),
 			Text:       text,
 			ZhSubtitle: zh,
 			Timestamp:  float64(i) * 2.0,
@@ -1685,6 +1825,7 @@ func toDialogues(items []genDialogue) []domain.Dialogue {
 		}
 		result = append(result, domain.Dialogue{
 			Speaker:    item.Speaker,
+			Gender:     normalizeDialogueGender(firstNonEmptyString(item.Gender, item.Sex)),
 			Text:       item.Text,
 			ZhSubtitle: zhSubtitle,
 			AudioURL:   "",

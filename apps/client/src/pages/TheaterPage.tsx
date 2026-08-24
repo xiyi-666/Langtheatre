@@ -15,7 +15,7 @@ import {
   TimerReset
 } from "lucide-react";
 import { getSharedTheater, getTheater, toggleFavorite } from "../api";
-import { playClip } from "../audio";
+import { playClip, preloadClip } from "../audio";
 import { useAppStore } from "../store";
 
 const THEATER_STATUS_POLL_MS = 1500;
@@ -26,7 +26,7 @@ export function TheaterPage() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [autoPlay, setAutoPlay] = useState(false);
-  const [playbackRate, setPlaybackRate] = useState<0.8 | 1 | 1.2>(1);
+  const [playbackRate, setPlaybackRate] = useState<0.8 | 1 | 1.2 | 1.5 | 2>(1);
   const [loopCurrent, setLoopCurrent] = useState(false);
   const [showSubtitle, setShowSubtitle] = useState(true);
   const [showZhSubtitle, setShowZhSubtitle] = useState(false);
@@ -208,6 +208,14 @@ export function TheaterPage() {
     },
     [playbackRate, theater]
   );
+
+  useEffect(() => {
+    if (!theater || theater.dialogues.length === 0) return;
+    for (let index = activeIndex; index <= Math.min(activeIndex + 1, theater.dialogues.length - 1); index += 1) {
+      const audioUrl = theater.dialogues[index]?.audioUrl;
+      if (audioUrl) preloadClip(audioUrl);
+    }
+  }, [activeIndex, theater]);
 
   async function handlePlayCurrent() {
     const played = await playDialogue(activeIndex);
@@ -492,6 +500,20 @@ export function TheaterPage() {
               onClick={() => setPlaybackRate(1.2)}
             >
               <TimerReset size={14} /> 1.2x
+            </button>
+            <button
+              type="button"
+              className={playbackRate === 1.5 ? "control-chip active" : "control-chip"}
+              onClick={() => setPlaybackRate(1.5)}
+            >
+              <TimerReset size={14} /> 1.5x
+            </button>
+            <button
+              type="button"
+              className={playbackRate === 2 ? "control-chip active" : "control-chip"}
+              onClick={() => setPlaybackRate(2)}
+            >
+              <TimerReset size={14} /> 2.0x
             </button>
           </div>
           {gestureHint ? <p className="gesture-hint">{gestureHint}</p> : null}

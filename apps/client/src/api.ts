@@ -422,6 +422,19 @@ export async function createVoiceProfile(input: {
   return data.createVoiceProfile;
 }
 
+export async function approveVoiceProfile(id: string): Promise<VoiceProfile> {
+  await ensureAccessToken();
+  const data = await request<{ approveVoiceProfile: VoiceProfile }>(
+    `mutation ApproveVoiceProfile($id: ID!) {
+      approveVoiceProfile(id: $id) {
+        id name prompt language provider model previewAudioUrl status generationMessage createdAt
+      }
+    }`,
+    { id }
+  );
+  return data.approveVoiceProfile;
+}
+
 export async function deleteVoiceProfile(id: string): Promise<void> {
   await ensureAccessToken();
   await request<{ deleteVoiceProfile: boolean }>(
@@ -441,7 +454,7 @@ export async function generateTheater(input: {
   await ensureAccessToken();
   const data = await request<{ generateTheater: Theater }>(
     `mutation Generate($input: GenerateTheaterInput!) {
-		generateTheater(input: $input) { id language topic difficulty mode status generationProgress generationMessage isFavorite shareCode sceneDescription characters { name role color } dialogues { speaker text zhSubtitle audioUrl timestamp } quizQuestions { question options } }
+		generateTheater(input: $input) { id language topic difficulty mode status generationProgress generationMessage isFavorite shareCode sceneDescription characters { name role color } dialogues { speaker gender text zhSubtitle audioUrl timestamp } quizQuestions { question options } }
     }`,
     { input }
   );
@@ -450,7 +463,7 @@ export async function generateTheater(input: {
 
 export async function getTheater(id: string): Promise<Theater> {
   const data = await request<{ theater: Theater }>(
-		`query Theater($id: ID!) { theater(id: $id) { id language topic difficulty mode status generationProgress generationMessage isFavorite shareCode sceneDescription characters { name role color } dialogues { speaker text zhSubtitle audioUrl timestamp } quizQuestions { question options } } }`,
+		`query Theater($id: ID!) { theater(id: $id) { id language topic difficulty mode status generationProgress generationMessage isFavorite shareCode sceneDescription characters { name role color } dialogues { speaker gender text zhSubtitle audioUrl timestamp } quizQuestions { question options } } }`,
     { id }
   );
   return data.theater;
@@ -462,7 +475,7 @@ export async function getSharedTheater(shareCode: string): Promise<Theater> {
       sharedTheater(shareCode: $shareCode) {
 		id language topic difficulty mode status generationProgress generationMessage isFavorite shareCode sceneDescription
         characters { name role color }
-        dialogues { speaker text zhSubtitle audioUrl timestamp }
+		dialogues { speaker gender text zhSubtitle audioUrl timestamp }
         quizQuestions { question options }
       }
     }`,
@@ -544,7 +557,7 @@ export async function startRoleplay(theaterId: string, userRole: string): Promis
   const data = await request<{ startRoleplay: RoleplaySession }>(
     `mutation StartRoleplay($theaterId: ID!, $userRole: String!) {
       startRoleplay(theaterId: $theaterId, userRole: $userRole) {
-        id theaterId userRole turnIndex currentScore status processingMessage finalFeedback transcript { speaker text zhSubtitle audioUrl timestamp }
+		id theaterId userRole turnIndex currentScore status processingMessage finalFeedback transcript { speaker gender text zhSubtitle audioUrl timestamp }
       }
     }`,
     { theaterId, userRole }
@@ -557,7 +570,7 @@ export async function submitRoleplayReply(sessionId: string, text: string): Prom
   const data = await request<{ submitRoleplayReply: RoleplaySession }>(
     `mutation SubmitRoleplay($sessionId: ID!, $text: String!) {
       submitRoleplayReply(sessionId: $sessionId, text: $text) {
-        id theaterId userRole turnIndex currentScore status processingMessage finalFeedback transcript { speaker text zhSubtitle audioUrl timestamp }
+		id theaterId userRole turnIndex currentScore status processingMessage finalFeedback transcript { speaker gender text zhSubtitle audioUrl timestamp }
       }
     }`,
     { sessionId, text }
@@ -570,7 +583,7 @@ export async function submitRoleplayAudio(sessionId: string, audioDataUrl: strin
   const data = await request<{ submitRoleplayAudio: RoleplaySession }>(
     `mutation SubmitRoleplayAudio($sessionId: ID!, $audioDataUrl: String!, $language: String!) {
       submitRoleplayAudio(sessionId: $sessionId, audioDataUrl: $audioDataUrl, language: $language) {
-        id theaterId userRole turnIndex currentScore status processingMessage finalFeedback transcript { speaker text zhSubtitle audioUrl timestamp }
+		id theaterId userRole turnIndex currentScore status processingMessage finalFeedback transcript { speaker gender text zhSubtitle audioUrl timestamp }
       }
     }`, { sessionId, audioDataUrl, language });
   return data.submitRoleplayAudio;
@@ -578,7 +591,7 @@ export async function submitRoleplayAudio(sessionId: string, audioDataUrl: strin
 
 export async function getRoleplaySession(sessionId: string): Promise<RoleplaySession> {
   await ensureAccessToken();
-  const data = await request<{ roleplaySession: RoleplaySession }>(`query RoleplaySession($sessionId: ID!) { roleplaySession(sessionId: $sessionId) { id theaterId userRole turnIndex currentScore status processingMessage finalFeedback transcript { speaker text zhSubtitle audioUrl timestamp } } }`, { sessionId });
+	const data = await request<{ roleplaySession: RoleplaySession }>(`query RoleplaySession($sessionId: ID!) { roleplaySession(sessionId: $sessionId) { id theaterId userRole turnIndex currentScore status processingMessage finalFeedback transcript { speaker gender text zhSubtitle audioUrl timestamp } } }`, { sessionId });
   return data.roleplaySession;
 }
 
@@ -587,7 +600,7 @@ export async function endRoleplay(sessionId: string): Promise<RoleplaySession> {
   const data = await request<{ endRoleplay: RoleplaySession }>(
     `mutation EndRoleplay($sessionId: ID!) {
       endRoleplay(sessionId: $sessionId) {
-        id theaterId userRole turnIndex currentScore status processingMessage finalFeedback transcript { speaker text zhSubtitle audioUrl timestamp }
+		id theaterId userRole turnIndex currentScore status processingMessage finalFeedback transcript { speaker gender text zhSubtitle audioUrl timestamp }
       }
     }`,
     { sessionId }

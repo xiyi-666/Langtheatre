@@ -181,7 +181,7 @@ export function CoursesPage() {
                       type="button"
                       className="tag-chip"
                       disabled={!unlocked}
-                      onClick={() => navigate(`/generate?language=${language}&topic=${encodeURIComponent(module)}`)}
+                      onClick={() => navigate(`/generate?language=${language}&stage=${stageIndex}&topic=${encodeURIComponent(module)}`)}
                     >
                       {module}
                     </button>

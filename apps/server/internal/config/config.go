@@ -17,6 +17,7 @@ type Config struct {
 	DatabaseURL                  string
 	SQLitePath                   string
 	MigrationsDir                string
+	MediaDir                     string
 	OpenAIAPIKey                 string
 	OpenAIModel                  string
 	OpenAIBaseURL                string
@@ -31,6 +32,7 @@ type Config struct {
 	TTSReturnJSON                bool
 	TTSTimeoutSeconds            int
 	TTSMaxRetries                int
+	TTSMaxConcurrency            int
 	ASRProvider                  string
 	ASRAPIURL                    string
 	ASRAPIKey                    string
@@ -90,6 +92,7 @@ func Load() Config {
 		databaseURL = getenv("DATABASE_URL", "")
 	}
 	migrationsDir := getenv("MIGRATIONS_DIR", "migrations")
+	mediaDir := getenv("MEDIA_DIR", "media")
 	sqlitePath := getenv("SQLITE_PATH", "")
 	openAIAPIKey := getenv("OPENAI_API_KEY", "")
 	openAIModel := getenv("OPENAI_MODEL", "gpt-5.4")
@@ -106,6 +109,7 @@ func Load() Config {
 	ttsReturnJSON := getenvBool("TTS_RETURN_JSON", true)
 	ttsTimeoutSeconds := getenvInt("TTS_TIMEOUT_SECONDS", 300)
 	ttsMaxRetries := getenvInt("TTS_MAX_RETRIES", 1)
+	ttsMaxConcurrency := getenvInt("TTS_MAX_CONCURRENCY", 2)
 	asrProvider := getenv("ASR_PROVIDER", "XIAOMI")
 	asrAPIURL := getenv("ASR_API_URL", defaultASRBaseURL(asrProvider))
 	asrAPIKey := getenv("ASR_API_KEY", "")
@@ -164,6 +168,7 @@ func Load() Config {
 		DatabaseURL:                  databaseURL,
 		SQLitePath:                   sqlitePath,
 		MigrationsDir:                migrationsDir,
+		MediaDir:                     mediaDir,
 		OpenAIAPIKey:                 openAIAPIKey,
 		OpenAIModel:                  openAIModel,
 		OpenAIBaseURL:                openAIBaseURL,
@@ -178,6 +183,7 @@ func Load() Config {
 		TTSReturnJSON:                ttsReturnJSON,
 		TTSTimeoutSeconds:            ttsTimeoutSeconds,
 		TTSMaxRetries:                ttsMaxRetries,
+		TTSMaxConcurrency:            ttsMaxConcurrency,
 		ASRProvider:                  asrProvider,
 		ASRAPIURL:                    asrAPIURL,
 		ASRAPIKey:                    asrAPIKey,

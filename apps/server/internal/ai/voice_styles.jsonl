@@ -3,3 +3,10 @@
 {"style":"播音男生","instruction":"请用播音男生音色说","aliases":["播音男生","broadcast","male-announcer"]}
 {"style":"沉稳大叔","instruction":"请用沉稳大叔音色说","aliases":["沉稳大叔","mature-male","uncle"]}
 {"style":"御姐音色","instruction":"请用御姐音色说","aliases":["御姐音色","mature-female","queen-female"]}
+{"style":"清新少女","instruction":"请用清新少女音色说，声线轻盈明亮，语气自然亲切","aliases":["清新少女","fresh-girl","bright-female"]}
+{"style":"知性姐姐","instruction":"请用知性姐姐音色说，沉静温和，表达清晰有分寸","aliases":["知性姐姐","intellectual-female","calm-sister"]}
+{"style":"活力少年","instruction":"请用活力少年音色说，精神饱满但不夸张，像日常聊天","aliases":["活力少年","energetic-boy","young-male"]}
+{"style":"港风店员","instruction":"请用香港店员般热情利落的声音说，自然友善、不用播报腔","aliases":["港风店员","hongkong-clerk","friendly-clerk"]}
+{"style":"电台暖男","instruction":"请用电台暖男音色说，低沉温暖、松弛自然，停顿简洁","aliases":["电台暖男","radio-male","warm-male"]}
+{"style":"冷静导师","instruction":"请用冷静导师音色说，耐心清楚、节奏稳定，适合讲解与反馈","aliases":["冷静导师","calm-mentor","teacher"]}
+{"style":"俏皮同学","instruction":"请用俏皮同学音色说，轻快有互动感，但不过分撒娇或拖音","aliases":["俏皮同学","playful-peer","lively-peer"]}

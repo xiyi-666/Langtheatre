@@ -31,6 +31,33 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+async function inspectAudioSample(file: File): Promise<{ duration: number; rms: number; peak: number }> {
+  const audioContext = new AudioContext();
+  try {
+    const buffer = await audioContext.decodeAudioData(await file.arrayBuffer());
+    const stride = Math.max(1, Math.floor(buffer.length / 100000));
+    let sumSquares = 0;
+    let samples = 0;
+    let peak = 0;
+    for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+      const data = buffer.getChannelData(channel);
+      for (let index = 0; index < data.length; index += stride) {
+        const amplitude = Math.abs(data[index]);
+        sumSquares += amplitude * amplitude;
+        peak = Math.max(peak, amplitude);
+        samples += 1;
+      }
+    }
+    return {
+      duration: buffer.duration,
+      rms: samples > 0 ? Math.sqrt(sumSquares / samples) : 0,
+      peak
+    };
+  } finally {
+    await audioContext.close().catch(() => undefined);
+  }
+}
+
 export function ProfilePage() {
 	const navigate = useNavigate();
   const user = useAppStore((s) => s.user);
@@ -310,7 +337,30 @@ export function ProfilePage() {
       event.target.value = "";
       return;
     }
+    const fileName = file.name.toLowerCase();
+    const supportedFormat = ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"].includes(file.type) || fileName.endsWith(".mp3") || fileName.endsWith(".wav");
+    if (!supportedFormat) {
+      setTTSMessage("小米 VoiceClone 目前只接受 MP3 或 WAV 参考音频。");
+      event.target.value = "";
+      return;
+    }
     try {
+      const inspection = await inspectAudioSample(file);
+      if (inspection.duration < 6) {
+        setTTSMessage("参考音频至少需要 6 秒；推荐使用 15–30 秒的单人自然粤语或英语语料。");
+        event.target.value = "";
+        return;
+      }
+      if (inspection.duration > 60) {
+        setTTSMessage("参考音频建议控制在 60 秒以内，过长会增加处理时间且不一定提升音色稳定性。");
+        event.target.value = "";
+        return;
+      }
+      if (inspection.rms < 0.006 || inspection.peak < 0.03) {
+        setTTSMessage("参考音频音量过低或接近静音，请换一段清晰、连续的单人语音。");
+        event.target.value = "";
+        return;
+      }
       const dataUrl = await readFileAsDataUrl(file);
       if (!isAudioDataUrl(dataUrl)) {
         setTTSMessage("当前文件不是可识别的音频格式，请重新上传。");
@@ -319,7 +369,11 @@ export function ProfilePage() {
       }
       setTTSVoice(dataUrl);
       setTTSVoiceFileLabel(file.name);
-      setTTSMessage("参考音频已载入，点击“保存 TTS 配置”后生效。");
+      const notes = [
+        inspection.duration < 15 ? "时长略短，推荐 15–30 秒" : "时长合适",
+        inspection.peak >= 0.995 ? "检测到可能削波，请确认没有爆音" : "音量正常"
+      ];
+      setTTSMessage(`参考音频已载入（${inspection.duration.toFixed(1)} 秒，${notes.join("；")}），点击“保存 TTS 配置”后生效。`);
     } catch (e) {
       console.error("read xiaomi voice clone file failed", e);
       setTTSMessage("参考音频读取失败，请换一个文件再试。");
@@ -626,10 +680,10 @@ export function ProfilePage() {
                       <>
                         <label>
                           <span>{currentXiaomiModelPreset.voiceFieldLabel}</span>
-                          <input type="file" accept="audio/*" onChange={handleXiaomiVoiceCloneUpload} />
+                          <input type="file" accept=".mp3,.wav,audio/mpeg,audio/wav" onChange={handleXiaomiVoiceCloneUpload} />
                         </label>
                         <p style={{ margin: "-4px 0 0", color: "var(--ink-700)" }}>
-                          {ttsVoiceFileLabel || (isAudioDataUrl(ttsVoice) ? "已保存参考音频样本" : "尚未上传参考音频")}。支持 10MB 以内音频样本，保存后用于 VoiceClone。
+                          {ttsVoiceFileLabel || (isAudioDataUrl(ttsVoice) ? "已保存参考音频样本" : "尚未上传参考音频")}。支持 MP3/WAV、10MB 以内音频；推荐单人、无音乐、15–30 秒的自然语音，保存后用于 VoiceClone。
                         </p>
                       </>
                     ) : null}

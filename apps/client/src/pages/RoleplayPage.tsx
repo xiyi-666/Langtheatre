@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { MessageSquare, Mic2, PlayCircle, Square, SquareCheckBig, Volume2 } from "lucide-react";
 import { endRoleplay, getRoleplaySession, getTheater, startRoleplay, submitRoleplayAudio, submitRoleplayReply } from "../api";
 import { AICreditCostNotice } from "../components/AICreditCostNotice";
+import { resolveAudioUrl } from "../audio";
 import { recordingToWavDataURL } from "../audioRecorder";
 import { useAppStore } from "../store";
 import { isMiniProgramEdition } from "../edition";
@@ -187,7 +188,7 @@ export function RoleplayPage() {
                   animate={{ opacity: 1, y: 0 }}
                 >
                   <strong>{item.speaker}</strong> {item.text}
-                  {item.audioUrl ? <audio className="roleplay-audio" controls preload="none" src={item.audioUrl}><Volume2 size={14} /> 语音回复</audio> : null}
+                  {item.audioUrl ? <audio className="roleplay-audio" controls controlsList="nodownload noplaybackrate" preload="none" src={resolveAudioUrl(item.audioUrl)}><Volume2 size={14} /> 语音回复</audio> : null}
                   {showZhSubtitle && item.speaker === "AI-Role" && item.zhSubtitle ? (
                     <p style={{ margin: "4px 0 0", fontSize: 13, opacity: 0.8 }}>{item.zhSubtitle}</p>
                   ) : null}

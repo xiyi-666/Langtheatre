@@ -237,6 +237,7 @@ type VoiceProfile struct {
 
 type Dialogue struct {
 	Speaker    string
+	Gender     string
 	Text       string
 	ZhSubtitle string
 	AudioURL   string

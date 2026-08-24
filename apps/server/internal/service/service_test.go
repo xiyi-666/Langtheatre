@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,31 @@ type sequenceTTS struct {
 	urls  []string
 	errs  []error
 	calls int
+}
+
+type contextualRecordingTTS struct {
+	context string
+	voice   string
+}
+
+type voiceDesignTTS struct{}
+
+func (voiceDesignTTS) Synthesize(_ context.Context, _ string, _ string, _ string) (string, error) {
+	return "fallback", nil
+}
+
+func (voiceDesignTTS) DesignVoice(_ context.Context, _ string, _ string) (string, error) {
+	return "data:audio/mpeg;base64,AAAA", nil
+}
+
+func (t *contextualRecordingTTS) Synthesize(_ context.Context, _ string, _ string, _ string) (string, error) {
+	return "fallback", nil
+}
+
+func (t *contextualRecordingTTS) SynthesizeWithContext(_ context.Context, _ string, _ string, voice string, dialogueContext string) (string, error) {
+	t.context = dialogueContext
+	t.voice = voice
+	return "contextual", nil
 }
 
 func (s *sequenceTTS) Synthesize(_ context.Context, _ string, _ string, _ string) (string, error) {
@@ -34,6 +60,253 @@ func (s *sequenceTTS) Synthesize(_ context.Context, _ string, _ string, _ string
 
 type failingGenerator struct {
 	err error
+}
+
+type blockingTTS struct {
+	mu      sync.Mutex
+	active  int
+	maximum int
+	started chan struct{}
+	release <-chan struct{}
+}
+
+func (t *blockingTTS) Synthesize(_ context.Context, _ string, _ string, _ string) (string, error) {
+	t.mu.Lock()
+	t.active++
+	if t.active > t.maximum {
+		t.maximum = t.active
+	}
+	t.mu.Unlock()
+	t.started <- struct{}{}
+	<-t.release
+	t.mu.Lock()
+	t.active--
+	t.mu.Unlock()
+	return "audio", nil
+}
+
+func TestTTSConcurrencyIsGloballyLimited(t *testing.T) {
+	release := make(chan struct{})
+	tts := &blockingTTS{started: make(chan struct{}, 3), release: release}
+	svc := NewWithOptions(store.NewMemoryStore(), nil, nil, tts, "secret", Options{TTSMaxConcurrency: 2})
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = svc.synthesizeWithTTSLimit(context.Background(), "hello", "ENGLISH", "")
+		}()
+	}
+	for range 2 {
+		select {
+		case <-tts.started:
+		case <-time.After(time.Second):
+			t.Fatal("expected two TTS calls to start")
+		}
+	}
+	select {
+	case <-tts.started:
+		t.Fatal("third TTS call bypassed the configured concurrency limit")
+	default:
+	}
+	close(release)
+	wg.Wait()
+	if tts.maximum != 2 {
+		t.Fatalf("maximum concurrent TTS calls = %d, want 2", tts.maximum)
+	}
+}
+
+func TestSynthesizeWithTTSContextLimitUsesOptionalContextInterface(t *testing.T) {
+	tts := &contextualRecordingTTS{}
+	svc := NewWithOptions(store.NewMemoryStore(), nil, nil, tts, "secret", Options{TTSMaxConcurrency: 1})
+	audio, err := svc.synthesizeWithTTSContextLimit(context.Background(), "早晨", "CANTONESE", "活力少年", "上一句係阿欣問路")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audio != "contextual" || tts.voice != "活力少年" || !strings.Contains(tts.context, "上一句係阿欣") {
+		t.Fatalf("contextual synthesis was not used: audio=%q voice=%q context=%q", audio, tts.voice, tts.context)
+	}
+}
+
+func TestBuildDialogueTTSContextIncludesSceneAndPreviousTurn(t *testing.T) {
+	dialogues := []domain.Dialogue{
+		{Speaker: "阿欣（女顧客）", Text: "唔該，而家仲有冇位呀？"},
+		{Speaker: "阿明（男店員）", Text: "有呀，呢邊請。"},
+	}
+	got := buildDialogueTTSContext("茶餐厅点餐", dialogues, 1)
+	for _, want := range []string{"茶餐廳點餐", "阿明（男店員）", "上一句係阿欣（女顧客）", "而家仲有冇位"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("buildDialogueTTSContext() = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestAssignDialogueVoiceStylesKeepsCharactersConsistentAndDistinct(t *testing.T) {
+	dialogues := []domain.Dialogue{
+		{Speaker: "顾客"},
+		{Speaker: "顾客"},
+		{Speaker: "店员"},
+		{Speaker: "顾客"},
+		{Speaker: "店员"},
+	}
+	styles := assignDialogueVoiceStyles(dialogues, [2]string{"温柔女生", "播音男生"}, nil)
+	if len(styles) != len(dialogues) {
+		t.Fatalf("style count = %d, want %d", len(styles), len(dialogues))
+	}
+	if styles[0] != styles[1] || styles[0] != styles[3] {
+		t.Fatalf("customer styles are not stable: %#v", styles)
+	}
+	if styles[2] != styles[4] {
+		t.Fatalf("staff styles are not stable: %#v", styles)
+	}
+	if styles[0] == styles[2] {
+		t.Fatalf("distinct speakers received the same automatic style: %#v", styles)
+	}
+}
+
+func TestAssignDialogueVoiceStylesMatchesExplicitSpeakerGender(t *testing.T) {
+	dialogues := []domain.Dialogue{
+		{Speaker: "陳小姐（女顧客）"},
+		{Speaker: "王先生（男店員）"},
+		{Speaker: "陳小姐（女顧客）"},
+		{Speaker: "王先生（男店員）"},
+	}
+	styles := assignDialogueVoiceStyles(dialogues, [2]string{"播音男生", "温柔女生"}, nil)
+	if automaticVoiceStyleGender(styles[0]) != dialogueVoiceGenderFemale || automaticVoiceStyleGender(styles[2]) != dialogueVoiceGenderFemale {
+		t.Fatalf("female speaker received non-female styles: %#v", styles)
+	}
+	if automaticVoiceStyleGender(styles[1]) != dialogueVoiceGenderMale || automaticVoiceStyleGender(styles[3]) != dialogueVoiceGenderMale {
+		t.Fatalf("male speaker received non-male styles: %#v", styles)
+	}
+}
+
+func TestAssignDialogueVoiceStylesPrefersGeneratedGenderAndNormalizesSpeaker(t *testing.T) {
+	dialogues := []domain.Dialogue{
+		{Speaker: "**梁姐（女侍應）**", Gender: "FEMALE"},
+		{Speaker: "陳先生（男顧客）", Gender: "MALE"},
+		{Speaker: "梁姐（女侍應）", Gender: "FEMALE"},
+		{Speaker: "陳先生（男顧客）", Gender: "MALE"},
+	}
+	styles := assignDialogueVoiceStyles(dialogues, [2]string{"播音男生", "温柔女生"}, nil)
+	if automaticVoiceStyleGender(styles[0]) != dialogueVoiceGenderFemale || styles[0] != styles[2] {
+		t.Fatalf("梁姐 should keep one female voice: %#v", styles)
+	}
+	if automaticVoiceStyleGender(styles[1]) != dialogueVoiceGenderMale || styles[1] != styles[3] {
+		t.Fatalf("陳先生 should keep one male voice: %#v", styles)
+	}
+	if styles[0] == styles[1] {
+		t.Fatalf("two speakers should not share one automatic voice: %#v", styles)
+	}
+}
+
+func TestAssignDialogueVoiceStylesInfersGenderFromVocatives(t *testing.T) {
+	dialogues := []domain.Dialogue{
+		{Speaker: "店員", Text: "小姐，呢邊可以落單。"},
+		{Speaker: "顧客", Text: "唔該晒，先生，我想要熱奶茶。"},
+		{Speaker: "店員", Text: "好呀，陣間送過嚟。"},
+		{Speaker: "顧客", Text: "冇問題。"},
+	}
+	styles := assignDialogueVoiceStyles(dialogues, [2]string{"温柔女生", "播音男生"}, nil)
+	if automaticVoiceStyleGender(styles[0]) != dialogueVoiceGenderMale {
+		t.Fatalf("male addressee inference failed: %#v", styles)
+	}
+	if automaticVoiceStyleGender(styles[1]) != dialogueVoiceGenderFemale {
+		t.Fatalf("female addressee inference failed: %#v", styles)
+	}
+}
+
+func TestAssignDialogueVoiceProfilesMatchesPromptGender(t *testing.T) {
+	dialogues := []domain.Dialogue{{Speaker: "李女士"}, {Speaker: "張先生"}}
+	profiles := []domain.VoiceProfile{
+		{ID: "male", Name: "成熟男聲", Prompt: "香港男聲", PreviewAudioURL: "male-audio"},
+		{ID: "female", Name: "溫柔女聲", Prompt: "香港女聲", PreviewAudioURL: "female-audio"},
+	}
+	styles := assignDialogueVoiceStyles(dialogues, [2]string{"温柔女生", "播音男生"}, profiles)
+	if styles[0] != "female-audio" || styles[1] != "male-audio" {
+		t.Fatalf("voice profiles did not match speaker gender: %#v", styles)
+	}
+}
+
+func TestAssignDialogueVoiceStylesMatchesObservedCantoneseNames(t *testing.T) {
+	dialogues := []domain.Dialogue{
+		{Speaker: "阿明（侍應）", Text: "小姐，幾位呀？而家午市好趕。"},
+		{Speaker: "阿欣（顧客）", Text: "一位，唔該，我想快啲落單。"},
+		{Speaker: "阿明（侍應）", Text: "今日快餐大概八分鐘。"},
+		{Speaker: "阿欣（顧客）", Text: "咁我要黑椒牛柳絲飯。"},
+	}
+	styles := assignDialogueVoiceStyles(dialogues, [2]string{"温柔女生", "播音男生"}, nil)
+	if automaticVoiceStyleGender(styles[0]) != dialogueVoiceGenderMale || automaticVoiceStyleGender(styles[2]) != dialogueVoiceGenderMale {
+		t.Fatalf("阿明 should use a male voice: %#v", styles)
+	}
+	if automaticVoiceStyleGender(styles[1]) != dialogueVoiceGenderFemale || automaticVoiceStyleGender(styles[3]) != dialogueVoiceGenderFemale {
+		t.Fatalf("阿欣 should use a female voice: %#v", styles)
+	}
+}
+
+func TestVoiceProfileGenerationRequiresApprovalBeforeTheaterUse(t *testing.T) {
+	mem := store.NewMemoryStore()
+	profile := domain.VoiceProfile{
+		ID:       "voice-preview",
+		UserID:   "user-1",
+		Name:     "測試女聲",
+		Prompt:   "自然香港女聲",
+		Language: "CANTONESE",
+		Provider: "XIAOMI",
+		Model:    "mimo-v2.5-tts-voicedesign",
+		Status:   "GENERATING",
+	}
+	if _, err := mem.SaveVoiceProfile(profile); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(mem, nil, nil, voiceDesignTTS{}, "secret")
+	svc.designVoiceProfileAsync(context.Background(), profile)
+
+	profiles, err := mem.ListVoiceProfiles("user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 1 || profiles[0].Status != "PREVIEW" {
+		t.Fatalf("generated voice profile = %+v, want PREVIEW", profiles)
+	}
+	if _, err := svc.selectedVoiceProfiles("user-1", []string{profile.ID}); err == nil {
+		t.Fatal("preview voice profile should not be selectable before approval")
+	}
+
+	approved, err := svc.ApproveVoiceProfile("user-1", profile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.Status != "READY" || !strings.Contains(approved.GenerationMessage, "确认") {
+		t.Fatalf("approved voice profile = %+v", approved)
+	}
+	selected, err := svc.selectedVoiceProfiles("user-1", []string{profile.ID})
+	if err != nil || len(selected) != 1 {
+		t.Fatalf("approved voice profile should be selectable: profiles=%+v err=%v", selected, err)
+	}
+	approvedAgain, err := svc.ApproveVoiceProfile("user-1", profile.ID)
+	if err != nil || approvedAgain.Status != "READY" {
+		t.Fatalf("approval should be idempotent: profile=%+v err=%v", approvedAgain, err)
+	}
+}
+
+func TestApproveVoiceProfileRejectsNonPreviewAndOtherUsers(t *testing.T) {
+	mem := store.NewMemoryStore()
+	failed := domain.VoiceProfile{ID: "voice-failed", UserID: "user-1", Status: "FAILED", PreviewAudioURL: "data:audio/mpeg;base64,AAAA"}
+	preview := domain.VoiceProfile{ID: "voice-other", UserID: "user-2", Status: "PREVIEW", PreviewAudioURL: "data:audio/mpeg;base64,AAAA"}
+	if _, err := mem.SaveVoiceProfile(failed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.SaveVoiceProfile(preview); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(mem, nil, nil, nil, "secret")
+	if _, err := svc.ApproveVoiceProfile("user-1", failed.ID); err == nil {
+		t.Fatal("FAILED voice profile should not be approvable")
+	}
+	if _, err := svc.ApproveVoiceProfile("user-1", preview.ID); err == nil {
+		t.Fatal("another user's voice profile should not be approvable")
+	}
 }
 
 func (f failingGenerator) Generate(context.Context, string, string, float64, string) ([]domain.Dialogue, []domain.QuizQuestion, error) {
@@ -64,6 +337,26 @@ func TestGenerateTheaterMarksFailedWhenAIGenerationFails(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("theater did not reach FAILED after AI generation error")
+}
+
+func TestTheaterGenerationCompletionMessageReflectsAudioResult(t *testing.T) {
+	tests := []struct {
+		name         string
+		audioSuccess int
+		dialogues    int
+		want         string
+	}{
+		{name: "all audio ready", audioSuccess: 8, dialogues: 8, want: "生成完成"},
+		{name: "all audio failed", audioSuccess: 0, dialogues: 8, want: "文本生成完成，语音生成失败，请检查 TTS 配置"},
+		{name: "partial audio", audioSuccess: 3, dialogues: 8, want: "文本生成完成，部分语音生成失败（3/8）"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := theaterGenerationCompletionMessage(tt.audioSuccess, tt.dialogues); got != tt.want {
+				t.Fatalf("theaterGenerationCompletionMessage() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestGenerateReadingMaterialMarksFailedWhenAIGenerationFails(t *testing.T) {

@@ -106,6 +106,16 @@ const stageTopicSeeds = {
   ]
 } as const;
 
+const stageDifficulty = {
+  CANTONESE: [5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.0],
+  ENGLISH: [5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.0]
+} as const;
+
+function stageDifficultyText(language: "CANTONESE" | "ENGLISH", stage: number): string {
+  const levels = stageDifficulty[language];
+  return (levels[Math.min(Math.max(stage, 0), levels.length - 1)] ?? 5.5).toFixed(1);
+}
+
 export function GeneratePage() {
   const [searchParams] = useSearchParams();
   const presetLanguage = searchParams.get("language") === "ENGLISH" ? "ENGLISH" : "CANTONESE";
@@ -119,7 +129,7 @@ export function GeneratePage() {
   const initialSeed = stageTopicSeeds[presetLanguage][Math.min(presetStage, stageTopicSeeds[presetLanguage].length - 1)]?.[0]
     ?? routeMap[presetLanguage].topicSeeds[0];
   const [topic, setTopic] = useState(presetTopic || initialSeed);
-  const [difficultyText, setDifficultyText] = useState("5.5");
+  const [difficultyText, setDifficultyText] = useState(() => stageDifficultyText(presetLanguage, presetStage));
   const [difficultyError, setDifficultyError] = useState<string | null>(null);
   const [mode, setMode] = useState<"LISTENING" | "ROLEPLAY" | "APPRECIATION">("LISTENING");
   const [voiceMode, setVoiceMode] = useState<"AUTO" | "LIBRARY">("AUTO");
@@ -303,6 +313,8 @@ export function GeneratePage() {
                   setLanguage("CANTONESE");
                   setActiveStage(0);
                   setTopic(stageTopicSeeds.CANTONESE[0][0]);
+                  setDifficultyText(stageDifficultyText("CANTONESE", 0));
+                  setDifficultyError(null);
                   setSelectedVoiceProfileIds([]);
                 }}
               >
@@ -315,6 +327,8 @@ export function GeneratePage() {
                   setLanguage("ENGLISH");
                   setActiveStage(0);
                   setTopic(stageTopicSeeds.ENGLISH[0][0]);
+                  setDifficultyText(stageDifficultyText("ENGLISH", 0));
+                  setDifficultyError(null);
                   setSelectedVoiceProfileIds([]);
                 }}
               >
@@ -377,7 +391,7 @@ export function GeneratePage() {
                   setDifficultyError(null);
                 }}
               />
-              <small id="difficulty-hint">4.0–8.0，每次 0.5</small>
+              <small id="difficulty-hint">4.0–8.0，每次 0.5；课程阶段会自动带入推荐难度</small>
               {difficultyError ? <span id="difficulty-error" className="field-error" role="alert">{difficultyError}</span> : null}
             </label>
             <label style={{ minWidth: 160 }}>

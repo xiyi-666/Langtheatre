@@ -9,6 +9,37 @@ import (
 
 var punctuationSpacingRE = regexp.MustCompile(`([A-Za-z0-9])([,;:!?])([A-Za-z])`)
 
+var (
+	latinLetterRE                    = regexp.MustCompile(`[A-Za-z]`)
+	cantoneseBracketedLatinRE        = regexp.MustCompile(`[（(][^（）()\r\n]*[A-Za-z][^（）()\r\n]*[）)]`)
+	cantoneseRepeatedCommaRE         = regexp.MustCompile(`[，,、；;]+`)
+	cantoneseRepeatedFullStopRE      = regexp.MustCompile(`[。.!！]+`)
+	cantoneseRepeatedQuestionRE      = regexp.MustCompile(`[？?]+`)
+	cantonesePauseBeforeSentenceRE   = regexp.MustCompile(`，+([。！？])`)
+	cantoneseWhitespacePunctuationRE = regexp.MustCompile(`\s*([，。！？：])\s*`)
+)
+
+var cantoneseLatinReplacements = []struct {
+	pattern     *regexp.Regexp
+	replacement string
+}{
+	{regexp.MustCompile(`(?i)\bQR\s*code\b`), "二維碼"},
+	{regexp.MustCompile(`(?i)\bWi[\s-]*Fi\b`), "無線網絡"},
+	{regexp.MustCompile(`(?i)\bWhatsApp\b`), "即時通訊軟件"},
+	{regexp.MustCompile(`(?i)\be-?mail\b`), "電郵"},
+	{regexp.MustCompile(`(?i)\bMTR\b`), "港鐵"},
+	{regexp.MustCompile(`(?i)\bATM\b`), "提款機"},
+	{regexp.MustCompile(`(?i)\bVIP\b`), "貴賓"},
+	{regexp.MustCompile(`(?i)\bPDF\b`), "文件"},
+	{regexp.MustCompile(`(?i)\bAPP\b`), "應用程式"},
+	{regexp.MustCompile(`(?i)\bonline\b`), "網上"},
+	{regexp.MustCompile(`(?i)\bAI\b`), "人工智能"},
+	{regexp.MustCompile(`(?i)\bID\b`), "身份證明"},
+	{regexp.MustCompile(`(?i)\bUber\b`), "網約車"},
+	{regexp.MustCompile(`(?i)\bZoom\b`), "視像會議"},
+	{regexp.MustCompile(`(?i)\bOK\b`), "好"},
+}
+
 var promptLeakMarkers = []string{
 	"task design",
 	"create an ielts academic reading drill",
@@ -57,6 +88,68 @@ func NormalizeEnglishSpacing(text string) string {
 		parts[i] = normalizeEnglishToken(part)
 	}
 	return strings.Join(parts, " ")
+}
+
+// NormalizeSpeakerLabel removes presentation-only Markdown so the same
+// character keeps one stable identity across validation, storage and TTS.
+func NormalizeSpeakerLabel(label string) string {
+	clean := strings.TrimSpace(label)
+	if clean == "" {
+		return ""
+	}
+	clean = strings.NewReplacer(
+		"**", "",
+		"__", "",
+		"`", "",
+	).Replace(clean)
+	return strings.TrimSpace(strings.Trim(clean, "*_#"))
+}
+
+// NormalizeCantoneseSpeechText removes formatting that commonly causes long
+// TTS pauses and converts frequent English interface terms into natural Hong
+// Kong Chinese. It deliberately keeps unknown names intact; generation
+// validation is responsible for rejecting new Cantonese lines with Latin text.
+func NormalizeCantoneseSpeechText(text string) string {
+	clean := strings.TrimSpace(text)
+	if clean == "" {
+		return ""
+	}
+	for _, replacement := range cantoneseLatinReplacements {
+		clean = replacement.pattern.ReplaceAllString(clean, replacement.replacement)
+	}
+	clean = cantoneseBracketedLatinRE.ReplaceAllString(clean, "")
+	clean = strings.NewReplacer(
+		"\r\n", "，",
+		"\n", "，",
+		"\r", "，",
+		"……", "，",
+		"...", "，",
+		"…", "，",
+		"——", "，",
+		"—", "，",
+		"；", "，",
+		";", "，",
+		"（", "，",
+		"）", "，",
+		"(", "，",
+		")", "，",
+	).Replace(clean)
+	clean = cantoneseRepeatedCommaRE.ReplaceAllString(clean, "，")
+	clean = cantoneseRepeatedFullStopRE.ReplaceAllString(clean, "。")
+	clean = cantoneseRepeatedQuestionRE.ReplaceAllString(clean, "？")
+	clean = cantonesePauseBeforeSentenceRE.ReplaceAllString(clean, "$1")
+	clean = cantoneseWhitespacePunctuationRE.ReplaceAllString(clean, "$1")
+	clean = strings.Trim(clean, " ，,")
+	if !ContainsLatinLetters(clean) {
+		clean = strings.Join(strings.Fields(clean), "")
+	} else {
+		clean = strings.Join(strings.Fields(clean), " ")
+	}
+	return clean
+}
+
+func ContainsLatinLetters(text string) bool {
+	return latinLetterRE.MatchString(text)
 }
 
 func HasCollapsedEnglishSpacing(text string) bool {

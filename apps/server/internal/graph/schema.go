@@ -19,6 +19,7 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 		Name: "Dialogue",
 		Fields: graphql.Fields{
 			"speaker":    &graphql.Field{Type: graphql.String},
+			"gender":     &graphql.Field{Type: graphql.String},
 			"text":       &graphql.Field{Type: graphql.String},
 			"zhSubtitle": &graphql.Field{Type: graphql.String},
 			"audioUrl":   &graphql.Field{Type: graphql.String},
@@ -896,6 +897,19 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 					return nil, errors.New("unauthorized")
 				}
 				return svc.CreateVoiceProfile(userID, p.Args["name"].(string), p.Args["prompt"].(string), p.Args["language"].(string))
+			},
+		},
+		"approveVoiceProfile": &graphql.Field{
+			Type: voiceProfileType,
+			Args: graphql.FieldConfigArgument{
+				"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)},
+			},
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				userID, _ := p.Context.Value(UserIDKey).(string)
+				if userID == "" {
+					return nil, errors.New("unauthorized")
+				}
+				return svc.ApproveVoiceProfile(userID, p.Args["id"].(string))
 			},
 		},
 		"deleteVoiceProfile": &graphql.Field{

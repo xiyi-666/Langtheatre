@@ -25,6 +25,7 @@ apps/server/bin/
 apps/server/.go-build-cache/
 apps/server/.tmp-*
 apps/server/linguaquest.db
+apps/server/media/
 *.log
 *.out
 *.coverprofile

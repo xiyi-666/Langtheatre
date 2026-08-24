@@ -20,6 +20,7 @@ export default defineConfig(({ mode }) => {
       "/graphql": "http://localhost:8177",
       "/healthz": "http://localhost:8177",
       "/readyz": "http://localhost:8177",
+			"/media": "http://localhost:8177",
       "/media-proxy": "http://localhost:8177",
       "/telemetry": "http://localhost:8177"
     }

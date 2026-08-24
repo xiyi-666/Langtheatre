@@ -2,6 +2,25 @@ import { Howl } from "howler";
 import { getApiBaseUrl } from "./api";
 
 let activeClip: Howl | null = null;
+const prefetchedClips = new Set<string>();
+const MAX_PREFETCHED_CLIPS = 24;
+
+export function preloadClip(url: string): void {
+  const resolvedUrl = resolveAudioUrl(url);
+  if (!resolvedUrl || resolvedUrl.startsWith("data:") || resolvedUrl.startsWith("blob:") || prefetchedClips.has(resolvedUrl)) {
+    return;
+  }
+  if (prefetchedClips.size >= MAX_PREFETCHED_CLIPS) {
+    const oldest = prefetchedClips.values().next().value as string | undefined;
+    if (oldest) prefetchedClips.delete(oldest);
+  }
+  prefetchedClips.add(resolvedUrl);
+  void fetch(resolvedUrl, { cache: "force-cache" }).then((response) => {
+    if (!response.ok) prefetchedClips.delete(resolvedUrl);
+  }).catch(() => {
+    prefetchedClips.delete(resolvedUrl);
+  });
+}
 
 export function playClip(url: string, rate = 1): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -11,6 +30,7 @@ export function playClip(url: string, rate = 1): Promise<void> {
       activeClip = null;
     }
     const resolvedUrl = resolveAudioUrl(url);
+    preloadClip(url);
     const audio = new Howl({
       src: [resolvedUrl],
       html5: true,
@@ -42,7 +62,7 @@ export function playClip(url: string, rate = 1): Promise<void> {
   });
 }
 
-function resolveAudioUrl(url: string): string {
+export function resolveAudioUrl(url: string): string {
   const clean = (url ?? "").trim();
   if (!clean || clean.startsWith("data:") || clean.startsWith("blob:")) {
     return clean;

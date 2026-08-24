@@ -109,6 +109,10 @@ type SpeechSynthesizer interface {
 	Synthesize(ctx context.Context, text string, language string, voice string) (string, error)
 }
 
+type ContextualSpeechSynthesizer interface {
+	SynthesizeWithContext(ctx context.Context, text string, language string, voice string, dialogueContext string) (string, error)
+}
+
 type SpeechRecognizer interface {
 	Transcribe(ctx context.Context, audioDataURL string, language string) (domain.TranscriptResult, error)
 }
@@ -162,6 +166,7 @@ type Service struct {
 	readingAudioKick         map[string]time.Time
 	readingListKick          map[string]time.Time
 	mediaDir                 string
+	ttsSlots                 chan struct{}
 	billing                  *billingService
 	usageGuard               *aiRequestGuard
 	analytics                *analytics.Reporter
@@ -205,6 +210,10 @@ func NewWithOptions(store Store, session SessionStore, generator TheaterGenerato
 	if mediaDir == "" {
 		mediaDir = "media"
 	}
+	ttsMaxConcurrency := options.TTSMaxConcurrency
+	if ttsMaxConcurrency <= 0 {
+		ttsMaxConcurrency = defaultTTSMaxConcurrency
+	}
 	service := &Service{
 		store:                    store,
 		session:                  session,
@@ -225,6 +234,7 @@ func NewWithOptions(store Store, session SessionStore, generator TheaterGenerato
 		readingAudioKick:         map[string]time.Time{},
 		readingListKick:          map[string]time.Time{},
 		mediaDir:                 mediaDir,
+		ttsSlots:                 make(chan struct{}, ttsMaxConcurrency),
 		usageGuard:               newAIRequestGuard(options.UsageProtection),
 		analytics:                options.Analytics,
 		miniProgramEdition:       options.Billing.MiniProgramEdition,
@@ -233,6 +243,26 @@ func NewWithOptions(store Store, session SessionStore, generator TheaterGenerato
 		service.billing = newBillingService(billingStore, options.Billing, publicURL)
 	}
 	return service
+}
+
+func (s *Service) synthesizeWithTTSLimit(ctx context.Context, text string, language string, voice string) (string, error) {
+	return s.synthesizeWithTTSContextLimit(ctx, text, language, voice, "")
+}
+
+func (s *Service) synthesizeWithTTSContextLimit(ctx context.Context, text string, language string, voice string, dialogueContext string) (string, error) {
+	if s.tts == nil {
+		return "", errors.New("tts is not configured")
+	}
+	select {
+	case s.ttsSlots <- struct{}{}:
+		defer func() { <-s.ttsSlots }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	if contextual, ok := s.tts.(ContextualSpeechSynthesizer); ok {
+		return contextual.SynthesizeWithContext(ctx, text, language, voice, dialogueContext)
+	}
+	return s.tts.Synthesize(ctx, text, language, voice)
 }
 
 func (s *Service) trackFeature(name string) {
@@ -1118,11 +1148,47 @@ func (s *Service) designVoiceProfileAsync(ctx context.Context, profile domain.Vo
 		return
 	}
 	profile.PreviewAudioURL = previewAudioURL
-	profile.Status = "READY"
-	profile.GenerationMessage = "音色已保存到角色音色库"
+	profile.Status = "PREVIEW"
+	profile.GenerationMessage = "音色已生成，请完整试听确认；确认后才能用于剧场"
 	if _, err = s.store.SaveVoiceProfile(profile); err != nil {
 		log.Printf("save completed voice profile failed profile_id=%s err=%v", profile.ID, err)
 	}
+}
+
+func (s *Service) ApproveVoiceProfile(userID string, profileID string) (domain.VoiceProfile, error) {
+	userID = strings.TrimSpace(userID)
+	profileID = strings.TrimSpace(profileID)
+	if userID == "" || profileID == "" {
+		return domain.VoiceProfile{}, errors.New("voice profile not found")
+	}
+	profiles, err := s.store.ListVoiceProfiles(userID)
+	if err != nil {
+		return domain.VoiceProfile{}, err
+	}
+	var profile domain.VoiceProfile
+	found := false
+	for _, candidate := range profiles {
+		if candidate.ID == profileID {
+			profile = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return domain.VoiceProfile{}, errors.New("voice profile not found")
+	}
+	if profile.Status == "READY" {
+		return profile, nil
+	}
+	if profile.Status != "PREVIEW" {
+		return domain.VoiceProfile{}, errors.New("voice profile is not ready for approval")
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(profile.PreviewAudioURL)), "data:audio/") {
+		return domain.VoiceProfile{}, errors.New("voice profile preview audio is unavailable")
+	}
+	profile.Status = "READY"
+	profile.GenerationMessage = "音色已确认，可用于剧场"
+	return s.store.SaveVoiceProfile(profile)
 }
 
 func (s *Service) DeleteVoiceProfile(userID string, profileID string) error {
@@ -1376,35 +1442,38 @@ func (s *Service) generateTheaterAsync(ctx context.Context, theater domain.Theat
 		}
 	}
 	_ = s.updateTheaterProgress(theater.ID, "GENERATING", 55, "文本已生成，正在合成语音")
+	audioSuccessCount := 0
 	if s.tts != nil {
-		voicePair := selectDialogueVoicePair(theater.Topic)
-		profileBySpeaker := make(map[string]domain.VoiceProfile)
-		nextProfile := 0
+		voicePair := selectDialogueVoicePair(theater.ID, theater.Topic)
+		voiceStyles := assignDialogueVoiceStyles(dialogues, voicePair, voiceProfiles)
+		var audioMu sync.Mutex
+		var audioWG sync.WaitGroup
+		completedCount := 0
 		for i := range dialogues {
-			progress := 55 + (i * 35 / max(1, len(dialogues)))
-			_ = s.updateTheaterProgress(theater.ID, "GENERATING", progress, fmt.Sprintf("正在合成语音 %d/%d", i+1, len(dialogues)))
-			voiceStyle := voicePair[i%2]
-			if len(voiceProfiles) > 0 {
-				speaker := strings.TrimSpace(dialogues[i].Speaker)
-				profile, assigned := profileBySpeaker[speaker]
-				if !assigned {
-					profile = voiceProfiles[nextProfile%len(voiceProfiles)]
-					profileBySpeaker[speaker] = profile
-					nextProfile++
+			index := i
+			audioWG.Add(1)
+			go func() {
+				defer audioWG.Done()
+				dialogueContext := buildDialogueTTSContext(theater.Topic, dialogues, index)
+				audioURL, err := s.synthesizeWithTTSContextLimit(ctx, dialogues[index].Text, theater.Language, voiceStyles[index], dialogueContext)
+				audioMu.Lock()
+				defer audioMu.Unlock()
+				completedCount++
+				progress := 55 + (completedCount * 35 / max(1, len(dialogues)))
+				_ = s.updateTheaterProgress(theater.ID, "GENERATING", progress, fmt.Sprintf("正在合成语音 %d/%d", completedCount, len(dialogues)))
+				if err != nil {
+					log.Printf("tts failed theater_id=%s index=%d err=%v", theater.ID, index, err)
+					return
 				}
-				voiceStyle = profile.PreviewAudioURL
-			}
-			audioURL, err := s.tts.Synthesize(ctx, dialogues[i].Text, theater.Language, voiceStyle)
-			if err != nil {
-				log.Printf("tts failed theater_id=%s index=%d err=%v", theater.ID, i, err)
-				continue
-			}
-			if strings.TrimSpace(audioURL) == "" {
-				log.Printf("tts returned empty audio url theater_id=%s index=%d", theater.ID, i)
-				continue
-			}
-			dialogues[i].AudioURL = audioURL
+				if strings.TrimSpace(audioURL) == "" {
+					log.Printf("tts returned empty audio url theater_id=%s index=%d", theater.ID, index)
+					return
+				}
+				dialogues[index].AudioURL = audioURL
+				audioSuccessCount++
+			}()
 		}
+		audioWG.Wait()
 	} else {
 		log.Printf("tts disabled: synthesizer is nil theater_id=%s", theater.ID)
 	}
@@ -1416,7 +1485,7 @@ func (s *Service) generateTheaterAsync(ctx context.Context, theater domain.Theat
 	}
 	theater.Status = "READY"
 	theater.GenerationProgress = 100
-	theater.GenerationMessage = "生成完成"
+	theater.GenerationMessage = theaterGenerationCompletionMessage(audioSuccessCount, len(dialogues))
 	theater.Dialogues = dialogues
 	theater.QuizQuestions = quiz
 	theater.IsFavorite = current.IsFavorite
@@ -1426,6 +1495,16 @@ func (s *Service) generateTheaterAsync(ctx context.Context, theater domain.Theat
 		log.Printf("persist ready theater failed theater_id=%s err=%v", theater.ID, err)
 		s.RefundAIConfidence(theater.UserID, AICreditActionTheaterGeneration, theater.ID, aiCreditAmount(AICreditActionTheaterGeneration))
 	}
+}
+
+func theaterGenerationCompletionMessage(audioSuccessCount int, dialogueCount int) string {
+	if dialogueCount <= 0 || audioSuccessCount >= dialogueCount {
+		return "生成完成"
+	}
+	if audioSuccessCount <= 0 {
+		return "文本生成完成，语音生成失败，请检查 TTS 配置"
+	}
+	return fmt.Sprintf("文本生成完成，部分语音生成失败（%d/%d）", audioSuccessCount, dialogueCount)
 }
 
 func (s *Service) updateTheaterProgress(theaterID string, status string, progress int, message string) error {
@@ -1469,13 +1548,48 @@ func prepareTheaterTopic(language string, topic string) string {
 	return converted + "；请先把这个主题落成一个香港生活中的具体情境，再生成真实对话。"
 }
 
-func selectDialogueVoicePair(topic string) [2]string {
+func buildDialogueTTSContext(topic string, dialogues []domain.Dialogue, index int) string {
+	if index < 0 || index >= len(dialogues) {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	if cleanTopic := strings.TrimSpace(topic); cleanTopic != "" {
+		parts = append(parts, "場景係"+simplifiedToTraditionalHK(cleanTopic))
+	}
+	currentSpeaker := contentquality.NormalizeSpeakerLabel(dialogues[index].Speaker)
+	if currentSpeaker != "" {
+		parts = append(parts, "而家由"+currentSpeaker+"回應")
+	}
+	if index > 0 {
+		previousSpeaker := contentquality.NormalizeSpeakerLabel(dialogues[index-1].Speaker)
+		previousText := contentquality.NormalizeCantoneseSpeechText(dialogues[index-1].Text)
+		if previousText != "" {
+			if previousSpeaker != "" {
+				parts = append(parts, "上一句係"+previousSpeaker+"話：「"+previousText+"」")
+			} else {
+				parts = append(parts, "上一句係：「"+previousText+"」")
+			}
+		}
+	}
+	return strings.Join(parts, "；")
+}
+
+func selectDialogueVoicePair(theaterID string, topic string) [2]string {
 	pairs := [][2]string{
 		{"甜美女生", "播音男生"},
 		{"御姐音色", "沉稳大叔"},
 		{"温柔女生", "播音男生"},
+		{"清新少女", "活力少年"},
+		{"知性姐姐", "电台暖男"},
+		{"港风店员", "冷静导师"},
+		{"俏皮同学", "沉稳大叔"},
+		{"温柔女生", "活力少年"},
+		{"甜美女生", "电台暖男"},
+		{"御姐音色", "冷静导师"},
+		{"清新少女", "播音男生"},
+		{"知性姐姐", "港风店员"},
 	}
-	clean := strings.TrimSpace(topic)
+	clean := strings.TrimSpace(theaterID) + ":" + strings.TrimSpace(topic)
 	if clean == "" {
 		return pairs[0]
 	}
@@ -1484,6 +1598,283 @@ func selectDialogueVoicePair(topic string) [2]string {
 		sum += int(r)
 	}
 	return pairs[sum%len(pairs)]
+}
+
+type dialogueVoiceGender uint8
+
+const (
+	dialogueVoiceGenderUnknown dialogueVoiceGender = iota
+	dialogueVoiceGenderFemale
+	dialogueVoiceGenderMale
+)
+
+var femaleAutomaticVoiceStyles = []string{"温柔女生", "甜美女生", "御姐音色", "清新少女", "知性姐姐", "港风店员"}
+var maleAutomaticVoiceStyles = []string{"播音男生", "沉稳大叔", "活力少年", "电台暖男", "冷静导师"}
+var allAutomaticVoiceStyles = []string{
+	"温柔女生", "甜美女生", "播音男生", "沉稳大叔", "御姐音色", "清新少女",
+	"知性姐姐", "活力少年", "港风店员", "电台暖男", "冷静导师", "俏皮同学",
+}
+
+var femaleSpeakerMarkers = []string{
+	"女店員", "女店员", "女侍應", "女侍应", "女顧客", "女顾客", "女同事", "女職員", "女职员", "女學生", "女学生",
+	"小姐", "女士", "太太", "姑娘", "姐姐", "家姐", "阿姐", "梁姐", "姐", "妹妹", "阿妹", "阿姨", "婆婆", "媽媽", "妈妈", "媽咪", "女仔", "女生", "女聲", "女声", "女性",
+	"阿欣", "阿晴", "阿婷", "阿敏", "阿慧", "阿雯", "阿琪", "阿玲", "阿珊",
+	"female", "woman", "girl", "lady", "miss", "mrs", "ms.",
+}
+
+var maleSpeakerMarkers = []string{
+	"男店員", "男店员", "男侍應", "男侍应", "男顧客", "男顾客", "男同事", "男職員", "男职员", "男學生", "男学生",
+	"先生", "哥哥", "阿哥", "哥", "弟弟", "叔叔", "大叔", "伯伯", "爸爸", "父親", "父亲", "男仔", "男生", "男聲", "男声", "男性", "阿sir",
+	"阿明", "阿朗", "阿俊", "阿豪", "阿強", "阿强", "阿傑", "阿杰", "阿峰", "阿浩",
+	"male", "man", "boy", "gentleman", "mister", "mr.",
+}
+
+var femaleVocativeMarkers = []string{"小姐", "女士", "太太", "姑娘", "姐姐", "阿姐", "妹妹", "阿妹", "阿姨", "婆婆", "靚女", "美女"}
+var maleVocativeMarkers = []string{"先生", "哥哥", "阿哥", "弟弟", "叔叔", "大叔", "伯伯", "靚仔", "阿sir", "sir"}
+
+// assignDialogueVoiceStyles assigns a stable timbre to each speaker, instead
+// of alternating by dialogue index. This keeps a character consistent across
+// its lines and makes the first two distinct speakers audibly distinct.
+func assignDialogueVoiceStyles(dialogues []domain.Dialogue, voicePair [2]string, voiceProfiles []domain.VoiceProfile) []string {
+	styles := make([]string, len(dialogues))
+	styleBySpeaker := make(map[string]string)
+	profileBySpeaker := make(map[string]domain.VoiceProfile)
+	usedStyles := make(map[string]bool)
+	usedProfiles := make(map[string]bool)
+	genderBySpeaker := inferDialogueSpeakerGenders(dialogues)
+	nextStyle := 0
+	nextProfile := 0
+
+	for index, dialogue := range dialogues {
+		speaker := dialogueSpeakerKey(dialogue, index)
+		gender := genderBySpeaker[speaker]
+		if len(voiceProfiles) > 0 {
+			profile, assigned := profileBySpeaker[speaker]
+			if !assigned {
+				profile = selectVoiceProfileForGender(voiceProfiles, gender, usedProfiles, nextProfile)
+				profileBySpeaker[speaker] = profile
+				usedProfiles[voiceProfileAssignmentKey(profile)] = true
+				nextProfile++
+			}
+			styles[index] = profile.PreviewAudioURL
+			continue
+		}
+
+		style, assigned := styleBySpeaker[speaker]
+		if !assigned {
+			style = selectAutomaticVoiceStyle(speaker, gender, voicePair, usedStyles, nextStyle)
+			styleBySpeaker[speaker] = style
+			usedStyles[style] = true
+			nextStyle++
+		}
+		styles[index] = style
+	}
+	return styles
+}
+
+func dialogueSpeakerKey(dialogue domain.Dialogue, index int) string {
+	speaker := strings.ToLower(contentquality.NormalizeSpeakerLabel(dialogue.Speaker))
+	if speaker == "" {
+		return fmt.Sprintf("dialogue-%d", index)
+	}
+	return speaker
+}
+
+func inferDialogueSpeakerGenders(dialogues []domain.Dialogue) map[string]dialogueVoiceGender {
+	genders := make(map[string]dialogueVoiceGender)
+	for index, dialogue := range dialogues {
+		speaker := dialogueSpeakerKey(dialogue, index)
+		if explicit := dialogueVoiceGenderFromMetadata(dialogue.Gender); explicit != dialogueVoiceGenderUnknown {
+			genders[speaker] = explicit
+			continue
+		}
+		if genders[speaker] == dialogueVoiceGenderUnknown {
+			genders[speaker] = inferVoiceGender(dialogue.Speaker, femaleSpeakerMarkers, maleSpeakerMarkers)
+		}
+	}
+	for index, dialogue := range dialogues {
+		addressedGender := inferVoiceGender(dialogue.Text, femaleVocativeMarkers, maleVocativeMarkers)
+		if addressedGender == dialogueVoiceGenderUnknown {
+			continue
+		}
+		target := adjacentDifferentSpeaker(dialogues, index)
+		if target != "" && genders[target] == dialogueVoiceGenderUnknown {
+			genders[target] = addressedGender
+		}
+	}
+	return genders
+}
+
+func dialogueVoiceGenderFromMetadata(value string) dialogueVoiceGender {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "FEMALE", "F", "WOMAN", "GIRL", "女", "女性", "女聲", "女声":
+		return dialogueVoiceGenderFemale
+	case "MALE", "M", "MAN", "BOY", "男", "男性", "男聲", "男声":
+		return dialogueVoiceGenderMale
+	default:
+		return dialogueVoiceGenderUnknown
+	}
+}
+
+func adjacentDifferentSpeaker(dialogues []domain.Dialogue, index int) string {
+	current := dialogueSpeakerKey(dialogues[index], index)
+	for next := index + 1; next < len(dialogues); next++ {
+		candidate := dialogueSpeakerKey(dialogues[next], next)
+		if candidate != current {
+			return candidate
+		}
+	}
+	for previous := index - 1; previous >= 0; previous-- {
+		candidate := dialogueSpeakerKey(dialogues[previous], previous)
+		if candidate != current {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func inferVoiceGender(text string, femaleMarkers []string, maleMarkers []string) dialogueVoiceGender {
+	clean := strings.ToLower(strings.TrimSpace(text))
+	if clean == "" {
+		return dialogueVoiceGenderUnknown
+	}
+	femaleHits := countVoiceGenderMarkers(clean, femaleMarkers)
+	maleHits := countVoiceGenderMarkers(clean, maleMarkers)
+	switch {
+	case femaleHits > maleHits:
+		return dialogueVoiceGenderFemale
+	case maleHits > femaleHits:
+		return dialogueVoiceGenderMale
+	default:
+		return dialogueVoiceGenderUnknown
+	}
+}
+
+func countVoiceGenderMarkers(text string, markers []string) int {
+	hits := 0
+	for _, marker := range markers {
+		if strings.Contains(text, strings.ToLower(marker)) {
+			hits++
+		}
+	}
+	return hits
+}
+
+func automaticVoiceStyleGender(style string) dialogueVoiceGender {
+	for _, candidate := range femaleAutomaticVoiceStyles {
+		if style == candidate {
+			return dialogueVoiceGenderFemale
+		}
+	}
+	for _, candidate := range maleAutomaticVoiceStyles {
+		if style == candidate {
+			return dialogueVoiceGenderMale
+		}
+	}
+	return dialogueVoiceGenderUnknown
+}
+
+func selectAutomaticVoiceStyle(speaker string, gender dialogueVoiceGender, pair [2]string, used map[string]bool, fallbackOffset int) string {
+	candidates := make([]string, 0, len(allAutomaticVoiceStyles)+len(pair))
+	if gender != dialogueVoiceGenderUnknown {
+		for _, style := range pair {
+			if automaticVoiceStyleGender(style) == gender {
+				candidates = appendVoiceStyleCandidate(candidates, style)
+			}
+		}
+		pool := femaleAutomaticVoiceStyles
+		if gender == dialogueVoiceGenderMale {
+			pool = maleAutomaticVoiceStyles
+		}
+		candidates = appendRotatedVoiceStyles(candidates, pool, stableVoiceIndex(speaker, len(pool)))
+	}
+	for offset := range pair {
+		candidates = appendVoiceStyleCandidate(candidates, pair[(fallbackOffset+offset)%len(pair)])
+	}
+	candidates = appendRotatedVoiceStyles(candidates, allAutomaticVoiceStyles, stableVoiceIndex(speaker, len(allAutomaticVoiceStyles)))
+	for _, style := range candidates {
+		if style != "" && !used[style] {
+			return style
+		}
+	}
+	for _, style := range candidates {
+		if style != "" {
+			return style
+		}
+	}
+	return "温柔女生"
+}
+
+func appendRotatedVoiceStyles(target []string, styles []string, start int) []string {
+	if len(styles) == 0 {
+		return target
+	}
+	for offset := range styles {
+		target = appendVoiceStyleCandidate(target, styles[(start+offset)%len(styles)])
+	}
+	return target
+}
+
+func appendVoiceStyleCandidate(target []string, style string) []string {
+	style = strings.TrimSpace(style)
+	if style == "" {
+		return target
+	}
+	for _, existing := range target {
+		if existing == style {
+			return target
+		}
+	}
+	return append(target, style)
+}
+
+func stableVoiceIndex(value string, size int) int {
+	if size <= 0 {
+		return 0
+	}
+	sum := 0
+	for _, char := range value {
+		sum += int(char)
+	}
+	return sum % size
+}
+
+func selectVoiceProfileForGender(profiles []domain.VoiceProfile, gender dialogueVoiceGender, used map[string]bool, start int) domain.VoiceProfile {
+	if len(profiles) == 0 {
+		return domain.VoiceProfile{}
+	}
+	find := func(requireGender bool, requireUnused bool) (domain.VoiceProfile, bool) {
+		for offset := range profiles {
+			profile := profiles[(start+offset)%len(profiles)]
+			if requireGender && inferVoiceGender(profile.Name+" "+profile.Prompt, femaleSpeakerMarkers, maleSpeakerMarkers) != gender {
+				continue
+			}
+			if requireUnused && used[voiceProfileAssignmentKey(profile)] {
+				continue
+			}
+			return profile, true
+		}
+		return domain.VoiceProfile{}, false
+	}
+	if gender != dialogueVoiceGenderUnknown {
+		if profile, ok := find(true, true); ok {
+			return profile
+		}
+		if profile, ok := find(true, false); ok {
+			return profile
+		}
+	}
+	if profile, ok := find(false, true); ok {
+		return profile
+	}
+	return profiles[start%len(profiles)]
+}
+
+func voiceProfileAssignmentKey(profile domain.VoiceProfile) string {
+	if id := strings.TrimSpace(profile.ID); id != "" {
+		return id
+	}
+	return strings.TrimSpace(profile.Name) + ":" + strings.TrimSpace(profile.PreviewAudioURL)
 }
 
 func completeQuizSet(language string, topic string, generated []domain.QuizQuestion, requiredQuiz int) []domain.QuizQuestion {
@@ -1552,6 +1943,7 @@ func simplifiedToTraditionalHK(input string) string {
 		"习", "習",
 		"学", "學",
 		"场", "場",
+		"厅", "廳",
 		"气", "氣",
 		"时", "時",
 		"为", "為",
@@ -2100,11 +2492,15 @@ func readingGenerationTopic(exam string, topic string, metadata ielts.ReadingMet
 }
 
 func normalizeGeneratedDialoguesForDelivery(language string, dialogues []domain.Dialogue) []domain.Dialogue {
-	if !strings.EqualFold(strings.TrimSpace(language), "ENGLISH") {
-		return dialogues
-	}
-	for i := range dialogues {
-		dialogues[i].Text = contentquality.NormalizeEnglishSpacing(dialogues[i].Text)
+	switch strings.ToUpper(strings.TrimSpace(language)) {
+	case "ENGLISH":
+		for i := range dialogues {
+			dialogues[i].Text = contentquality.NormalizeEnglishSpacing(dialogues[i].Text)
+		}
+	case "CANTONESE":
+		for i := range dialogues {
+			dialogues[i].Text = contentquality.NormalizeCantoneseSpeechText(dialogues[i].Text)
+		}
 	}
 	return dialogues
 }
@@ -2493,7 +2889,7 @@ func (s *Service) generateReadingAudioWithContext(ctx context.Context, material 
 		chunk := chunks[index]
 		progress := 65 + ((index * 30) / max(1, len(chunks)))
 		_ = s.updateReadingProgress(material.ID, material.UserID, "GENERATING", progress, fmt.Sprintf("正在合成音频 %d/%d", index+1, len(chunks)))
-		audioURL, err := s.tts.Synthesize(ctx, chunk, material.Language, "")
+		audioURL, err := s.synthesizeWithTTSLimit(ctx, chunk, material.Language, "")
 		if err != nil || strings.TrimSpace(audioURL) == "" {
 			updateErr := s.updateReadingMaterial(material.ID, material.UserID, func(m *domain.ReadingMaterial) {
 				m.AudioURLs = append([]string(nil), audioURLs...)
@@ -3103,7 +3499,7 @@ func (s *Service) submitRoleplayReplyWithContext(ctx context.Context, userID str
 		Timestamp:  float64(session.TurnIndex) + 0.3,
 	}
 	if synthesize && s.tts != nil {
-		if audioURL, synthErr := s.tts.Synthesize(ctx, eval.AssistantReply, theater.Language, ""); synthErr == nil {
+		if audioURL, synthErr := s.synthesizeWithTTSLimit(ctx, eval.AssistantReply, theater.Language, ""); synthErr == nil {
 			assistant.AudioURL = audioURL
 		}
 	}

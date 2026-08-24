@@ -123,7 +123,7 @@ export interface ASRConfig {
   updatedAt?: string;
 }
 
-export type VoiceProfileStatus = "GENERATING" | "READY" | "FAILED";
+export type VoiceProfileStatus = "GENERATING" | "PREVIEW" | "READY" | "FAILED";
 
 export interface VoiceProfile {
   id: string;
@@ -140,6 +140,7 @@ export interface VoiceProfile {
 
 export interface Dialogue {
   speaker: string;
+  gender?: 'FEMALE' | 'MALE';
   text: string;
   zhSubtitle?: string;
   audioUrl: string;

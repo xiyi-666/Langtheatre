@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, AudioLines, CheckCircle2, Clock3, Plus, RefreshCw, Trash2, Volume2, Waves } from "lucide-react";
-import { deleteVoiceProfile, getVoiceProfiles } from "../api";
+import { approveVoiceProfile, deleteVoiceProfile, getVoiceProfiles } from "../api";
+import { resolveAudioUrl } from "../audio";
 import type { VoiceProfile } from "../types";
 
 type VoiceFilter = "ALL" | "CANTONESE" | "ENGLISH";
@@ -14,8 +15,16 @@ const voiceFilterLabels: Record<VoiceFilter, string> = {
 
 function voiceStatus(profile: VoiceProfile) {
   if (profile.status === "READY") return "可用于剧场";
+  if (profile.status === "PREVIEW") return "待试听确认";
   if (profile.status === "FAILED") return "生成失败";
   return "后台生成中";
+}
+
+function previewQualityMessage(duration?: number) {
+  if (duration === undefined) return "请先完整试听这段样本，再确认保存";
+  if (duration < 8) return "样本时长偏短，建议删除后使用更完整的语料重做";
+  if (duration < 15) return `样本约 ${Math.round(duration)} 秒，确认前请重点检查停顿和语气`;
+  return `样本约 ${Math.round(duration)} 秒，建议完整试听后确认`;
 }
 
 export function VoiceLibraryPage() {
@@ -25,6 +34,10 @@ export function VoiceLibraryPage() {
   const [filter, setFilter] = useState<VoiceFilter>("ALL");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState(() => (location.state as { message?: string } | null)?.message ?? "");
+  const [previewDurations, setPreviewDurations] = useState<Record<string, number>>({});
+  const [previewErrors, setPreviewErrors] = useState<Record<string, string>>({});
+  const [previewPlayed, setPreviewPlayed] = useState<Record<string, boolean>>({});
+  const [approvingId, setApprovingId] = useState("");
 
   const loadProfiles = useCallback(async () => {
     try {
@@ -47,6 +60,7 @@ export function VoiceLibraryPage() {
     [filter, profiles]
   );
   const readyCount = useMemo(() => profiles.filter((profile) => profile.status === "READY").length, [profiles]);
+  const previewCount = useMemo(() => profiles.filter((profile) => profile.status === "PREVIEW").length, [profiles]);
   const generatingCount = useMemo(() => profiles.filter((profile) => profile.status === "GENERATING").length, [profiles]);
 
   useEffect(() => {
@@ -66,6 +80,25 @@ export function VoiceLibraryPage() {
     }
   }
 
+  async function handleApprove(profile: VoiceProfile) {
+    if (!previewDurations[profile.id] || previewDurations[profile.id] < 8 || !previewPlayed[profile.id] || previewErrors[profile.id]) {
+      setMessage("请先点击播放试听一次；如果音频无法播放或样本过短，请删除后重做。 ");
+      return;
+    }
+    setApprovingId(profile.id);
+    setMessage("");
+    try {
+      const approved = await approveVoiceProfile(profile.id);
+      setProfiles((current) => current.map((item) => item.id === approved.id ? approved : item));
+      setMessage(`“${approved.name}”已确认保存，现在可以在剧场生成时选择。`);
+    } catch (error) {
+      console.error("approve voice profile failed", error);
+      setMessage((error as Error).message || "确认保存失败，请稍后重试。 ");
+    } finally {
+      setApprovingId("");
+    }
+  }
+
   return (
     <main className="page voice-library-page">
       <nav className="voice-module-breadcrumb" aria-label="音色库导航">
@@ -81,6 +114,7 @@ export function VoiceLibraryPage() {
           <p>把可复用的角色声线集中在这里创建、试听和管理；生成剧场时即可为人物选择对应音色。</p>
           <dl className="voice-studio-metrics">
             <div><dt><CheckCircle2 size={14} /> 可用</dt><dd>{readyCount}</dd></div>
+            <div><dt><Volume2 size={14} /> 待确认</dt><dd>{previewCount}</dd></div>
             <div><dt><AudioLines size={14} /> 全部</dt><dd>{profiles.length}</dd></div>
             <div><dt><Clock3 size={14} /> 队列中</dt><dd>{generatingCount}</dd></div>
           </dl>
@@ -138,10 +172,46 @@ export function VoiceLibraryPage() {
             </div>
             <p>{profile.prompt}</p>
             {profile.previewAudioUrl ? (
-              <audio controls preload="none" src={profile.previewAudioUrl}>你的浏览器不支持音频预览。</audio>
+              <audio
+                controls
+                controlsList="nodownload noplaybackrate"
+                preload="metadata"
+                src={resolveAudioUrl(profile.previewAudioUrl)}
+                onLoadedMetadata={(event) => {
+                  const duration = event.currentTarget.duration;
+                  if (!Number.isFinite(duration) || duration <= 0) {
+                    setPreviewErrors((current) => ({ ...current, [profile.id]: "试听音频时长读取失败" }));
+                    return;
+                  }
+                  setPreviewDurations((current) => ({ ...current, [profile.id]: duration }));
+                  setPreviewErrors((current) => {
+                    const next = { ...current };
+                    delete next[profile.id];
+                    return next;
+                  });
+                }}
+                onPlay={() => setPreviewPlayed((current) => ({ ...current, [profile.id]: true }))}
+                onError={() => setPreviewErrors((current) => ({ ...current, [profile.id]: "试听音频无法解码" }))}
+              >你的浏览器不支持音频预览。</audio>
             ) : (
               <div className="voice-preview-pending"><Volume2 size={16} /> {profile.status === "FAILED" ? "暂无试听音频" : "试听音频生成后会出现在这里"}</div>
             )}
+            {profile.status === "PREVIEW" ? (
+              <div className="voice-preview-review">
+                <div className={previewErrors[profile.id] ? "voice-preview-quality error" : "voice-preview-quality"}>
+                  <Volume2 size={15} />
+                  <span>{previewErrors[profile.id] || (previewPlayed[profile.id] ? previewQualityMessage(previewDurations[profile.id]) : "请点击播放试听一次，再确认保存")}</span>
+                </div>
+                <div className="voice-preview-actions">
+                  <button type="button" onClick={() => void handleApprove(profile)} disabled={approvingId !== "" || !previewDurations[profile.id] || previewDurations[profile.id] < 8 || !previewPlayed[profile.id] || Boolean(previewErrors[profile.id])}>
+                    <CheckCircle2 size={15} /> {approvingId === profile.id ? "保存中…" : "确认保存"}
+                  </button>
+                  <button type="button" className="btn-ghost" onClick={() => void handleDelete(profile)} disabled={approvingId !== ""}>
+                    <Trash2 size={15} /> 删除重做
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <small className="voice-card-message">{profile.generationMessage || "等待处理"}</small>
           </article>
         ))}

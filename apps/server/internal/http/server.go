@@ -38,6 +38,7 @@ type MuxOptions struct {
 	Security            SecurityOptions
 	Analytics           *analytics.Reporter
 	AnalyticsAdminToken string
+	MediaDir            string
 }
 
 func setCORSHeaders(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +65,26 @@ func NewMuxWithOptions(schema graphql.Schema, jwtSecret string, paymentNotifier 
 	authLimiter := NewInMemoryRateLimiter(security.AuthRateLimitPerMinute, time.Minute)
 	aiLimiter := NewInMemoryRateLimiter(security.AIRequestRateLimitPerMinute, time.Minute)
 	mux := http.NewServeMux()
+	mediaDir := strings.TrimSpace(muxOptions.MediaDir)
+	if mediaDir == "" {
+		mediaDir = "media"
+	}
+	mediaHandler := http.StripPrefix("/media/", http.FileServer(http.Dir(mediaDir)))
+	mux.HandleFunc("/media/", func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w, r)
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "only GET and HEAD are supported", http.StatusMethodNotAllowed)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		if isInlineAudioPath(r.URL.Path) {
+			w.Header().Set("Content-Disposition", "inline")
+		}
+		mediaHandler.ServeHTTP(w, r)
+	})
 	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		setCORSHeaders(w, r)
 		if r.Method == http.MethodOptions {
@@ -306,6 +327,16 @@ func isSensitiveAuthOperation(query string) bool {
 		"verifyemail", "requestpasswordreset", "resetpassword", "requestusernamerecovery",
 	} {
 		if strings.Contains(query, operation) {
+			return true
+		}
+	}
+	return false
+}
+
+func isInlineAudioPath(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	for _, extension := range []string{".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".webm"} {
+		if strings.HasSuffix(lower, extension) {
 			return true
 		}
 	}

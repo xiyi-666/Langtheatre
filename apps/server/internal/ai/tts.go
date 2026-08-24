@@ -3,6 +3,7 @@ package ai
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -12,11 +13,14 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/linguaquest/server/internal/contentquality"
 	"github.com/linguaquest/server/internal/domain"
 )
 
@@ -35,6 +39,8 @@ type APITTS struct {
 	MaxRetries      int
 	Client          *http.Client
 	xiaomiCloneSeed map[string]string
+	xiaomiSeedWait  map[string]chan struct{}
+	voiceSeedDir    string
 }
 
 const (
@@ -55,6 +61,7 @@ const (
 	defaultAliyunTTSModel        = "cosyvoice-v3-flash"
 	defaultAliyunTTSVoice        = "longjiaxin_v3"
 	defaultTTSAudioFormat        = "mp3"
+	xiaomiVoiceSeedVersion       = "cantonese-natural-v2"
 )
 
 var xiaomiPresetVoices = map[string]struct{}{
@@ -67,6 +74,29 @@ var xiaomiPresetVoices = map[string]struct{}{
 	"Chloe":        {},
 	"Milo":         {},
 	"Dean":         {},
+}
+
+// Automatic theater styles use MiMo's stable preset voices. VoiceClone is
+// reserved for an explicit user-library audio sample so ordinary theater
+// generation does not inherit pauses and cadence drift from generated seeds.
+var xiaomiAutomaticPresetByStyle = map[string]string{
+	"温柔女生": "冰糖",
+	"甜美女生": "茉莉",
+	"播音男生": "白桦",
+	"沉稳大叔": "Dean",
+	"御姐音色": "Chloe",
+	"清新少女": "Mia",
+	"知性姐姐": "冰糖",
+	"活力少年": "Milo",
+	"港风店员": "茉莉",
+	"电台暖男": "白桦",
+	"冷静导师": "Dean",
+	"俏皮同学": "苏打",
+}
+
+var defaultCantoneseAutoVoiceStyles = []string{
+	"温柔女生", "甜美女生", "播音男生", "沉稳大叔", "御姐音色", "清新少女",
+	"知性姐姐", "活力少年", "港风店员", "电台暖男", "冷静导师", "俏皮同学",
 }
 
 func NewAPITTS(provider string, apiURL string, apiKey string, voice string, model string, audioFormat string, useUploadPrompt bool, promptAudioPath string, returnJSON bool, timeoutSeconds int, maxRetries int) *APITTS {
@@ -85,6 +115,7 @@ func NewAPITTS(provider string, apiURL string, apiKey string, voice string, mode
 		MaxRetries:      maxRetries,
 		Client:          &http.Client{Timeout: time.Duration(timeoutSeconds) * time.Second},
 		xiaomiCloneSeed: make(map[string]string),
+		xiaomiSeedWait:  make(map[string]chan struct{}),
 	}
 	tts.UpdateTTSConfig(domain.TTSConfig{
 		Provider:    provider,
@@ -127,14 +158,51 @@ func (t *APITTS) UpdateTTSConfig(config domain.TTSConfig) {
 	clear(t.xiaomiCloneSeed)
 }
 
+func (t *APITTS) SetVoiceSeedDir(dir string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.voiceSeedDir = strings.TrimSpace(dir)
+}
+
+func DefaultCantoneseAutoVoiceStyles() []string {
+	return append([]string(nil), defaultCantoneseAutoVoiceStyles...)
+}
+
+func (t *APITTS) PrewarmCantoneseVoices(ctx context.Context, styles []string) error {
+	config := t.GetTTSConfig()
+	if !strings.EqualFold(config.Provider, ttsProviderXiaomi) || strings.TrimSpace(config.APIKey) == "" {
+		return nil
+	}
+	for _, requestedStyle := range styles {
+		style := normalizeVoiceStyle(requestedStyle)
+		if style == "" {
+			continue
+		}
+		if _, err := t.getXiaomiDesignedSeed(ctx, config, style, "CANTONESE"); err != nil {
+			return fmt.Errorf("prewarm Cantonese voice %s: %w", style, err)
+		}
+	}
+	return nil
+}
+
 func (t *APITTS) Synthesize(ctx context.Context, text string, language string, voice string) (string, error) {
+	return t.SynthesizeWithContext(ctx, text, language, voice, "")
+}
+
+// SynthesizeWithContext supplies non-spoken scene and previous-turn context
+// to providers that can use chat history for more natural conversational
+// prosody. Other providers keep their existing behavior.
+func (t *APITTS) SynthesizeWithContext(ctx context.Context, text string, language string, voice string, dialogueContext string) (string, error) {
 	config := t.GetTTSConfig()
 	if config.BaseURL == "" {
 		return "", errors.New("tts api url not configured")
 	}
+	if isCantoneseLanguage(language) {
+		text = contentquality.NormalizeCantoneseSpeechText(text)
+	}
 	switch {
 	case strings.EqualFold(config.Provider, ttsProviderXiaomi):
-		return t.synthesizeXiaomi(ctx, config, text, language, voice)
+		return t.synthesizeXiaomi(ctx, config, text, language, voice, dialogueContext)
 	case strings.EqualFold(config.Provider, ttsProviderMiniMax):
 		return t.synthesizeMiniMax(ctx, config, text, language, voice)
 	case strings.EqualFold(config.Provider, ttsProviderAliyun):
@@ -309,9 +377,9 @@ func (t *APITTS) synthesizeCustom(ctx context.Context, config domain.TTSConfig, 
 	return "", errors.New("tts api returned unsupported content type")
 }
 
-func (t *APITTS) synthesizeXiaomi(ctx context.Context, config domain.TTSConfig, text string, language string, requestedVoice string) (string, error) {
+func (t *APITTS) synthesizeXiaomi(ctx context.Context, config domain.TTSConfig, text string, language string, requestedVoice string, dialogueContext string) (string, error) {
 	if isAudioDataURL(requestedVoice) {
-		messages, audio, buildErr := buildXiaomiMessagesAndAudio(xiaomiTTSVoiceCloneModel, requestedVoice, config.AudioFormat, text, language, "")
+		messages, audio, buildErr := buildXiaomiMessagesAndAudioWithContext(xiaomiTTSVoiceCloneModel, requestedVoice, config.AudioFormat, text, language, "", dialogueContext)
 		if buildErr != nil {
 			return "", buildErr
 		}
@@ -321,16 +389,20 @@ func (t *APITTS) synthesizeXiaomi(ctx context.Context, config domain.TTSConfig, 
 	// VoiceDesign and VoiceClone are explicit administrator choices. Do not
 	// replace them with the automatic fallback below.
 	if isXiaomiVoiceDesignModel(model) || isXiaomiVoiceCloneModel(model) {
-		messages, audio, buildErr := buildXiaomiMessagesAndAudio(model, config.Voice, config.AudioFormat, text, language, requestedVoice)
+		messages, audio, buildErr := buildXiaomiMessagesAndAudioWithContext(model, config.Voice, config.AudioFormat, text, language, requestedVoice, dialogueContext)
 		if buildErr != nil {
 			return "", buildErr
 		}
 		return t.doXiaomiSynthesis(ctx, config, model, messages, audio)
 	}
-	if shouldUseXiaomiDesignedCloneFlow(requestedVoice, language) {
-		return t.synthesizeXiaomiWithDesignedClone(ctx, config, text, language, requestedVoice)
+	if presetVoice := xiaomiAutomaticPresetVoice(requestedVoice); presetVoice != "" {
+		messages, audio, buildErr := buildXiaomiMessagesAndAudioWithContext(model, presetVoice, config.AudioFormat, text, language, requestedVoice, dialogueContext)
+		if buildErr != nil {
+			return "", buildErr
+		}
+		return t.doXiaomiSynthesis(ctx, config, model, messages, audio)
 	}
-	messages, audio, buildErr := buildXiaomiMessagesAndAudio(model, config.Voice, config.AudioFormat, text, language, requestedVoice)
+	messages, audio, buildErr := buildXiaomiMessagesAndAudioWithContext(model, config.Voice, config.AudioFormat, text, language, requestedVoice, dialogueContext)
 	if buildErr != nil {
 		return "", buildErr
 	}
@@ -349,9 +421,20 @@ func (t *APITTS) synthesizeXiaomiWithDesignedClone(ctx context.Context, config d
 			return "", errors.New("xiaomi designed clone flow requires a normalized voice style")
 		}
 	}
-	cacheKey := xiaomiDesignedCloneCacheKey(style, language)
-	seedAudio := t.getXiaomiCloneSeed(cacheKey)
-	if seedAudio == "" {
+	seedAudio, seedErr := t.getXiaomiDesignedSeed(ctx, config, style, language)
+	if seedErr != nil {
+		return "", seedErr
+	}
+	messages, audio, buildErr := buildXiaomiMessagesAndAudio(xiaomiTTSVoiceCloneModel, seedAudio, config.AudioFormat, text, language, requestedVoice)
+	if buildErr != nil {
+		return "", buildErr
+	}
+	return t.doXiaomiSynthesis(ctx, config, xiaomiTTSVoiceCloneModel, messages, audio)
+}
+
+func (t *APITTS) getXiaomiDesignedSeed(ctx context.Context, config domain.TTSConfig, style string, language string) (string, error) {
+	cacheKey := xiaomiVoiceSeedVersion + ":" + xiaomiDesignedCloneCacheKey(style, language) + ":" + normalizeTTSAudioFormat(config.AudioFormat)
+	return t.getOrCreateXiaomiCloneSeed(ctx, cacheKey, config.AudioFormat, func() (string, error) {
 		designPrompt := xiaomiVoiceDesignPrompt(style, language)
 		seedText := xiaomiVoiceDesignSampleText(language)
 		messages, audio, buildErr := buildXiaomiMessagesAndAudio(xiaomiTTSVoiceDesignModel, designPrompt, config.AudioFormat, seedText, language, "")
@@ -362,22 +445,16 @@ func (t *APITTS) synthesizeXiaomiWithDesignedClone(ctx context.Context, config d
 		if err != nil {
 			return "", err
 		}
-		seedAudio = seed
-		t.setXiaomiCloneSeed(cacheKey, seedAudio)
 		log.Printf("xiaomi theater voice seed generated style=%s language=%s", style, language)
-	}
-	messages, audio, buildErr := buildXiaomiMessagesAndAudio(xiaomiTTSVoiceCloneModel, seedAudio, config.AudioFormat, text, language, requestedVoice)
-	if buildErr != nil {
-		return "", buildErr
-	}
-	return t.doXiaomiSynthesis(ctx, config, xiaomiTTSVoiceCloneModel, messages, audio)
+		return seed, nil
+	})
 }
 
 func (t *APITTS) doXiaomiSynthesis(ctx context.Context, config domain.TTSConfig, model string, messages []map[string]string, audio map[string]any) (string, error) {
 	payload := map[string]any{
 		"model":    model,
 		"messages": messages,
-		"audio":    audio,
+		"audio":    prepareXiaomiAudioForEndpoint(model, config.BaseURL, audio),
 	}
 	raw, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {
@@ -400,7 +477,7 @@ func (t *APITTS) doXiaomiSynthesis(ctx context.Context, config domain.TTSConfig,
 			return "", err
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("api-key", apiKey)
+		setXiaomiAuthHeader(req, config.BaseURL, apiKey)
 
 		resp, err = t.Client.Do(req)
 		if err == nil && resp != nil && shouldRetryTTSStatus(resp.StatusCode) && attempt < t.MaxRetries {
@@ -442,23 +519,143 @@ func (t *APITTS) doXiaomiSynthesis(ctx context.Context, config domain.TTSConfig,
 	return "data:" + ttsAudioMIME(config.AudioFormat) + ";base64," + audioData, nil
 }
 
-func (t *APITTS) getXiaomiCloneSeed(key string) string {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return strings.TrimSpace(t.xiaomiCloneSeed[key])
-}
-
-func (t *APITTS) setXiaomiCloneSeed(key string, seed string) {
-	trimmed := strings.TrimSpace(seed)
-	if trimmed == "" {
-		return
-	}
+func (t *APITTS) getOrCreateXiaomiCloneSeed(ctx context.Context, key string, format string, create func() (string, error)) (string, error) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.xiaomiCloneSeed == nil {
 		t.xiaomiCloneSeed = make(map[string]string)
 	}
-	t.xiaomiCloneSeed[key] = trimmed
+	if seed := strings.TrimSpace(t.xiaomiCloneSeed[key]); seed != "" {
+		t.mu.Unlock()
+		return seed, nil
+	}
+	t.mu.Unlock()
+	if seed := t.loadXiaomiCloneSeed(key, format); seed != "" {
+		t.mu.Lock()
+		t.xiaomiCloneSeed[key] = seed
+		t.mu.Unlock()
+		return seed, nil
+	}
+	t.mu.Lock()
+	if seed := strings.TrimSpace(t.xiaomiCloneSeed[key]); seed != "" {
+		t.mu.Unlock()
+		return seed, nil
+	}
+	if t.xiaomiSeedWait == nil {
+		t.xiaomiSeedWait = make(map[string]chan struct{})
+	}
+	if wait, exists := t.xiaomiSeedWait[key]; exists {
+		t.mu.Unlock()
+		select {
+		case <-wait:
+			t.mu.RLock()
+			seed := strings.TrimSpace(t.xiaomiCloneSeed[key])
+			t.mu.RUnlock()
+			if seed == "" {
+				return "", errors.New("xiaomi voice seed generation failed")
+			}
+			return seed, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	wait := make(chan struct{})
+	t.xiaomiSeedWait[key] = wait
+	t.mu.Unlock()
+
+	seed, err := create()
+	seed = strings.TrimSpace(seed)
+	t.mu.Lock()
+	if err == nil && seed != "" {
+		t.xiaomiCloneSeed[key] = seed
+	} else if err == nil {
+		err = errors.New("xiaomi voice design returned empty seed audio")
+	}
+	delete(t.xiaomiSeedWait, key)
+	close(wait)
+	t.mu.Unlock()
+	if err == nil {
+		if persistErr := t.persistXiaomiCloneSeed(key, format, seed); persistErr != nil {
+			log.Printf("persist xiaomi voice seed failed key=%s err=%v", key, persistErr)
+		}
+	}
+	return seed, err
+}
+
+func (t *APITTS) loadXiaomiCloneSeed(key string, format string) string {
+	path := t.xiaomiCloneSeedPath(key, format)
+	if path == "" {
+		return ""
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil || len(payload) == 0 {
+		return ""
+	}
+	return "data:" + ttsAudioMIME(format) + ";base64," + base64.StdEncoding.EncodeToString(payload)
+}
+
+func (t *APITTS) persistXiaomiCloneSeed(key string, format string, seed string) error {
+	path := t.xiaomiCloneSeedPath(key, format)
+	if path == "" {
+		return nil
+	}
+	payload, err := base64.StdEncoding.DecodeString(xiaomiVoiceCloneSample(seed))
+	if err != nil || len(payload) == 0 {
+		return errors.New("invalid xiaomi voice seed audio")
+	}
+	if err = os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	temporaryPath := path + ".tmp"
+	if err = os.WriteFile(temporaryPath, payload, 0o644); err != nil {
+		return err
+	}
+	if err = os.Rename(temporaryPath, path); err != nil {
+		_ = os.Remove(temporaryPath)
+		return err
+	}
+	return nil
+}
+
+func (t *APITTS) xiaomiCloneSeedPath(key string, format string) string {
+	t.mu.RLock()
+	dir := strings.TrimSpace(t.voiceSeedDir)
+	t.mu.RUnlock()
+	if dir == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	extension := "." + normalizeTTSAudioFormat(format)
+	return filepath.Join(dir, hex.EncodeToString(sum[:])+extension)
+}
+
+func setXiaomiAuthHeader(req *http.Request, baseURL string, apiKey string) {
+	if isXiaomiTokenPlanURL(baseURL) {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		return
+	}
+	req.Header.Set("api-key", apiKey)
+}
+
+func prepareXiaomiAudioForEndpoint(model string, baseURL string, audio map[string]any) map[string]any {
+	if !isXiaomiVoiceCloneModel(model) || isXiaomiTokenPlanURL(baseURL) {
+		return audio
+	}
+	voice, _ := audio["voice"].(string)
+	voice = strings.TrimSpace(voice)
+	if voice == "" || isAudioDataURL(voice) {
+		return audio
+	}
+	format, _ := audio["format"].(string)
+	prepared := make(map[string]any, len(audio))
+	for key, value := range audio {
+		prepared[key] = value
+	}
+	prepared["voice"] = "data:" + ttsAudioMIME(format) + ";base64," + voice
+	return prepared
+}
+
+func isXiaomiTokenPlanURL(baseURL string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(baseURL)), "token-plan")
 }
 
 func (t *APITTS) synthesizeMiniMax(ctx context.Context, config domain.TTSConfig, text string, language string, requestedVoice string) (string, error) {
@@ -570,6 +767,10 @@ func (t *APITTS) synthesizeAliyun(ctx context.Context, config domain.TTSConfig, 
 }
 
 func buildXiaomiMessagesAndAudio(model string, configuredVoice string, format string, text string, language string, requestedVoice string) ([]map[string]string, map[string]any, error) {
+	return buildXiaomiMessagesAndAudioWithContext(model, configuredVoice, format, text, language, requestedVoice, "")
+}
+
+func buildXiaomiMessagesAndAudioWithContext(model string, configuredVoice string, format string, text string, language string, requestedVoice string, dialogueContext string) ([]map[string]string, map[string]any, error) {
 	audioFormat := normalizeTTSAudioFormat(format)
 	synthesisText := xiaomiSynthesisText(text, language)
 	switch {
@@ -588,7 +789,7 @@ func buildXiaomiMessagesAndAudio(model string, configuredVoice string, format st
 		if !isAudioDataURL(cloneSample) {
 			return nil, nil, errors.New("xiaomi voice clone sample must be a data:audio URL")
 		}
-		instruction := buildInstruction(text, language, requestedVoice)
+		instruction := buildInstructionWithContext(text, language, requestedVoice, dialogueContext)
 		return []map[string]string{
 				{"role": "user", "content": instruction},
 				{"role": "assistant", "content": synthesisText},
@@ -598,7 +799,7 @@ func buildXiaomiMessagesAndAudio(model string, configuredVoice string, format st
 				"voice":  xiaomiVoiceCloneSample(cloneSample),
 			}, nil
 	default:
-		instruction := buildInstruction(text, language, requestedVoice)
+		instruction := buildInstructionWithContext(text, language, requestedVoice, dialogueContext)
 		return []map[string]string{
 				{"role": "user", "content": instruction},
 				{"role": "assistant", "content": synthesisText},
@@ -610,8 +811,21 @@ func buildXiaomiMessagesAndAudio(model string, configuredVoice string, format st
 	}
 }
 
-func shouldUseXiaomiDesignedCloneFlow(requestedVoice string, language string) bool {
-	return normalizeVoiceStyle(requestedVoice) != "" || isCantoneseLanguage(language)
+func xiaomiAutomaticPresetVoice(requestedVoice string) string {
+	clean := strings.TrimSpace(requestedVoice)
+	if clean == "" || isAudioDataURL(clean) {
+		return ""
+	}
+	for preset := range xiaomiPresetVoices {
+		if strings.EqualFold(clean, preset) {
+			return preset
+		}
+	}
+	return xiaomiAutomaticPresetByStyle[normalizeVoiceStyle(clean)]
+}
+
+func shouldUseXiaomiDesignedCloneFlow(requestedVoice string) bool {
+	return normalizeVoiceStyle(requestedVoice) != ""
 }
 
 func isCantoneseLanguage(language string) bool {
@@ -627,23 +841,53 @@ func xiaomiVoiceDesignPrompt(style string, language string) string {
 	if normalizedStyle == "" {
 		normalizedStyle = "温柔女生"
 	}
-	base := fmt.Sprintf("请设计一个%s的声音，音色真实自然，情绪稳定，吐字清晰，保持中速偏自然的稳定语速，不要忽快忽慢，不要拖长句尾，不要播报腔，适合语言学习场景。", normalizedStyle)
 	switch strings.ToUpper(strings.TrimSpace(language)) {
 	case "CANTONESE":
-		return base + "這個聲音必須自然適配香港粵語口語（即广东话），只用粵語/廣東話發音，不要使用普通話或國語腔；每句按標點作短停頓，整段保持一致節奏，接近香港日常生活對話。"
+		return fmt.Sprintf("請設計一把香港本地%s。人物聲線設定：%s。角色標籤只用嚟區分音色，唔好刻意表演、扮聲或者誇張情緒。必須由頭到尾使用自然香港粵語／廣東話發音，粵語聲調、連讀同句尾語氣要清楚，唔可以有普通話、國語或者書面朗讀腔。用平穩自然嘅日常傾偈節奏一次讀完，唔好自行加入笑聲、氣聲、戲劇停頓、拖長尾音或者突然變速。", normalizedStyle, cantoneseVoicePersona(normalizedStyle))
 	case "ENGLISH":
-		return base + "This voice should also sound warm and clear for English learning dialogues, with steady pacing and no sudden speed changes."
+		return fmt.Sprintf("Design a distinct %s character voice for natural English learning dialogues. Keep the voice realistic, emotionally stable and clearly differentiated from other characters, with steady pacing and no announcer tone.", normalizedStyle)
 	default:
-		return base
+		return fmt.Sprintf("请设计一个%s的声音，音色真实自然，情绪稳定，吐字清晰，保持稳定语速，不要播报腔。", normalizedStyle)
+	}
+}
+
+func cantoneseVoicePersona(style string) string {
+	switch normalizeVoiceStyle(style) {
+	case "温柔女生":
+		return "二十多歲香港女聲，中音偏明亮，柔和親切，氣息自然"
+	case "甜美女生":
+		return "年輕香港女聲，中高音，聲線清甜但唔嗲，語氣自然"
+	case "播音男生":
+		return "三十歲左右香港男聲，中低音，厚實清楚，只保留清晰度而唔用播音腔"
+	case "沉稳大叔":
+		return "四十歲左右香港男聲，低音沉穩，共鳴自然，說話從容但唔拖慢"
+	case "御姐音色":
+		return "三十歲左右香港女聲，中低音，沉着自信，語尾俐落但唔強勢"
+	case "清新少女":
+		return "年輕香港女聲，中高音，清爽輕盈，節奏自然明快"
+	case "知性姐姐":
+		return "成熟香港女聲，中音溫暖，冷靜清晰，表達自然有分寸"
+	case "活力少年":
+		return "年輕香港男聲，中高音，精神自然，語氣爽快但唔誇張"
+	case "港风店员":
+		return "二十多歲香港女聲，中音，親切利落，生活感自然"
+	case "电台暖男":
+		return "成熟香港男聲，中低音溫暖，放鬆自然，唔用電台或者播音腔"
+	case "冷静导师":
+		return "成熟香港男聲，中低音，耐心清楚，語氣平穩冷靜"
+	case "俏皮同学":
+		return "年輕香港中性聲線，中高音，輕快有互動感，但唔賣萌唔拖尾音"
+	default:
+		return "香港本地成年人聲線，音色自然清楚，人物特徵鮮明"
 	}
 }
 
 func xiaomiVoiceDesignSampleText(language string) string {
 	switch strings.ToUpper(strings.TrimSpace(language)) {
 	case "CANTONESE":
-		return "唔該，我想問下今日個課程幾點開始？如果而家報名，係咪可以即刻收到確認訊息？我想你講得自然啲，速度穩定啲，唔好突然快或者突然慢。"
+		return "早晨，唔該你幫我留一張枱。我想要一杯熱奶茶，少甜，拎走呀。我哋兩點左右到，想坐近窗邊。今日交通有啲慢，不過我會提早十分鐘出門口。你聽日得唔得閒一齊食飯？如果落雨，我哋就改約下星期，唔使急，慢慢傾都得。你收到訊息之後覆我一聲，好嗎？"
 	case "ENGLISH":
-		return "Hello, welcome to LinguaQuest. Let's practice natural everyday conversation together."
+		return "Hello, welcome to LinguaQuest. Today we are going to practise a natural everyday conversation. I will speak clearly, but I will keep the rhythm relaxed. If you need more time, pause and listen again. When you are ready, answer in your own words, and we can continue together."
 	default:
 		return "你好，欢迎来到 LinguaQuest，我们开始自然对话练习。"
 	}
@@ -764,11 +1008,28 @@ func extractAliyunAudioURL(body []byte, format string) (string, error) {
 }
 
 func xiaomiSynthesisText(text string, language string) string {
-	// MiMo consumes the assistant message as the exact text to synthesize. A
-	// "(粤语)" prefix can leak into the spoken output and does not act as a
-	// language selector. Cantonese is controlled by the designed/clone voice
-	// and the user instruction instead.
-	return strings.TrimSpace(text)
+	content := strings.TrimSpace(text)
+	if !isCantoneseLanguage(language) || content == "" {
+		return content
+	}
+	if hasXiaomiCantoneseTag(content) {
+		content = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(content, "(粤语)"), "（粤语）"))
+	}
+	content = contentquality.NormalizeCantoneseSpeechText(content)
+	if content == "" {
+		return ""
+	}
+	// MiMo 官方文档将“粤语”列为 assistant 文本开头的音频标签。使用内置
+	// TTS 加该标签可避免自动 VoiceDesign/VoiceClone 带来的额外时延和音色漂移。
+	return "(粤语)" + content
+}
+
+func hasXiaomiCantoneseTag(text string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(text))
+	return strings.HasPrefix(trimmed, "(粤语)") ||
+		strings.HasPrefix(trimmed, "（粤语）") ||
+		strings.HasPrefix(trimmed, "(cantonese)") ||
+		strings.HasPrefix(trimmed, "（cantonese）")
 }
 
 func minimaxLanguageBoost(language string) string {
@@ -1054,6 +1315,10 @@ func mapLocalTTSPath(apiURL string, localPath string) string {
 var englishLetter = regexp.MustCompile(`[A-Za-z]`)
 
 func buildInstruction(text string, language string, voiceStyle string) string {
+	return buildInstructionWithContext(text, language, voiceStyle, "")
+}
+
+func buildInstructionWithContext(text string, language string, voiceStyle string, dialogueContext string) string {
 	style := normalizeVoiceStyle(voiceStyle)
 	if style == "" {
 		style = "温柔女生"
@@ -1061,9 +1326,31 @@ func buildInstruction(text string, language string, voiceStyle string) string {
 	base := voiceStyleInstruction(style) + "，保持中速偏自然的稳定语速，按标点做短停顿，不要忽快忽慢，不要拖长句尾，像真实生活场景中的对话，不要播报腔。"
 	lang := strings.ToUpper(strings.TrimSpace(language))
 	if lang == "CANTONESE" {
-		return "請用香港粵語/廣東話朗讀，只可用粵語發音，不要使用普通話或國語腔；即使文本包含英文地名、人名或品牌名，也保持港式粵語語流。全段用一致節奏朗讀，中速偏自然，每句只作短停頓，不要突然加速、突然放慢或刻意拉長尾音。" + base
+		persona := cantoneseVoicePersona(style)
+		contextNote := normalizeTTSDialogueContext(dialogueContext)
+		if contextNote != "" {
+			contextNote = "對話背景只作語氣參考，唔需要讀出：" + contextNote + "。"
+		}
+		englishNote := ""
+		if englishLetter.MatchString(text) {
+			englishNote = "英文字母按前後粵語語意自然帶過。"
+		}
+		return contextNote + "使用自然香港粵語，以真實傾偈方式講出 assistant 原文。角色聲線：" + persona + "。語速自然略快，句子連貫，逗號輕輕帶過，句尾自然收束。" + englishNote
 	}
 	return base
+}
+
+func normalizeTTSDialogueContext(value string) string {
+	clean := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if clean == "" {
+		return ""
+	}
+	const maxRunes = 320
+	runes := []rune(clean)
+	if len(runes) > maxRunes {
+		clean = string(runes[:maxRunes])
+	}
+	return clean
 }
 
 func resolveVoiceSelection(requestedVoice string, defaultVoice string) (string, string) {
