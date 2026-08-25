@@ -61,7 +61,9 @@ const (
 	defaultAliyunTTSModel        = "cosyvoice-v3-flash"
 	defaultAliyunTTSVoice        = "longjiaxin_v3"
 	defaultTTSAudioFormat        = "mp3"
-	xiaomiVoiceSeedVersion       = "cantonese-natural-v2"
+	// Bump this whenever the VoiceDesign prompt/sample strategy changes. Older
+	// seeds may contain Mandarin prosody and must not be reused for Cantonese.
+	xiaomiVoiceSeedVersion = "cantonese-natural-v4"
 )
 
 var xiaomiPresetVoices = map[string]struct{}{
@@ -224,9 +226,10 @@ func (t *APITTS) DesignVoice(ctx context.Context, prompt string, language string
 	if prompt == "" {
 		return "", errors.New("voice design prompt is required")
 	}
+	voiceDesignPrompt := xiaomiVoiceDesignPromptFromUserPrompt(prompt, language)
 	messages, audio, err := buildXiaomiMessagesAndAudio(
 		xiaomiTTSVoiceDesignModel,
-		prompt,
+		voiceDesignPrompt,
 		config.AudioFormat,
 		xiaomiVoiceDesignSampleText(language),
 		language,
@@ -395,6 +398,12 @@ func (t *APITTS) synthesizeXiaomi(ctx context.Context, config domain.TTSConfig, 
 		}
 		return t.doXiaomiSynthesis(ctx, config, model, messages, audio)
 	}
+	// MiMo's built-in preset voices are not Cantonese voices. For Cantonese,
+	// always create/reuse a dialect-specific seed and synthesize with
+	// VoiceClone so the final audio inherits the Cantonese timbre and cadence.
+	if isCantoneseLanguage(language) {
+		return t.synthesizeXiaomiWithDesignedClone(ctx, config, text, language, requestedVoice, dialogueContext)
+	}
 	if presetVoice := xiaomiAutomaticPresetVoice(requestedVoice); presetVoice != "" {
 		messages, audio, buildErr := buildXiaomiMessagesAndAudioWithContext(model, presetVoice, config.AudioFormat, text, language, requestedVoice, dialogueContext)
 		if buildErr != nil {
@@ -409,7 +418,7 @@ func (t *APITTS) synthesizeXiaomi(ctx context.Context, config domain.TTSConfig, 
 	return t.doXiaomiSynthesis(ctx, config, model, messages, audio)
 }
 
-func (t *APITTS) synthesizeXiaomiWithDesignedClone(ctx context.Context, config domain.TTSConfig, text string, language string, requestedVoice string) (string, error) {
+func (t *APITTS) synthesizeXiaomiWithDesignedClone(ctx context.Context, config domain.TTSConfig, text string, language string, requestedVoice string, dialogueContext string) (string, error) {
 	style := normalizeVoiceStyle(requestedVoice)
 	if style == "" {
 		// MiMo does not expose a Cantonese locale or a Cantonese preset voice.
@@ -425,7 +434,7 @@ func (t *APITTS) synthesizeXiaomiWithDesignedClone(ctx context.Context, config d
 	if seedErr != nil {
 		return "", seedErr
 	}
-	messages, audio, buildErr := buildXiaomiMessagesAndAudio(xiaomiTTSVoiceCloneModel, seedAudio, config.AudioFormat, text, language, requestedVoice)
+	messages, audio, buildErr := buildXiaomiMessagesAndAudioWithContext(xiaomiTTSVoiceCloneModel, seedAudio, config.AudioFormat, text, language, requestedVoice, dialogueContext)
 	if buildErr != nil {
 		return "", buildErr
 	}
@@ -824,10 +833,6 @@ func xiaomiAutomaticPresetVoice(requestedVoice string) string {
 	return xiaomiAutomaticPresetByStyle[normalizeVoiceStyle(clean)]
 }
 
-func shouldUseXiaomiDesignedCloneFlow(requestedVoice string) bool {
-	return normalizeVoiceStyle(requestedVoice) != ""
-}
-
 func isCantoneseLanguage(language string) bool {
 	return strings.EqualFold(strings.TrimSpace(language), "CANTONESE")
 }
@@ -848,6 +853,25 @@ func xiaomiVoiceDesignPrompt(style string, language string) string {
 		return fmt.Sprintf("Design a distinct %s character voice for natural English learning dialogues. Keep the voice realistic, emotionally stable and clearly differentiated from other characters, with steady pacing and no announcer tone.", normalizedStyle)
 	default:
 		return fmt.Sprintf("请设计一个%s的声音，音色真实自然，情绪稳定，吐字清晰，保持稳定语速，不要播报腔。", normalizedStyle)
+	}
+}
+
+// xiaomiVoiceDesignPromptFromUserPrompt preserves the user's character
+// description while adding the language constraints that VoiceDesign needs.
+// The regular TTS language tag is not sufficient for a VoiceDesign seed: the
+// model also needs the requested dialect spelled out in the design instruction.
+func xiaomiVoiceDesignPromptFromUserPrompt(prompt string, language string) string {
+	cleanPrompt := strings.TrimSpace(prompt)
+	if cleanPrompt == "" {
+		cleanPrompt = defaultXiaomiVoiceDesignText
+	}
+	switch strings.ToUpper(strings.TrimSpace(language)) {
+	case "CANTONESE":
+		return fmt.Sprintf("語言要求：香港粵語（Hong Kong Cantonese／Yue），唔係普通話、國語或者書面中文。請按照以下角色描述設計音色：%s。生成的示範聲音必須由頭到尾用自然香港粵語發音，清楚呈現粵語九聲嘅高低變化、連讀、弱讀同句尾語氣；唔可以將粵語口語字當普通話讀。只保留真實日常傾偈節奏，唔好加入旁白、笑聲、氣聲、戲劇化停頓或者播音腔。示範文字開頭嘅語言標記唔需要讀出。", cleanPrompt)
+	case "ENGLISH":
+		return fmt.Sprintf("Language requirement: natural English. Design the character voice described below for clear everyday English speech: %s. Keep stable pacing, natural short pauses and realistic intonation. Do not read any language label aloud, add narration, or use an announcer voice.", cleanPrompt)
+	default:
+		return cleanPrompt
 	}
 }
 
@@ -885,7 +909,7 @@ func cantoneseVoicePersona(style string) string {
 func xiaomiVoiceDesignSampleText(language string) string {
 	switch strings.ToUpper(strings.TrimSpace(language)) {
 	case "CANTONESE":
-		return "早晨，唔該你幫我留一張枱。我想要一杯熱奶茶，少甜，拎走呀。我哋兩點左右到，想坐近窗邊。今日交通有啲慢，不過我會提早十分鐘出門口。你聽日得唔得閒一齊食飯？如果落雨，我哋就改約下星期，唔使急，慢慢傾都得。你收到訊息之後覆我一聲，好嗎？"
+		return "早晨，唔該你幫我留一張枱。我哋而家喺地鐵站出口，想問下仲有冇靠窗位？如果冇都唔緊要，坐邊度都得。你聽日得唔得閒一齊食飯？如果落雨，我哋就改期，遲啲再傾啦。"
 	case "ENGLISH":
 		return "Hello, welcome to LinguaQuest. Today we are going to practise a natural everyday conversation. I will speak clearly, but I will keep the rhythm relaxed. If you need more time, pause and listen again. When you are ready, answer in your own words, and we can continue together."
 	default:
@@ -1019,9 +1043,10 @@ func xiaomiSynthesisText(text string, language string) string {
 	if content == "" {
 		return ""
 	}
-	// MiMo 官方文档将“粤语”列为 assistant 文本开头的音频标签。使用内置
-	// TTS 加该标签可避免自动 VoiceDesign/VoiceClone 带来的额外时延和音色漂移。
-	return "(粤语)" + content
+	// Xiaomi's official TTS schema does not define a language tag parameter.
+	// The dialect is carried by the VoiceDesign/VoiceClone seed, so assistant
+	// content must remain the exact Cantonese text to synthesize.
+	return content
 }
 
 func hasXiaomiCantoneseTag(text string) bool {
@@ -1335,7 +1360,7 @@ func buildInstructionWithContext(text string, language string, voiceStyle string
 		if englishLetter.MatchString(text) {
 			englishNote = "英文字母按前後粵語語意自然帶過。"
 		}
-		return contextNote + "使用自然香港粵語，以真實傾偈方式講出 assistant 原文。角色聲線：" + persona + "。語速自然略快，句子連貫，逗號輕輕帶過，句尾自然收束。" + englishNote
+		return contextNote + "使用自然香港粵語，以真實傾偈方式講出 assistant 原文。角色聲線：" + persona + "。請用自然中速一口氣連貫講完，唔好逐字朗讀，唔好將短語拆成一格格；逗號只作極短換氣，句號、問號或感嘆號先自然收尾，句尾唔好拖長，唔好忽快忽慢。" + englishNote
 	}
 	return base
 }

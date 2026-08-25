@@ -6,6 +6,7 @@ import { ArrowLeft, AtSign, Compass, KeyRound, LifeBuoy, Mail, Route, ShieldChec
 import { login, loginCandidates, me, register, requestEmailVerification, requestPasswordReset, requestUsernameRecovery, resetPassword, verifyEmail } from "../api";
 import type { AuthResult, LoginCandidate } from "../types";
 import { useAppStore } from "../store";
+import { currentProductVersion } from "../product";
 
 type Screen = "login" | "register" | "forgot-password" | "forgot-username" | "account-select" | "reset" | "verify" | "verification-pending";
 type SelectionAction = "login" | "reset" | "verify";
@@ -314,7 +315,7 @@ export function LoginPage() {
           <p>英语：日常场景 -&gt; 职场交流 -&gt; 雅思口语</p>
           <div className="mini-progress" aria-hidden><span style={{ width: "64%" }} /></div>
 			<p><Compass size={14} /> 邮箱验证后可安全恢复学习进度。</p>
-			<Link className="auth-release-notes-link" to="/updates">查看 V1.0.1 版本说明</Link>
+			<Link className="auth-release-notes-link" to="/updates">查看 V{currentProductVersion} 版本说明</Link>
 		</aside>
       </motion.section>
     </main>

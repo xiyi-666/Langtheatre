@@ -321,6 +321,7 @@ The first turn must immediately enter a concrete real-life situation with action
 If the topic is written in Simplified Chinese and the language is CANTONESE, first reinterpret the topic into a natural Hong Kong Cantonese life scenario internally, then write the dialogue in authentic Hong Kong Cantonese.
 For CANTONESE, dialogue text must use genuinely colloquial Hong Kong Cantonese wording and grammar, with natural expressions such as 我哋、你哋、而家、唔該、冇、係咪、喺、嘅、咗、啲、嗰個 when contextually appropriate.
 Do not write Mandarin sentences and merely convert them to Traditional Chinese. For example, avoid dialogue patterns such as 我們現在、請問您、可以嗎、沒有問題、這裡是; rewrite them as natural spoken Cantonese instead.
+Do not stack menu/order keywords without connectors. Write complete spoken phrases such as 一杯少甜嘅凍奶茶 or 我想要一杯少甜嘅凍奶茶, never 凍奶茶少甜 or 凍奶茶要少甜.
 For CANTONESE, dialogues[].text must not contain A-Z letters, English words, English abbreviations or bracketed English explanations. Convert common terms into natural Hong Kong Chinese before returning JSON.
 For CANTONESE, keep each turn to one or two naturally connected short sentences. Do not use semicolons, ellipses, bracketed asides or repeated punctuation; use commas only where a real speaker would take a very short breath.
 All dialogue turns must stay consistent with the provided scenario brief.

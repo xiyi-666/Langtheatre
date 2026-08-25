@@ -17,6 +17,8 @@ var (
 	cantoneseRepeatedQuestionRE      = regexp.MustCompile(`[？?]+`)
 	cantonesePauseBeforeSentenceRE   = regexp.MustCompile(`，+([。！？])`)
 	cantoneseWhitespacePunctuationRE = regexp.MustCompile(`\s*([，。！？：])\s*`)
+	cantoneseDrinkModifierWithCupRE  = regexp.MustCompile(`一杯((?:凍|冻|熱|热)?(?:奶茶|檸茶|柠茶|咖啡|鴛鴦|鸳鸯|檸水|柠水|朱古力|利賓納|利宾纳|可樂|可乐))(?:要)?(少甜|走甜|少冰|走冰)([，。！？]|$)`)
+	cantoneseDrinkModifierRE         = regexp.MustCompile(`((?:凍|冻|熱|热)?(?:奶茶|檸茶|柠茶|咖啡|鴛鴦|鸳鸯|檸水|柠水|朱古力|利賓納|利宾纳|可樂|可乐))(?:要)?(少甜|走甜|少冰|走冰)([，。！？]|$)`)
 )
 
 var cantoneseLatinReplacements = []struct {
@@ -139,6 +141,11 @@ func NormalizeCantoneseSpeechText(text string) string {
 	clean = cantoneseRepeatedQuestionRE.ReplaceAllString(clean, "？")
 	clean = cantonesePauseBeforeSentenceRE.ReplaceAllString(clean, "$1")
 	clean = cantoneseWhitespacePunctuationRE.ReplaceAllString(clean, "$1")
+	// Menu-style keyword stacks such as "凍奶茶少甜" often make TTS read
+	// syllable by syllable. Rewrite them as a complete Cantonese noun phrase,
+	// which gives the synthesizer a natural prosodic unit.
+	clean = cantoneseDrinkModifierWithCupRE.ReplaceAllString(clean, "一杯${2}嘅${1}${3}")
+	clean = cantoneseDrinkModifierRE.ReplaceAllString(clean, "一杯${2}嘅${1}${3}")
 	clean = strings.Trim(clean, " ，,")
 	if !ContainsLatinLetters(clean) {
 		clean = strings.Join(strings.Fields(clean), "")

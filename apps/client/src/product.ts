@@ -7,9 +7,20 @@ export type ReleaseNote = {
 };
 
 // 发布新版本时只需在这里置顶添加一条记录，并同步更新 package.json 的版本号。
-export const currentProductVersion = "1.0.1";
+export const currentProductVersion = "1.0.2";
 
 export const releaseNotes: ReleaseNote[] = [
+  {
+    version: "1.0.2",
+    releasedOn: "2026-08-25",
+    title: "粤语语音体验优化",
+    summary: "优化粤语对话文本和小米 TTS 合成链路，让点单等生活场景的语气更连贯。",
+    highlights: [
+      "粤语饮品要求改写为更自然的口语结构，减少逐字朗读感。",
+      "粤语 VoiceDesign 与 VoiceClone 增加香港粤语约束和对话上下文。",
+      "小程序版同步发布最新前端、后端和多平台安装包。"
+    ]
+  },
   {
     version: "1.0.1",
     releasedOn: "2026-08-02",

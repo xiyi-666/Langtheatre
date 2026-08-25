@@ -21,6 +21,7 @@ import {
   type XiaomiTTSModelId
 } from "../ttsProviders";
 import type { ASRConfig, ModelConfig, TTSConfig } from "../types";
+import { currentProductVersion } from "../product";
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -802,7 +803,7 @@ export function ProfilePage() {
 			</article>
 
 			<article className="stage-banner profile-voice-library-link settings-voice-library-card release-notes-profile-link">
-				<div><strong><History size={16} /> 产品更新日志</strong><p style={{ margin: "6px 0 0" }}>当前 V1.0.1：查看已上线功能和之后每一次的版本更新。</p></div>
+				<div><strong><History size={16} /> 产品更新日志</strong><p style={{ margin: "6px 0 0" }}>当前 V{currentProductVersion}：查看已上线功能和之后每一次的版本更新。</p></div>
 				<button type="button" onClick={() => navigate("/updates")}>查看更新</button>
 			</article>
         </div>

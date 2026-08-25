@@ -27,6 +27,22 @@ func TestNormalizeCantoneseSpeechTextReducesPausesAndEnglishTerms(t *testing.T) 
 	}
 }
 
+func TestNormalizeCantoneseSpeechTextConnectsDrinkModifiers(t *testing.T) {
+	input := "如果賣晒，就要火腿通粉，凍奶茶少甜。"
+	want := "如果賣晒，就要火腿通粉，一杯少甜嘅凍奶茶。"
+	if got := NormalizeCantoneseSpeechText(input); got != want {
+		t.Fatalf("NormalizeCantoneseSpeechText() = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeCantoneseSpeechTextDoesNotDuplicateCupMeasure(t *testing.T) {
+	input := "我要一杯凍奶茶要少甜。"
+	want := "我要一杯少甜嘅凍奶茶。"
+	if got := NormalizeCantoneseSpeechText(input); got != want {
+		t.Fatalf("NormalizeCantoneseSpeechText() = %q, want %q", got, want)
+	}
+}
+
 func TestContainsLatinLetters(t *testing.T) {
 	if !ContainsLatinLetters("用 app 登記") {
 		t.Fatal("expected Latin text to be detected")
