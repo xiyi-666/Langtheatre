@@ -164,6 +164,13 @@ func main() {
 		},
 		Analytics: analyticsReporter,
 	})
+	if !cfg.IsOpenSourceEdition() {
+		if err := svc.EnsureDemoFixtures(); err != nil {
+			log.Printf("demo fixtures unavailable: %v", err)
+		} else {
+			log.Printf("demo fixtures are ready")
+		}
+	}
 	schema, err := graph.NewSchema(svc)
 	if err != nil {
 		log.Fatalf("failed to build schema: %v", err)

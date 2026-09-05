@@ -4,8 +4,10 @@ import { motion } from "framer-motion";
 import { Clapperboard, Compass, Languages, Sparkles } from "lucide-react";
 import { generateTheater, getTheater, getVoiceProfiles } from "../api";
 import { AICreditCostNotice } from "../components/AICreditCostNotice";
+import { DemoGenerationProgress } from "../components/DemoGenerationProgress";
 import { useAppStore } from "../store";
 import type { VoiceProfile } from "../types";
+import { getDemoSessionDifficulty, isDemoUser, waitForDemoGeneration } from "../demoExperience";
 
 const GENERATION_STATUS_STEPS = [
   {
@@ -68,13 +70,13 @@ const routeMap = {
     topicSeeds: ["讨论香港茶餐厅文化", "搭地铁问路", "街市买菜讲价", "描述一个你尊敬的人"]
   },
   ENGLISH: {
-    title: "English Learning Route",
-    subtitle: "Build fluency with daily interactions, workplace talk, and IELTS tasks",
+    title: "英语学习路线",
+    subtitle: "从日常交流到雅思任务，逐级提升英语听力与表达",
     points: [
-      { title: "Stage 01", detail: "Daily language: coffee shop ordering / city directions" },
-      { title: "Stage 02", detail: "Workplace talk: interview / team meeting" },
-      { title: "Stage 03", detail: "IELTS topics: admire a person / memorable journey" },
-      { title: "Stage 04", detail: "Debate drills: AI in education / climate discussion" }
+      { title: "阶段 01", detail: "日常交流：咖啡店点餐 / 城市问路" },
+      { title: "阶段 02", detail: "职场交流：面试 / 团队会议" },
+      { title: "阶段 03", detail: "雅思话题：描述人物 / 难忘旅程" },
+      { title: "阶段 04", detail: "观点训练：教育中的人工智能 / 气候议题" }
     ],
     topicSeeds: [
       "Ordering at a coffee shop",
@@ -142,8 +144,21 @@ export function GeneratePage() {
   const loading = useAppStore((s) => s.loading);
   const setLoading = useAppStore((s) => s.setLoading);
   const setTheater = useAppStore((s) => s.setTheater);
+  const user = useAppStore((s) => s.user);
+  const demoUser = isDemoUser(user);
   const navigate = useNavigate();
   const difficultyInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+		if (!demoUser) return;
+    const assigned = getDemoSessionDifficulty(user);
+    if (!assigned) return;
+    const hasPresetStage = searchParams.has("stage");
+    const stageIndex = hasPresetStage ? presetStage : assigned === 7.5 ? 4 : assigned === 6.5 ? 2 : 0;
+    setActiveStage(stageIndex);
+    setDifficultyText(hasPresetStage ? stageDifficultyText(language, stageIndex) : assigned.toFixed(1));
+    setTopic(presetTopic || stageTopicSeeds[language][stageIndex]?.[0] || routeMap[language].topicSeeds[0]);
+  }, [demoUser, language, presetStage, presetTopic, searchParams, user]);
 
   const routeInfo = useMemo(() => routeMap[language], [language]);
   const stageSeeds = useMemo(() => {
@@ -175,9 +190,10 @@ export function GeneratePage() {
       return;
     }
     const startedAt = Date.now();
+    const averageDuration = demoUser ? 1400 : GENERATION_AVERAGE_DURATION_MS;
     const timer = window.setInterval(() => {
       const elapsedMs = Date.now() - startedAt;
-      const progressRatio = Math.min(elapsedMs / GENERATION_AVERAGE_DURATION_MS, 1);
+      const progressRatio = Math.min(elapsedMs / averageDuration, 1);
       const easedRatio = 1 - Math.pow(1 - progressRatio, 1.15);
       const nextProgress = Math.min(GENERATION_PROGRESS_CAP, Math.round(easedRatio * GENERATION_PROGRESS_CAP));
       setProgress((value) => (nextProgress > value ? nextProgress : value));
@@ -187,7 +203,7 @@ export function GeneratePage() {
     return () => {
       window.clearInterval(timer);
     };
-  }, [loading]);
+  }, [demoUser, loading]);
 
   useEffect(() => {
     if (!pendingTheaterId) {
@@ -255,6 +271,7 @@ export function GeneratePage() {
       return;
     }
     setLoading(true);
+    const startedAt = Date.now();
     try {
       const theater = await generateTheater({
         language,
@@ -266,6 +283,12 @@ export function GeneratePage() {
       });
       setTheater(theater);
       if (theater.status === "READY") {
+        if (demoUser) {
+          await waitForDemoGeneration(startedAt, 1400);
+          setStatusIndex(GENERATION_STATUS_STEPS.length - 1);
+          setProgress(100);
+          await new Promise((resolve) => window.setTimeout(resolve, 350));
+        }
         setProgress(100);
         setLoading(false);
         navigate(`/theater/${theater.id}`);
@@ -338,10 +361,10 @@ export function GeneratePage() {
           </div>
 
           <div className="row" style={{ marginTop: 8 }}>
-            <small>当前阶段预设：{language === "CANTONESE" ? `阶段 ${String(activeStage + 1).padStart(2, "0")}` : `Stage ${String(activeStage + 1).padStart(2, "0")}`}</small>
+            <small>当前阶段预设：阶段 {String(activeStage + 1).padStart(2, "0")}</small>
           </div>
 
-          <div className="section-kicker">Stage Composer</div>
+          <div className="section-kicker">阶段生成器</div>
           <h3>{routeInfo.title}</h3>
           <div className="route-grid">
             {routeInfo.points.map((point) => (
@@ -435,7 +458,7 @@ export function GeneratePage() {
             ) : null}
           </section>
 
-          <AICreditCostNotice action="THEATER_GENERATION" />
+          {demoUser ? <article className="stage-banner" style={{ marginTop: 12 }}><strong>演示模式 · 学习权限已开放</strong><p>所有剧场阶段和难度入口均可体验预置内容，不调用 AI、TTS 或 ASR，也不消耗点数。</p></article> : <AICreditCostNotice action="THEATER_GENERATION" />}
           <div className="row" style={{ marginTop: 14 }}>
             <button type="submit" disabled={loading}>
               {loading ? "剧场生成中..." : "开始生成剧场"}
@@ -444,11 +467,19 @@ export function GeneratePage() {
             <button type="button" className="btn-ghost" onClick={() => navigate("/courses")}>课程中心</button>
           </div>
           {generationError ? <p style={{ marginTop: 12, color: "#a6422b" }}>{generationError}</p> : null}
+          <DemoGenerationProgress
+            active={demoUser && loading}
+            complete={demoUser && progress === 100}
+            title="正在准备你的演示剧场"
+            note="正在载入预置双人对白与音频，不调用真实 AI、TTS 或 ASR。"
+            steps={["确认剧场主题", "整理双人对白", "准备剧场音频", "即将进入剧场"]}
+            minimumMs={1400}
+          />
         </form>
 
         <aside className="floating-panel">
           <div className="row" style={{ alignItems: "center", justifyContent: "space-between" }}>
-            <h3 style={{ margin: 0 }}>生成进度</h3>
+            <h3 style={{ margin: 0 }}>{demoUser ? "演示剧场准备进度" : "生成进度"}</h3>
             <div className={loading ? "spin-core" : "spin-core paused"} />
           </div>
           <div className="progress-shell">
@@ -481,7 +512,7 @@ export function GeneratePage() {
             <p key={`hint-${loading ? statusIndex : "idle"}`} className="status-dynamic-hint">
               {loading ? GENERATION_STATUS_STEPS[statusIndex]?.hint : "点击“开始生成剧场”后，将按阶段依次生成并自动推进。"}
             </p>
-            <small className="status-soft-note">剧场会先异步生成，待语音完成后自动进入详情页</small>
+            <small className="status-soft-note">{demoUser ? "预置内容准备完成后自动进入详情页，不会产生 AI 消耗" : "剧场会先异步生成，待语音完成后自动进入详情页"}</small>
           </div>
         </aside>
       </motion.section>

@@ -3,6 +3,8 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, AudioLines, CheckCircle2, Clock3, Plus, RefreshCw, Trash2, Volume2, Waves } from "lucide-react";
 import { approveVoiceProfile, deleteVoiceProfile, getVoiceProfiles } from "../api";
 import { resolveAudioUrl } from "../audio";
+import { isDemoUser } from "../demoExperience";
+import { useAppStore } from "../store";
 import type { VoiceProfile } from "../types";
 
 type VoiceFilter = "ALL" | "CANTONESE" | "ENGLISH";
@@ -30,6 +32,8 @@ function previewQualityMessage(duration?: number) {
 export function VoiceLibraryPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const user = useAppStore((state) => state.user);
+  const demoMode = isDemoUser(user);
   const [profiles, setProfiles] = useState<VoiceProfile[]>([]);
   const [filter, setFilter] = useState<VoiceFilter>("ALL");
   const [loading, setLoading] = useState(true);
@@ -129,6 +133,13 @@ export function VoiceLibraryPage() {
         </div>
       </section>
 
+      {demoMode ? (
+        <section className="stage-banner" role="status">
+          <strong>演示模式 · 音色库权限已开放</strong>
+          <p>这里的音色均为预置演示结果。你可以筛选、创建和删除，整个过程不会调用 TTS 或消耗 AI 点数。</p>
+        </section>
+      ) : null}
+
       <section className="voice-library-toolbar voice-library-console" aria-label="音色筛选">
         <div className="voice-library-stats">
           <span className="voice-console-label">浏览音色</span>
@@ -194,7 +205,7 @@ export function VoiceLibraryPage() {
                 onError={() => setPreviewErrors((current) => ({ ...current, [profile.id]: "试听音频无法解码" }))}
               >你的浏览器不支持音频预览。</audio>
             ) : (
-              <div className="voice-preview-pending"><Volume2 size={16} /> {profile.status === "FAILED" ? "暂无试听音频" : "试听音频生成后会出现在这里"}</div>
+              <div className="voice-preview-pending"><Volume2 size={16} /> {profile.provider === "DEMO" ? "该演示音色已准备，可用于体验；当前没有独立试听文件" : profile.status === "FAILED" ? "暂无试听音频" : "试听音频生成后会出现在这里"}</div>
             )}
             {profile.status === "PREVIEW" ? (
               <div className="voice-preview-review">

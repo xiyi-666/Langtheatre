@@ -73,7 +73,7 @@ export function resolveAudioUrl(url: string): string {
   return clean;
 }
 
-export function speakText(text: string, rate = 1): Promise<void> {
+export function speakText(text: string, rate = 1, lang = "en-US"): Promise<void> {
   return new Promise((resolve, reject) => {
     const synth = window.speechSynthesis;
     if (!synth || !text.trim()) {
@@ -82,9 +82,20 @@ export function speakText(text: string, rate = 1): Promise<void> {
     }
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = rate;
+    utterance.lang = lang;
     utterance.onend = () => resolve();
     utterance.onerror = () => reject(new Error("Speech synthesis failed"));
     synth.cancel();
     synth.speak(utterance);
   });
+}
+
+/** 停止当前文件音频或浏览器语音，切换演示内容时调用。 */
+export function stopAudioPlayback(): void {
+  if (activeClip) {
+    activeClip.stop();
+    activeClip.unload();
+    activeClip = null;
+  }
+  window.speechSynthesis?.cancel();
 }

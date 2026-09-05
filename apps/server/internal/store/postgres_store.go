@@ -1091,6 +1091,24 @@ func (s *PostgresStore) DeleteWritingSession(userID string, sessionID string) er
 	return nil
 }
 
+func (s *PostgresStore) GetDemoAssignment(userID string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var difficulty string
+	err := s.pool.QueryRow(ctx, `SELECT difficulty FROM demo_assignments WHERE user_id = $1::uuid`, userID).Scan(&difficulty)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errors.New("demo assignment not found")
+	}
+	return difficulty, err
+}
+
+func (s *PostgresStore) SaveDemoAssignment(userID string, difficulty string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := s.pool.Exec(ctx, `INSERT INTO demo_assignments (user_id, difficulty) VALUES ($1::uuid, $2) ON CONFLICT (user_id) DO UPDATE SET difficulty = EXCLUDED.difficulty`, userID, difficulty)
+	return err
+}
+
 func (s *PostgresStore) scanWritingSession(scanner interface{ Scan(dest ...any) error }) (domain.WritingSession, error) {
 	var item domain.WritingSession
 	var prompt, evaluation []byte

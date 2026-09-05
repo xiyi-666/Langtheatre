@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, BookOpenText, ChevronLeft, ChevronRight, ClipboardCheck, MenuSquare, Trash2 } from "lucide-react";
 import { deleteReadingMaterial, getApiBaseUrl, readingMaterial, submitReadingAnswers } from "../api";
+import { speakText, stopAudioPlayback } from "../audio";
 import { useAppStore } from "../store";
 import type { ReadingMaterial } from "../types";
 
@@ -67,6 +68,7 @@ export function ReadingDetailPage() {
   const [mergedAudioUrl, setMergedAudioUrl] = useState("");
   const [audioMergeState, setAudioMergeState] = useState<AudioMergeState>("idle");
   const [audioMergeMessage, setAudioMergeMessage] = useState("");
+  const [browserAudioPlaying, setBrowserAudioPlaying] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(12);
   const [loadingHintIndex, setLoadingHintIndex] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -78,6 +80,23 @@ export function ReadingDetailPage() {
   const refreshUserXP = useAppStore((s) => s.refreshUserXP);
 
   const activeView = view === "quiz" ? "quiz" : "article";
+
+  async function toggleBrowserAudio() {
+    if (!item?.passage) return;
+    if (browserAudioPlaying) {
+      stopAudioPlayback();
+      setBrowserAudioPlaying(false);
+      return;
+    }
+    setBrowserAudioPlaying(true);
+    try {
+      await speakText(item.passage, 0.95, "en-US");
+    } catch {
+      setSubmitError("当前浏览器不支持语音朗读，请检查系统语音设置。");
+    } finally {
+      setBrowserAudioPlaying(false);
+    }
+  }
 
   const passageParagraphs = useMemo(() => {
     if (!item?.passage) return [] as string[];
@@ -490,6 +509,8 @@ export function ReadingDetailPage() {
                       <track kind="captions" />
                     </audio>
                   </div>
+                ) : item.status === "READY" ? (
+                  <div className="audio-inline"><button type="button" className="btn-ghost" onClick={() => void toggleBrowserAudio()}>{browserAudioPlaying ? "停止浏览器朗读" : "播放浏览器朗读"}</button><small>演示内容使用浏览器英语语音，不调用 AI。</small></div>
                 ) : (
                   <p>{item.audioStatus === "FAILED" ? "音频生成失败，请重新生成材料。" : "音频后台生成中，完成后可播放。"}</p>
                 )}

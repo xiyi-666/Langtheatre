@@ -48,7 +48,7 @@ export const useAppStore = create<AppState>((set) => ({
       return profile;
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : "";
-      if (message.includes("unauthorized")) {
+		if (message.includes("unauthorized") || message.includes("未授权") || message.includes("登录状态已失效")) {
         localStorage.removeItem("accessToken");
         set({ user: undefined });
         return undefined;

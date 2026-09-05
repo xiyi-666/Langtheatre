@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { trackClick } from "../api";
 import { motion } from "framer-motion";
@@ -7,6 +7,7 @@ import { login, loginCandidates, me, register, requestEmailVerification, request
 import type { AuthResult, LoginCandidate } from "../types";
 import { useAppStore } from "../store";
 import { currentProductVersion } from "../product";
+import { isMiniProgramEdition } from "../edition";
 
 type Screen = "login" | "register" | "forgot-password" | "forgot-username" | "account-select" | "reset" | "verify" | "verification-pending";
 type SelectionAction = "login" | "reset" | "verify";
@@ -17,6 +18,7 @@ export function LoginPage() {
   const [searchParams] = useSearchParams();
   const verifyToken = searchParams.get("verify")?.trim() ?? "";
   const resetToken = searchParams.get("reset")?.trim() ?? "";
+  const demoEntry = searchParams.get("from") === "demo";
   const [screen, setScreen] = useState<Screen>(() => (verifyToken ? "verify" : resetToken ? "reset" : "login"));
   const [identifier, setIdentifier] = useState("");
   const [username, setUsername] = useState("");
@@ -31,6 +33,7 @@ export function LoginPage() {
   const setLoading = useAppStore((state) => state.setLoading);
   const loading = useAppStore((state) => state.loading);
   const navigate = useNavigate();
+  const demoAutoLoginStarted = useRef(false);
 
   const passwordIsStrong = useMemo(() => passwordRule.test(password), [password]);
 
@@ -53,8 +56,28 @@ export function LoginPage() {
 		}
     const profile = await me();
     setUser(profile);
+    const pendingKey = `linguaquest:onboarding:pending:${profile.id}`;
+    if (result.onboardingRequired) {
+      localStorage.setItem(pendingKey, "1");
+    }
+    // 演示页是登录前预览；认证成功后应进入产品，而不是再次回到演示页形成视觉上的原地跳转。
     navigate("/courses");
   }, [navigate, setUser]);
+
+  useEffect(() => {
+    if (!demoEntry || verifyToken || resetToken || demoAutoLoginStarted.current) return;
+    demoAutoLoginStarted.current = true;
+    setIdentifier("lingua_demo_0903");
+    setPassword("LqDemo2026!");
+    setMessage("正在进入演示账号，演示内容不会消耗 AI 点数…");
+    setLoading(true);
+    void login("lingua_demo_0903", "LqDemo2026!")
+      .then((result) => completeAuth(result))
+      .catch((caught: unknown) => {
+        setError((caught as Error).message || "演示账号暂时无法登录，请稍后重试。");
+      })
+      .finally(() => setLoading(false));
+  }, [completeAuth, demoEntry, resetToken, setLoading, verifyToken]);
 
   useEffect(() => {
     if (!verifyToken || screen !== "verify") return;
@@ -63,6 +86,10 @@ export function LoginPage() {
     void verifyEmail(verifyToken)
       .then(async (result) => {
         if (!active) return;
+        // 兼容旧后端：邮箱验证本身只会来自新注册流程，字段缺失时仍应触发一次引导。
+        if (result.userId) {
+          localStorage.setItem(`linguaquest:onboarding:pending:${result.userId}`, "1");
+        }
         await completeAuth(result);
       })
       .catch((caught: unknown) => {
@@ -111,8 +138,15 @@ export function LoginPage() {
     try {
       const result = await register(username, email, password);
       if (result.accessToken) {
+        // 先写入待引导标记，兼容尚未返回 onboardingRequired 的旧后端。
+        if (result.userId) {
+          localStorage.setItem(`linguaquest:onboarding:pending:${result.userId}`, "1");
+        }
         await completeAuth(result);
         return;
+      }
+      if (result.userId) {
+        localStorage.setItem(`linguaquest:onboarding:pending:${result.userId}`, "1");
       }
       setIdentifier(email);
       setMessage(result.message || "账号已创建，请前往邮箱完成验证。");
@@ -257,6 +291,7 @@ export function LoginPage() {
               </div>
             </section>
             <button type="button" className="btn-ghost" onClick={() => { trackClick("LOGIN_REGISTER_ENTRY"); begin("register"); }}>没有账号，去注册</button>
+            {isMiniProgramEdition ? <Link className="demo-login-entry" to="/demo" onClick={() => trackClick("LOGIN_DEMO_ENTRY")}><Compass size={16} /> 先看演示，再开始学习</Link> : null}
           </form> : null}
 
           {screen === "register" ? <form onSubmit={handleRegister}>

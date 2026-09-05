@@ -86,30 +86,122 @@ type GraphQLResponse<T> = {
   errors?: { message: string }[];
 };
 
+export function localizeErrorMessage(message: string): string {
+  const original = String(message ?? "").trim();
+  if (!original) {
+    return "服务暂时无法处理请求，请稍后重试。";
+  }
+  if (/[\u4e00-\u9fff]/.test(original)) {
+    return original;
+  }
+  const normalized = original.toLowerCase();
+  if (normalized.includes("failed to fetch") || normalized.includes("networkerror") || normalized.includes("network error")) {
+    return "无法连接服务器，请检查网络连接或稍后重试。";
+  }
+  if (normalized.includes("invalid credentials")) {
+    return "用户名或密码错误。";
+  }
+  if (normalized.includes("authentication rate limit") || normalized.includes("too many login") || normalized.includes("too many requests")) {
+    return "操作过于频繁，请 1 分钟后再试。";
+  }
+  if (normalized.includes("ai request rate limit")) {
+    return "AI 请求过于频繁，请稍后再试。";
+  }
+  if (normalized.includes("unauthorized")) {
+    return "未授权，请重新登录。";
+  }
+  if (normalized.includes("refresh token invalid") || normalized.includes("refresh token is invalid")) {
+    return "登录状态已失效，请重新登录。";
+  }
+  if (normalized.includes("refresh is unavailable")) {
+    return "登录服务暂不可用，请稍后重试。";
+  }
+  if (normalized.includes("session is unavailable")) {
+    return "登录会话暂不可用，请稍后重试。";
+  }
+  if (normalized.includes("invalid email")) {
+    return "邮箱格式不正确，请检查后重试。";
+  }
+  if (normalized.includes("password must")) {
+    return "密码须为 8–15 位，并同时包含大写字母、小写字母和数字。";
+  }
+  if (normalized.includes("username must")) {
+    return "用户名须为 3–24 位，只能包含字母、数字、下划线或短横线。";
+  }
+  if (normalized.includes("username already exists")) {
+    return "用户名已存在，请换一个用户名。";
+  }
+  if (normalized.includes("email account limit reached")) {
+    return "该邮箱最多注册 3 个账号，已达到上限。";
+  }
+  if (normalized.includes("multiple accounts found")) {
+    return "该邮箱关联多个账号，请选择要登录的账号。";
+  }
+  if (normalized.includes("invalid account selection")) {
+    return "账号选择无效，请重新选择。";
+  }
+  if (normalized.includes("smtp is not configured")) {
+    return "邮箱服务暂不可用，请联系管理员配置 SMTP。";
+  }
+  if (normalized.includes("password reset email sent")) {
+    return "密码重置邮件已发送。";
+  }
+  if (normalized.includes("username recovery email sent")) {
+    return "用户名找回邮件已发送。";
+  }
+  if (normalized.includes("empty response")) {
+    return "服务器返回了空结果，请稍后重试。";
+  }
+  if (normalized.includes("cannot query field") || normalized.includes("not supported")) {
+    return "当前服务版本暂不支持此功能，请联系管理员更新服务。";
+  }
+  if (normalized.includes("is required") || normalized.includes("required")) {
+    return "请填写完整信息后再提交。";
+  }
+  return "服务暂时无法处理请求，请稍后重试。";
+}
+
 function clearStoredSession(): void {
 	localStorage.removeItem("accessToken");
 	localStorage.removeItem("refreshToken");
 }
 
 function isUnauthorized(response: GraphQLResponse<unknown>): boolean {
-	return response.errors?.[0]?.message?.toLowerCase().includes("unauthorized") ?? false;
+	const message = response.errors?.[0]?.message ?? "";
+	return message.toLowerCase().includes("unauthorized") || message.includes("未授权") || message.includes("登录状态已失效");
 }
 
 async function sendRequest<T>(query: string, variables?: Record<string, unknown>, token?: string | null): Promise<GraphQLResponse<T>> {
-	const response = await fetch(configuredApiUrl(), {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			...(token ? { Authorization: `Bearer ${token}` } : {})
-		},
-		body: JSON.stringify({ query, variables })
-	});
+	let response: Response;
+	try {
+		response = await fetch(configuredApiUrl(), {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				...(token ? { Authorization: `Bearer ${token}` } : {})
+			},
+			body: JSON.stringify({ query, variables })
+		});
+	} catch (error) {
+		throw new Error(localizeErrorMessage(error instanceof Error ? error.message : String(error)));
+	}
 	if (!response.ok) {
 		const fallback = response.status === 429 ? "操作过于频繁，请稍后再试。" : "服务暂时无法处理请求，请稍后重试。";
 		const message = (await response.text()).trim();
-		throw new Error(message || fallback);
+		let extracted = message;
+		try {
+			const payload = JSON.parse(message) as GraphQLResponse<unknown>;
+			extracted = payload.errors?.[0]?.message || message;
+		} catch {
+			// 非 JSON 响应直接按文本处理。
+		}
+		throw new Error(localizeErrorMessage(extracted || fallback));
 	}
-	return response.json();
+	try {
+		return await response.json();
+	} catch {
+		throw new Error("服务器返回数据格式错误，请稍后重试。");
+	}
 }
 
 async function refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; refreshToken: string } | undefined> {
@@ -156,17 +248,35 @@ async function request<T>(query: string, variables?: Record<string, unknown>): P
   }
   }
 
-  if (result.errors?.length) {
-		const message = result.errors[0].message;
+	if (result.errors?.length) {
+		const rawMessage = result.errors[0].message;
+		const message = localizeErrorMessage(rawMessage);
 		if (isAICreditInsufficientError(new Error(message))) {
 			notifyAICreditInsufficient(message);
 		}
-    throw new Error(message);
+		throw new Error(message);
   }
   if (!result.data) {
-    throw new Error("Empty response");
+		throw new Error("服务器返回了空结果，请稍后重试。");
   }
   return result.data;
+}
+
+async function requestAuthResult<T extends Record<string, AuthResult>>(
+	_operation: string,
+	query: string,
+	fallbackQuery: string,
+	variables: Record<string, unknown>
+): Promise<T> {
+	try {
+		return await request<T>(query, variables);
+	} catch (error) {
+		// 线上兼容后端可能尚未发布 onboardingRequired 字段，自动降级一次。
+		if (error instanceof Error && error.message.includes("当前服务版本暂不支持")) {
+			return request<T>(fallbackQuery, variables);
+		}
+		throw error;
+	}
 }
 
 function isAnswerKeyFieldMissingError(err: unknown): boolean {
@@ -190,22 +300,12 @@ async function requestWithAnswerKeyFallback<T>(query: string, variables?: Record
 }
 
 export async function register(username: string, email: string, password: string): Promise<AuthResult> {
-	const data = await request<{ register: AuthResult }>(
-		`mutation Register($username: String!, $email: String!, $password: String!) {
-		register(username: $username, email: $email, password: $password) { accessToken refreshToken userId emailVerificationRequired emailSent message }
-		}`,
-		{ username, email, password }
-	);
+	const data = await requestAuthResult("register", "mutation Register($username: String!, $email: String!, $password: String!) { register(username: $username, email: $email, password: $password) { accessToken refreshToken userId emailVerificationRequired emailSent onboardingRequired message } }", "mutation Register($username: String!, $email: String!, $password: String!) { register(username: $username, email: $email, password: $password) { accessToken refreshToken userId emailVerificationRequired emailSent message } }", { username, email, password });
 	return data.register;
 }
 
 export async function login(identifier: string, password: string, userId?: string): Promise<AuthResult> {
-	const data = await request<{ login: AuthResult }>(
-		`mutation Login($identifier: String!, $password: String!, $userId: String) {
-		login(identifier: $identifier, password: $password, userId: $userId) { accessToken refreshToken userId emailVerificationRequired emailSent message }
-		}`,
-		{ identifier, password, userId }
-	);
+	const data = await requestAuthResult("login", "mutation Login($identifier: String!, $password: String!, $userId: String) { login(identifier: $identifier, password: $password, userId: $userId) { accessToken refreshToken userId emailVerificationRequired emailSent onboardingRequired message } }", "mutation Login($identifier: String!, $password: String!, $userId: String) { login(identifier: $identifier, password: $password, userId: $userId) { accessToken refreshToken userId emailVerificationRequired emailSent message } }", { identifier, password, userId });
 	return data.login;
 }
 
@@ -231,10 +331,7 @@ export async function requestEmailVerification(identifier: string, userId?: stri
 }
 
 export async function verifyEmail(token: string): Promise<AuthResult> {
-	const data = await request<{ verifyEmail: AuthResult }>(
-		`mutation VerifyEmail($token: String!) { verifyEmail(token: $token) { accessToken refreshToken userId message } }`,
-		{ token }
-	);
+	const data = await requestAuthResult("verifyEmail", "mutation VerifyEmail($token: String!) { verifyEmail(token: $token) { accessToken refreshToken userId onboardingRequired message } }", "mutation VerifyEmail($token: String!) { verifyEmail(token: $token) { accessToken refreshToken userId message } }", { token });
 	return data.verifyEmail;
 }
 
@@ -610,9 +707,9 @@ export async function endRoleplay(sessionId: string): Promise<RoleplaySession> {
 
 const WRITING_SESSION_FIELDS = `id exam timeLimitSeconds prompt { title instructions suggestedWordCount } essay wordCount status progressMessage evaluation { overallScore grammarScore vocabularyScore coherenceScore taskResponseScore strengths issues suggestions revisedExcerpt summary } startedAt submittedAt`;
 
-export async function startWritingSession(exam: "IELTS" | "CET4" | "CET6", timeLimitSeconds: number): Promise<WritingSession> {
+export async function startWritingSession(exam: "IELTS" | "CET4" | "CET6", timeLimitSeconds: number, difficulty?: number): Promise<WritingSession> {
   await ensureAccessToken();
-  const data = await request<{ startWritingSession: WritingSession }>(`mutation StartWriting($exam: String!, $timeLimitSeconds: Int!) { startWritingSession(exam: $exam, timeLimitSeconds: $timeLimitSeconds) { ${WRITING_SESSION_FIELDS} } }`, { exam, timeLimitSeconds });
+  const data = await request<{ startWritingSession: WritingSession }>(`mutation StartWriting($exam: String!, $timeLimitSeconds: Int!, $difficulty: Float) { startWritingSession(exam: $exam, timeLimitSeconds: $timeLimitSeconds, difficulty: $difficulty) { ${WRITING_SESSION_FIELDS} } }`, { exam, timeLimitSeconds, difficulty });
   return data.startWritingSession;
 }
 

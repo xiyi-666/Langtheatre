@@ -3,6 +3,7 @@ package graph
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/graphql-go/graphql"
@@ -272,6 +273,7 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 			"userId":                    &graphql.Field{Type: graphql.String},
 			"emailVerificationRequired": &graphql.Field{Type: graphql.Boolean},
 			"emailSent":                 &graphql.Field{Type: graphql.Boolean},
+			"onboardingRequired":        &graphql.Field{Type: graphql.Boolean},
 			"message":                   &graphql.Field{Type: graphql.String},
 		},
 	})
@@ -1127,12 +1129,13 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 			}
 			return svc.SubmitRoleplayAudio(userID, p.Args["sessionId"].(string), p.Args["audioDataUrl"].(string), p.Args["language"].(string))
 		}},
-		"startWritingSession": &graphql.Field{Type: writingSessionType, Args: graphql.FieldConfigArgument{"exam": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)}, "timeLimitSeconds": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.Int)}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+		"startWritingSession": &graphql.Field{Type: writingSessionType, Args: graphql.FieldConfigArgument{"exam": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)}, "timeLimitSeconds": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.Int)}, "difficulty": &graphql.ArgumentConfig{Type: graphql.Float}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 			userID, _ := p.Context.Value(UserIDKey).(string)
 			if userID == "" {
 				return nil, errors.New("unauthorized")
 			}
-			return svc.StartWritingSession(userID, p.Args["exam"].(string), p.Args["timeLimitSeconds"].(int))
+			difficulty, _ := p.Args["difficulty"].(float64)
+			return svc.StartWritingSessionWithDifficulty(userID, p.Args["exam"].(string), p.Args["timeLimitSeconds"].(int), fmt.Sprintf("%.1f", difficulty))
 		}},
 		"submitWritingSession": &graphql.Field{Type: writingSessionType, Args: graphql.FieldConfigArgument{"sessionId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}, "essay": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 			userID, _ := p.Context.Value(UserIDKey).(string)

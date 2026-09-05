@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
   plugins: [react()],
   server: {
     port: 5174,
+    host: true,
     proxy: {
       "/graphql": "http://localhost:8177",
       "/healthz": "http://localhost:8177",

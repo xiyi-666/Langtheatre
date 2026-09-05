@@ -78,6 +78,7 @@ export interface AuthResult {
   userId?: string;
   emailVerificationRequired?: boolean;
   emailSent?: boolean;
+  onboardingRequired?: boolean;
   message?: string;
 }
 

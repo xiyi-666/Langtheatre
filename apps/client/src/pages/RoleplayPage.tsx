@@ -8,11 +8,13 @@ import { resolveAudioUrl } from "../audio";
 import { recordingToWavDataURL } from "../audioRecorder";
 import { useAppStore } from "../store";
 import { isMiniProgramEdition } from "../edition";
+import { isDemoUser } from "../demoExperience";
 
 export function RoleplayPage() {
   const { theaterId = "" } = useParams();
   const roleplay = useAppStore((s) => s.roleplay);
   const user = useAppStore((s) => s.user);
+  const demoMode = isDemoUser(user);
   const setRoleplay = useAppStore((s) => s.setRoleplay);
   const refreshUserXP = useAppStore((s) => s.refreshUserXP);
   const [text, setText] = useState("");
@@ -21,6 +23,9 @@ export function RoleplayPage() {
   const [language, setLanguage] = useState("CANTONESE");
   const [isRecording, setIsRecording] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [ending, setEnding] = useState(false);
   const recorderRef = useRef<MediaRecorder>();
   const chunksRef = useRef<Blob[]>([]);
   const roleplayID = roleplay?.id;
@@ -48,7 +53,10 @@ export function RoleplayPage() {
   useEffect(() => {
     if (!roleplayID || !roleplayProcessing) return;
     const timer = window.setInterval(() => {
-      void getRoleplaySession(roleplayID).then(setRoleplay).catch((error) => console.error("refresh roleplay failed", error));
+      void getRoleplaySession(roleplayID).then(setRoleplay).catch((error) => {
+        console.error("refresh roleplay failed", error);
+        setErrorMessage("角色扮演状态刷新失败，请稍后重试。");
+      });
     }, 1200);
     return () => window.clearInterval(timer);
   }, [roleplayID, roleplayProcessing, setRoleplay]);
@@ -80,13 +88,18 @@ export function RoleplayPage() {
 
   const visibleTranscript = useMemo(() => {
     if (!roleplay?.transcript?.length) return [];
-    return roleplay.transcript.filter((item) => {
+    return roleplay.transcript.flatMap((item) => {
       const text = item?.text ?? "";
-      return !(text.includes("本轮评分") || text.includes("Turn score"));
+      const reply = text.split(/\n\n(?=本轮评分|Turn score)/i)[0].trim();
+      return reply ? [{ ...item, text: reply }] : [];
     });
   }, [roleplay]);
 
+  const statusLabel = roleplay?.status === "completed" ? "已完成" : roleplay?.status === "PROCESSING" ? "处理中" : "进行中";
+
   async function handleStart() {
+    setStarting(true);
+    setErrorMessage("");
     try {
       const userRole = (user?.nickname || user?.email?.split("@")[0] || "Learner").trim();
       const [session, theater] = await Promise.all([startRoleplay(theaterId, userRole), getTheater(theaterId)]);
@@ -94,6 +107,9 @@ export function RoleplayPage() {
       setRoleplay(session);
     } catch (e) {
       console.error("start roleplay failed", e);
+      setErrorMessage((e as Error).message || "角色扮演启动失败，请稍后重试。");
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -105,7 +121,7 @@ export function RoleplayPage() {
       const audioDataUrl = await recordingToWavDataURL(recording);
       const updated = await submitRoleplayAudio(roleplay.id, audioDataUrl, language);
       setRoleplay(updated);
-      setVoiceMessage("已提交后台识别，完成后会自动显示文字与语音回复。");
+      setVoiceMessage(demoMode ? "演示语音回合已完成：使用预置识别文本与回复，未调用 ASR、模型或 TTS。" : "已提交后台识别，完成后会自动显示文字与语音回复。");
     } catch (error) {
       console.error("submit roleplay audio failed", error);
       setVoiceMessage((error as Error).message || (isMiniProgramEdition ? "语音提交失败，线上语音服务暂时不可用，请稍后重试。" : "语音提交失败，请检查麦克风与 ASR 配置。"));
@@ -132,12 +148,14 @@ export function RoleplayPage() {
     event.preventDefault();
     if (!roleplay || !text.trim()) return;
     setSubmitting(true);
+    setErrorMessage("");
     try {
       const updated = await submitRoleplayReply(roleplay.id, text);
       setRoleplay(updated);
       setText("");
     } catch (e) {
       console.error("submit roleplay reply failed", e);
+      setErrorMessage((e as Error).message || "回复提交失败，请稍后重试。");
     } finally {
       setSubmitting(false);
     }
@@ -145,12 +163,17 @@ export function RoleplayPage() {
 
   async function handleEnd() {
     if (!roleplay) return;
+    setEnding(true);
+    setErrorMessage("");
     try {
       const completed = await endRoleplay(roleplay.id);
       setRoleplay(completed);
       await refreshUserXP();
     } catch (e) {
       console.error("end roleplay failed", e);
+      setErrorMessage((e as Error).message || "结束角色扮演失败，请稍后重试。");
+    } finally {
+      setEnding(false);
     }
   }
 
@@ -159,10 +182,16 @@ export function RoleplayPage() {
       <section className="card">
         <h2>角色扮演模式</h2>
         <p>按回合推进对话，系统会持续评估你的上下文匹配与表达质量。</p>
-        <AICreditCostNotice action="ROLEPLAY_TURN" />
+        {demoMode ? (
+          <article className="stage-banner">
+            <strong>演示模式 · 角色扮演权限已开放</strong>
+            <p>文字和语音回合使用预置回复，不调用模型、ASR 或 TTS，也不会消耗 AI 点数。</p>
+          </article>
+        ) : <AICreditCostNotice action="ROLEPLAY_TURN" />}
+        {errorMessage ? <p className="error" role="alert">{errorMessage}</p> : null}
         <div className="row">
-          <button onClick={handleStart}><PlayCircle size={16} /> 开始会话</button>
-          <button onClick={handleEnd} disabled={!roleplay || roleplay.status === "PROCESSING"}><SquareCheckBig size={16} /> 结束会话</button>
+          <button onClick={handleStart} disabled={starting || submitting}><PlayCircle size={16} /> {starting ? "正在准备会话…" : "开始会话"}</button>
+          <button onClick={handleEnd} disabled={!roleplay || roleplay.status === "PROCESSING" || ending}><SquareCheckBig size={16} /> {ending ? "正在生成总结…" : "结束会话"}</button>
           <button className="btn-ghost" onClick={() => setShowZhSubtitle((value) => !value)}>
             {showZhSubtitle ? "隐藏简体中文字幕" : "显示简体中文字幕"}
           </button>
@@ -173,7 +202,7 @@ export function RoleplayPage() {
             <aside className="floating-panel">
               <h3>会话状态</h3>
               <p>当前评分：<strong className="score-pulse">{roleplay.currentScore}</strong></p>
-              <p>状态：{roleplay.status}{roleplay.processingMessage ? ` · ${roleplay.processingMessage}` : ""}</p>
+              <p>状态：{statusLabel}{roleplay.processingMessage ? ` · ${roleplay.processingMessage}` : ""}</p>
               <p>回合：{roleplay.turnIndex + 1}</p>
               <p><Mic2 size={14} /> 建议每轮控制在 1-2 句，保持场景连贯。</p>
             </aside>
@@ -202,7 +231,7 @@ export function RoleplayPage() {
                   {isRecording ? <Square size={16} /> : <Mic2 size={16} />}{isRecording ? "结束录音" : "语音回复"}
                 </button>
               </form>
-              <p><MessageSquare size={14} /> 文字回答即时提交；语音回答将依次完成 ASR、AI 续聊和 TTS 合成。</p>
+              <p><MessageSquare size={14} /> {demoMode ? "演示回合使用预置识别文本和回复，不会触达外部服务。" : "文字回答即时提交；语音回答将依次完成 ASR、AI 续聊和 TTS 合成。"}</p>
               {voiceMessage ? <p className="muted-note">{voiceMessage}</p> : null}
               {latestEvaluationText ? (
                 <article className="stage-banner" style={{ marginTop: 8 }}>

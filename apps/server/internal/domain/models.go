@@ -108,6 +108,7 @@ type AuthResult struct {
 	UserID                    string
 	EmailVerificationRequired bool
 	EmailSent                 bool
+	OnboardingRequired        bool
 	Message                   string
 }
 

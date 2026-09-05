@@ -28,6 +28,28 @@ type contextualRecordingTTS struct {
 
 type voiceDesignTTS struct{}
 
+type recordingAuthMailer struct {
+	verificationCalls     int
+	passwordResetCalls    int
+	usernameRecoveryCalls int
+	err                   error
+}
+
+func (m *recordingAuthMailer) SendEmailVerification(context.Context, string, string, string) error {
+	m.verificationCalls++
+	return m.err
+}
+
+func (m *recordingAuthMailer) SendPasswordReset(context.Context, string, string, string) error {
+	m.passwordResetCalls++
+	return m.err
+}
+
+func (m *recordingAuthMailer) SendUsernameRecovery(context.Context, string, []string) error {
+	m.usernameRecoveryCalls++
+	return m.err
+}
+
 func (voiceDesignTTS) Synthesize(_ context.Context, _ string, _ string, _ string) (string, error) {
 	return "fallback", nil
 }
@@ -825,4 +847,91 @@ func TestReadingMaterialsQueuesLimitedFallbackAudioRetriesWithCooldown(t *testin
 
 func longAudioPassage() string {
 	return strings.Repeat("governance ", 35) + ". " + strings.Repeat("evidence ", 35) + "."
+}
+
+func TestLoginLocksAfterFiveFailuresAndClearsAfterSuccess(t *testing.T) {
+	mem := store.NewMemoryStore()
+	svc := New(mem, nil, nil, nil, "secret")
+	if _, err := svc.Register("lock_user", "lock@example.com", "GoodPass1"); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := 1; attempt <= maxLoginFailures; attempt++ {
+		_, err := svc.Login("lock_user", "WrongPass1", "")
+		if err == nil {
+			t.Fatal("wrong password should fail")
+		}
+		if attempt < maxLoginFailures && !strings.Contains(err.Error(), "还可尝试") {
+			t.Fatalf("attempt %d error = %q, want remaining-attempt message", attempt, err)
+		}
+	}
+	if _, err := svc.Login("lock_user", "GoodPass1", ""); err == nil || !strings.Contains(err.Error(), "60 秒") {
+		t.Fatalf("locked login error = %v, want 60-second lock", err)
+	}
+
+	user, err := mem.GetUserByUsername("lock_user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := loginFailureKey("lock_user", user.ID)
+	svc.authMu.Lock()
+	state := svc.loginFailures[key]
+	state.LockedUntil = time.Now().Add(-time.Second)
+	svc.loginFailures[key] = state
+	svc.authMu.Unlock()
+	if _, err := svc.Login("lock_user", "GoodPass1", ""); err != nil {
+		t.Fatalf("login after lock expiry failed: %v", err)
+	}
+	if _, err := svc.Login("lock_user", "WrongPass1", ""); err == nil || !strings.Contains(err.Error(), "还可尝试 4 次") {
+		t.Fatalf("failure counter was not cleared after success: %v", err)
+	}
+}
+
+func TestAuthenticationEmailsAreRateLimitedForOneMinute(t *testing.T) {
+	mailer := &recordingAuthMailer{}
+	mem := store.NewMemoryStore()
+	svc := NewWithOptions(mem, nil, nil, nil, "secret", Options{Mailer: mailer, RequireEmailVerification: true})
+	registered, err := svc.Register("mail_user", "mail@example.com", "GoodPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mailer.verificationCalls != 1 {
+		t.Fatalf("verification calls = %d, want 1", mailer.verificationCalls)
+	}
+	if _, err = svc.Register("mail_user_two", "mail@example.com", "GoodPass1"); err == nil || !strings.Contains(err.Error(), "邮件发送过于频繁") {
+		t.Fatalf("registration cooldown error = %v", err)
+	}
+	users, err := mem.ListUsersByEmail("mail@example.com")
+	if err != nil || len(users) != 1 {
+		t.Fatalf("registration cooldown should not create another account: users=%d err=%v", len(users), err)
+	}
+	if _, err = svc.RequestEmailVerification("mail_user", registered.UserID); err == nil || !strings.Contains(err.Error(), "邮件发送过于频繁") {
+		t.Fatalf("verification cooldown error = %v", err)
+	}
+	if mailer.verificationCalls != 1 {
+		t.Fatalf("verification calls after cooldown = %d, want 1", mailer.verificationCalls)
+	}
+
+	resetSvc := NewWithOptions(mem, nil, nil, nil, "secret", Options{Mailer: mailer})
+	if _, err = resetSvc.RequestPasswordReset("mail_user", registered.UserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = resetSvc.RequestPasswordReset("mail_user", registered.UserID); err == nil || !strings.Contains(err.Error(), "邮件发送过于频繁") {
+		t.Fatalf("password reset cooldown error = %v", err)
+	}
+	if mailer.passwordResetCalls != 1 {
+		t.Fatalf("password reset calls = %d, want 1", mailer.passwordResetCalls)
+	}
+}
+
+func TestAuthenticationErrorsDoNotExposeMailerDetails(t *testing.T) {
+	mailer := &recordingAuthMailer{err: errors.New("dial tcp smtp.example: timeout")}
+	svc := NewWithOptions(store.NewMemoryStore(), nil, nil, nil, "secret", Options{Mailer: mailer, RequireEmailVerification: true})
+	result, err := svc.Register("smtp_user", "smtp@example.com", "GoodPass1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Message, "验证邮件发送失败") || strings.Contains(result.Message, "smtp.example") {
+		t.Fatalf("user-facing SMTP result = %q", result.Message)
+	}
 }

@@ -6,6 +6,7 @@ import { courses } from "../api";
 import { useAppStore } from "../store";
 import { calculateLearningProgress, calculateStageProgress } from "../xp";
 import { AdSlot } from "../components/AdSlot";
+import { isDemoUser } from "../demoExperience";
 
 const stageModules = {
   CANTONESE: [
@@ -80,6 +81,7 @@ export function CoursesPage() {
   const setCourses = useAppStore((s) => s.setCourses);
   const navigate = useNavigate();
   const totalXP = user?.totalXP ?? 0;
+  const demoUser = isDemoUser(user);
 
   const stageProgress = useMemo(
     () => calculateStageProgress(totalXP, stageModules[language].length),
@@ -163,13 +165,13 @@ export function CoursesPage() {
 
         <div className="route-grid" style={{ marginBottom: 12 }}>
           {stageModules[language].map((stage, stageIndex) => {
-            const unlocked = stageIndex <= stageProgress.stageIndex;
-            const progress = stageIndex < stageProgress.stageIndex ? 100 : stageIndex === stageProgress.stageIndex ? stageProgress.currentPercent : 0;
+            const unlocked = demoUser || stageIndex <= stageProgress.stageIndex;
+            const progress = demoUser ? 100 : stageIndex < stageProgress.stageIndex ? 100 : stageIndex === stageProgress.stageIndex ? stageProgress.currentPercent : 0;
             return (
               <article key={stage.stage} className="route-point" style={unlocked ? undefined : { opacity: 0.55 }}>
                 <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
                   <strong>{stage.stage}</strong>
-                  <small>{unlocked ? `${progress}%` : "未解锁"}</small>
+                  <small>{demoUser ? "演示可体验" : unlocked ? `${progress}%` : "未解锁"}</small>
                 </div>
                 <div className="mini-progress" aria-hidden>
                   <span style={{ width: `${progress}%` }} />
@@ -203,8 +205,9 @@ export function CoursesPage() {
         </div>
 
         <article className="stage-banner course-metrics-banner" style={{ marginBottom: 12 }}>
-          <strong>统一 XP 说明</strong>
+          <strong>{demoUser ? "演示模式 · 学习权限已开放" : "统一 XP 说明"}</strong>
           <p style={{ margin: "6px 0 0" }}>课程阶段解锁与个人中心总 XP 共用同一套规则。下方统计仅用于学习反馈，不会额外生成第二套经验。</p>
+          {demoUser ? <p>所有课程阶段均可直接体验预置内容，不调用 AI，不消耗点数。</p> : null}
           <div className="course-metrics-grid">
             <div className="course-metric-card">
               <small>课程完成</small>

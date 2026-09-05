@@ -10,6 +10,7 @@ tests/
 **/*.spec.ts
 **/*.spec.tsx
 **/*_test.go
+!apps/server/internal/store/sqlite_store_test.go
 .DS_Store
 
 # Environment files

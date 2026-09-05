@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { BookMarked, Filter, Sparkles } from "lucide-react";
-import { contentSources, generateReading, readingMaterials } from "../api";
+import { contentSources, generateReading, readingMaterial, readingMaterials } from "../api";
 import { AICreditCostNotice } from "../components/AICreditCostNotice";
+import { DemoGenerationProgress } from "../components/DemoGenerationProgress";
 import { useAppStore } from "../store";
 import { isMiniProgramEdition } from "../edition";
+import { getDemoSessionDifficulty, isDemoUser, waitForDemoGeneration } from "../demoExperience";
 import type { ContentSource } from "../types";
 import { calculateStageProgress, getStageRequirement } from "../xp";
 
@@ -55,6 +57,8 @@ export function ReadingGeneratePage() {
   const [sources, setSources] = useState<ContentSource[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [materials, setMaterials] = useState<import("../types").ReadingMaterial[]>([]);
+  const [demoProgressActive, setDemoProgressActive] = useState(false);
+  const [demoProgressComplete, setDemoProgressComplete] = useState(false);
 
   useEffect(() => {
     setTopic(searchParams.get("topic")?.trim() || stageSeeds[activeStage][0]);
@@ -62,17 +66,12 @@ export function ReadingGeneratePage() {
 
   useEffect(() => {
     void (async () => {
-      try {
-        const [sourceData, readingData] = await Promise.all([
-          contentSources({ exam: safeExam, category: category === "ALL" ? undefined : category }),
-          readingMaterials(safeExam)
-        ]);
-        setSources(sourceData);
-        setMaterials(readingData);
-      } catch {
-        setSources([]);
-        setMaterials([]);
-      }
+      const [sourceResult, readingResult] = await Promise.allSettled([
+        contentSources({ exam: safeExam, category: category === "ALL" ? undefined : category }),
+        readingMaterials(safeExam)
+      ]);
+      setSources(sourceResult.status === "fulfilled" ? sourceResult.value : []);
+      setMaterials(readingResult.status === "fulfilled" ? readingResult.value : []);
     })();
   }, [safeExam, category]);
 
@@ -88,7 +87,8 @@ export function ReadingGeneratePage() {
   const currentSeeds = useMemo(() => stageSeeds[activeStage], [activeStage, stageSeeds]);
   const totalXP = user?.totalXP ?? 0;
   const stageProgress = useMemo(() => calculateStageProgress(totalXP, stageSeeds.length), [stageSeeds.length, totalXP]);
-  const stageUnlocked = activeStage <= stageProgress.stageIndex;
+  const demoUser = isDemoUser(user);
+  const stageUnlocked = demoUser || activeStage <= stageProgress.stageIndex;
   const requiredXP = getStageRequirement(activeStage, stageSeeds.length);
 
   useEffect(() => {
@@ -108,27 +108,39 @@ export function ReadingGeneratePage() {
     if (!stageUnlocked) return;
     setGenerateError("");
     setLoading(true);
+    const startedAt = Date.now();
+    setDemoProgressComplete(false);
+    setDemoProgressActive(demoUser);
     try {
       const requestedBand = Number.parseFloat(searchParams.get("band") ?? "");
+      const demoDifficulty = getDemoSessionDifficulty(user);
+      const demoStageBand = [5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.0][activeStage] ?? demoDifficulty;
       const generated = await generateReading({
         exam: safeExam,
         topic,
         level: safeExam === "IELTS" ? "upper-intermediate" : "intermediate",
         sourceIds: selectedSourceIds.length > 0 ? selectedSourceIds : visibleSources.slice(0, 5).map((s) => s.id),
-        band: Number.isFinite(requestedBand) && requestedBand > 0 ? requestedBand : undefined,
+        band: Number.isFinite(requestedBand) && requestedBand > 0 ? requestedBand : demoUser ? demoStageBand : undefined,
         stage: searchParams.get("stageName")?.trim() || `Stage ${activeStage + 1}`,
         section: searchParams.get("section")?.trim() || undefined,
         skillFocus: searchParams.get("skillFocus")?.trim() || undefined,
         questionType: searchParams.get("questionType")?.trim() || undefined,
         scenarioFamily: searchParams.get("scenarioFamily")?.trim() || undefined
       });
-		setMaterials((current) => [generated, ...current.filter((item) => item.id !== generated.id)]);
+		const confirmed = await readingMaterial(generated.id);
+		setMaterials((current) => [confirmed, ...current.filter((item) => item.id !== confirmed.id)]);
+		if (demoUser) {
+			await waitForDemoGeneration(startedAt);
+			setDemoProgressComplete(true);
+			await new Promise((resolve) => window.setTimeout(resolve, 350));
+		}
       navigate(`/reading/${generated.id}/article`);
     } catch (e) {
       console.error("reading generate failed", e);
-      setGenerateError(isMiniProgramEdition ? "阅读材料生成失败，线上 AI 服务暂时不可用，请稍后重试。" : "真实阅读材料生成失败，请检查模型配置、API Key 或稍后重试。");
+      setGenerateError(demoUser ? "演示阅读内容暂时没有准备好，请重试。不会消耗 AI 点数。" : isMiniProgramEdition ? "阅读材料生成失败，线上 AI 服务暂时不可用，请稍后重试。" : "真实阅读材料生成失败，请检查模型配置、API Key 或稍后重试。");
     } finally {
       setLoading(false);
+      setDemoProgressActive(false);
     }
   }
 
@@ -156,12 +168,13 @@ export function ReadingGeneratePage() {
 
         <article className="stage-banner" style={{ marginTop: 8 }}>
           <strong>当前考试与阶段</strong>
-          <p>{safeExam} · Stage {activeStage + 1} · 当前已解锁至 Stage {stageProgress.stageIndex + 1}</p>
+          <p>{safeExam} · Stage {activeStage + 1} · {demoUser ? "演示权限已开放" : `当前已解锁至 Stage ${stageProgress.stageIndex + 1}`}</p>
           <p>总经验：{totalXP}</p>
+          {demoUser ? <p>演示模式 · 学习权限已开放。内容使用预置结果，不调用 AI，不消耗点数。</p> : null}
           {!stageUnlocked ? <p className="error">当前阶段尚未解锁，需要 {requiredXP} XP，当前仅有 {totalXP} XP。</p> : null}
         </article>
 
-        <AICreditCostNotice action="READING_GENERATION" />
+        {!demoUser ? <AICreditCostNotice action="READING_GENERATION" /> : null}
 
         <div className="row" style={{ marginTop: 8 }}>
           <label style={{ minWidth: 220 }}>
@@ -184,6 +197,14 @@ export function ReadingGeneratePage() {
             <Sparkles size={14} /> {stageUnlocked ? (loading ? "生成中..." : "生成阅读材料") : `需 ${requiredXP} XP 解锁`}
           </button>
         </div>
+
+        <DemoGenerationProgress
+          active={demoProgressActive}
+          complete={demoProgressComplete}
+          title="正在准备你的阅读练习"
+          note="正在整理预置文章、题目和音频，不调用 AI，不消耗点数。"
+          steps={["选择阅读主题", "整理文章与题目", "准备阅读音频", "即将进入练习"]}
+        />
 
         <div className="tag-row" style={{ marginTop: 10 }}>
           {currentSeeds.map((seed) => (

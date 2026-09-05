@@ -34,6 +34,7 @@ type MemoryStore struct {
 	model               domain.ModelConfig
 	tts                 domain.TTSConfig
 	asr                 domain.ASRConfig
+	demoAssignments     map[string]string
 }
 
 type memoryAuthToken struct {
@@ -69,7 +70,25 @@ func NewMemoryStore() *MemoryStore {
 		xpEvents:            map[string]domain.XPEvent{},
 		modelUsageDaily:     map[string]analytics.ModelUsage{},
 		productMetricsDaily: map[string]analytics.ProductMetric{},
+		demoAssignments:     map[string]string{},
 	}
+}
+
+func (s *MemoryStore) GetDemoAssignment(userID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	difficulty, ok := s.demoAssignments[userID]
+	if !ok {
+		return "", errors.New("demo assignment not found")
+	}
+	return difficulty, nil
+}
+
+func (s *MemoryStore) SaveDemoAssignment(userID string, difficulty string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.demoAssignments[userID] = difficulty
+	return nil
 }
 
 func (s *MemoryStore) SaveOAuthAccount(account domain.OAuthAccount) domain.OAuthAccount {

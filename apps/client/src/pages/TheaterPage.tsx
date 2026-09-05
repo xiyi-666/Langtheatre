@@ -15,7 +15,7 @@ import {
   TimerReset
 } from "lucide-react";
 import { getSharedTheater, getTheater, toggleFavorite } from "../api";
-import { playClip, preloadClip } from "../audio";
+import { playClip, preloadClip, speakText } from "../audio";
 import { useAppStore } from "../store";
 
 const THEATER_STATUS_POLL_MS = 1500;
@@ -194,8 +194,12 @@ export function TheaterPage() {
       setLoading(true);
       try {
         if (!target.audioUrl || target.audioUrl.trim() === "") {
-          showHint("音频生成中");
-          return false;
+          if (theater?.language === "ENGLISH") {
+            await speakText(target.text, playbackRate, "en-US");
+            return true;
+          }
+          await speakText(target.text, playbackRate, theater?.language === "CANTONESE" ? "zh-HK" : "en-US");
+          return true;
         }
         await playClip(target.audioUrl, playbackRate);
         return true;

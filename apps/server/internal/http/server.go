@@ -73,7 +73,7 @@ func NewMuxWithOptions(schema graphql.Schema, jwtSecret string, paymentNotifier 
 	mux.HandleFunc("/media/", func(w http.ResponseWriter, r *http.Request) {
 		setCORSHeaders(w, r)
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.Error(w, "only GET and HEAD are supported", http.StatusMethodNotAllowed)
+			http.Error(w, "仅支持 GET 和 HEAD 请求", http.StatusMethodNotAllowed)
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/") {
@@ -143,7 +143,7 @@ func NewMuxWithOptions(schema graphql.Schema, jwtSecret string, paymentNotifier 
 			return
 		}
 		if r.Method != http.MethodPost {
-			http.Error(w, "only POST is supported", http.StatusMethodNotAllowed)
+			http.Error(w, "仅支持 POST 请求", http.StatusMethodNotAllowed)
 			return
 		}
 		defer r.Body.Close()
@@ -167,11 +167,11 @@ func NewMuxWithOptions(schema graphql.Schema, jwtSecret string, paymentNotifier 
 			return
 		}
 		if isSensitiveAuthOperation(payload.Query) && !authLimiter.Allow(clientIPFromRequest(r, security.TrustProxyHeaders)) {
-			http.Error(w, "authentication rate limit exceeded", http.StatusTooManyRequests)
+			http.Error(w, "认证请求过于频繁，请 1 分钟后再试。", http.StatusTooManyRequests)
 			return
 		}
 		if isAIRequestOperation(payload.Query) && !aiLimiter.Allow(clientIPFromRequest(r, security.TrustProxyHeaders)) {
-			http.Error(w, "AI request rate limit exceeded", http.StatusTooManyRequests)
+			http.Error(w, "AI 请求过于频繁，请稍后再试。", http.StatusTooManyRequests)
 			return
 		}
 		ctx := withAuth(r.Context(), r.Header.Get("Authorization"), jwtSecret)
@@ -197,7 +197,7 @@ func NewMuxWithOptions(schema graphql.Schema, jwtSecret string, paymentNotifier 
 			}
 			ctx := withAuth(r.Context(), r.Header.Get("Authorization"), jwtSecret)
 			if userID, _ := ctx.Value(graph.UserIDKey).(string); userID == "" {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				http.Error(w, "未授权，请重新登录。", http.StatusUnauthorized)
 				return
 			}
 			defer r.Body.Close()
@@ -223,11 +223,11 @@ func NewMuxWithOptions(schema graphql.Schema, jwtSecret string, paymentNotifier 
 	if muxOptions.Analytics != nil && strings.TrimSpace(muxOptions.AnalyticsAdminToken) != "" {
 		mux.HandleFunc("/internal/analytics/daily", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet {
-				http.Error(w, "only GET is supported", http.StatusMethodNotAllowed)
+				http.Error(w, "仅支持 GET 请求", http.StatusMethodNotAllowed)
 				return
 			}
 			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Analytics-Token")), []byte(muxOptions.AnalyticsAdminToken)) != 1 {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				http.Error(w, "未授权，请重新登录。", http.StatusUnauthorized)
 				return
 			}
 			fromDay, toDay, err := analyticsDateRange(muxOptions.Analytics.CurrentDay(), r.URL.Query().Get("from"), r.URL.Query().Get("to"))

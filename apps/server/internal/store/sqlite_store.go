@@ -275,6 +275,11 @@ func applySQLiteSchema(db *sql.DB) error {
 			name TEXT NOT NULL,
 			count INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (day, category, name)
+        )`,
+		`CREATE TABLE IF NOT EXISTS demo_assignments (
+			user_id TEXT PRIMARY KEY,
+			difficulty TEXT NOT NULL,
+			created_at TEXT NOT NULL
 		)`,
 		`CREATE TRIGGER IF NOT EXISTS users_email_account_limit
 		BEFORE INSERT ON users
@@ -285,6 +290,22 @@ func applySQLiteSchema(db *sql.DB) error {
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	readingMetadataColumns := []struct {
+		name       string
+		definition string
+	}{
+		{name: "band", definition: "REAL NOT NULL DEFAULT 0"},
+		{name: "stage", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "section", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "skill_focus", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "question_type", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "scenario_family", definition: "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, column := range readingMetadataColumns {
+		if err := addSQLiteColumnIfMissing(db, "reading_materials", column.name, column.definition); err != nil {
 			return err
 		}
 	}
@@ -310,6 +331,34 @@ func applySQLiteSchema(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// addSQLiteColumnIfMissing upgrades databases created by older application
+// versions without rebuilding tables or touching existing rows.
+func addSQLiteColumnIfMissing(db *sql.DB, table string, column string, definition string) error {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition)
+	return err
 }
 
 // Legacy SQLite databases used a UNIQUE email column. Rebuild only that table
@@ -1208,6 +1257,20 @@ func (s *SQLiteStore) DeleteWritingSession(userID string, sessionID string) erro
 		return errors.New("writing session not found")
 	}
 	return nil
+}
+
+func (s *SQLiteStore) GetDemoAssignment(userID string) (string, error) {
+	var difficulty string
+	err := s.db.QueryRow(`SELECT difficulty FROM demo_assignments WHERE user_id = ?`, userID).Scan(&difficulty)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errors.New("demo assignment not found")
+	}
+	return difficulty, err
+}
+
+func (s *SQLiteStore) SaveDemoAssignment(userID string, difficulty string) error {
+	_, err := s.db.Exec(`INSERT INTO demo_assignments (user_id, difficulty, created_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET difficulty = excluded.difficulty`, userID, difficulty, time.Now().UTC().Format(sqliteTimeLayout))
+	return err
 }
 
 func scanUser(scanner interface{ Scan(dest ...any) error }) (domain.User, error) {

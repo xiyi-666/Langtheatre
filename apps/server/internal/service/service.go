@@ -71,6 +71,8 @@ type Store interface {
 	GetWritingSession(sessionID string, userID string) (domain.WritingSession, error)
 	ListWritingSessions(userID string) ([]domain.WritingSession, error)
 	DeleteWritingSession(userID string, sessionID string) error
+	GetDemoAssignment(userID string) (string, error)
+	SaveDemoAssignment(userID string, difficulty string) error
 }
 
 type SessionStore interface {
@@ -171,6 +173,10 @@ type Service struct {
 	usageGuard               *aiRequestGuard
 	analytics                *analytics.Reporter
 	miniProgramEdition       bool
+	demoMu                   sync.Mutex
+	authMu                   sync.Mutex
+	loginFailures            map[string]loginFailureState
+	emailCooldowns           map[string]time.Time
 }
 
 const (
@@ -178,7 +184,17 @@ const (
 	readingAudioRetryCooldown  = 15 * time.Minute
 	readingListRetryCooldown   = 2 * time.Minute
 	defaultTTSMaxConcurrency   = 2
+	maxLoginFailures           = 5
+	loginLockDuration          = time.Minute
+	authEmailCooldown          = time.Minute
+	maxAuthStateEntries        = 10000
+	demoAccountUsername        = "lingua_demo_0903"
 )
+
+type loginFailureState struct {
+	Count       int
+	LockedUntil time.Time
+}
 
 type roleplayEngine interface {
 	RoleplayTurn(ctx context.Context, theater domain.Theater, userRole string, transcript []domain.Dialogue, userReply string) (domain.RoleplayTurnEval, error)
@@ -238,6 +254,8 @@ func NewWithOptions(store Store, session SessionStore, generator TheaterGenerato
 		usageGuard:               newAIRequestGuard(options.UsageProtection),
 		analytics:                options.Analytics,
 		miniProgramEdition:       options.Billing.MiniProgramEdition,
+		loginFailures:            map[string]loginFailureState{},
+		emailCooldowns:           map[string]time.Time{},
 	}
 	if billingStore, ok := store.(BillingStore); ok && !options.Billing.OpenSourceEdition {
 		service.billing = newBillingService(billingStore, options.Billing, publicURL)
@@ -279,10 +297,213 @@ func (s *Service) UserServiceConfigurationEnabled() bool {
 
 var usernamePattern = regexp.MustCompile(`^[\p{L}\p{N}_-]{3,24}$`)
 
+var errInvalidCredentials = errors.New("invalid credentials")
+
+func maskEmail(value string) string {
+	email := strings.ToLower(strings.TrimSpace(value))
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 || parts[0] == "" {
+		return "***"
+	}
+	local := parts[0]
+	if len([]rune(local)) == 1 {
+		return string([]rune(local)[0]) + "***@" + parts[1]
+	}
+	return string([]rune(local)[0]) + "***@" + parts[1]
+}
+
+func maskIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "@") {
+		return maskEmail(value)
+	}
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return "***"
+	}
+	return string(runes[0]) + "***"
+}
+
+func loginFailureKey(identifier string, userID string) string {
+	identifier = strings.ToLower(strings.TrimSpace(identifier))
+	userID = strings.TrimSpace(userID)
+	if userID != "" {
+		return identifier + ":" + userID
+	}
+	return identifier
+}
+
+func loginLockedError(retryAfter time.Duration) error {
+	seconds := int(retryAfter / time.Second)
+	if retryAfter%time.Second != 0 {
+		seconds++
+	}
+	if seconds < 1 {
+		seconds = 1
+	}
+	return fmt.Errorf("登录尝试次数过多，请在 %d 秒后再试。", seconds)
+}
+
+func emailRateLimitedError(retryAfter time.Duration) error {
+	seconds := int(retryAfter / time.Second)
+	if retryAfter%time.Second != 0 {
+		seconds++
+	}
+	if seconds < 1 {
+		seconds = 1
+	}
+	return fmt.Errorf("邮件发送过于频繁，请在 %d 秒后再试。", seconds)
+}
+
+func localizeAuthStoreError(err error) error {
+	if err == nil {
+		return nil
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(message, "username already exists"):
+		return errors.New("用户名已存在，请换一个用户名。")
+	case strings.Contains(message, "duplicate key") && strings.Contains(message, "username"):
+		return errors.New("用户名已存在，请换一个用户名。")
+	case strings.Contains(message, "unique constraint failed") && strings.Contains(message, "username"):
+		return errors.New("用户名已存在，请换一个用户名。")
+	case strings.Contains(message, "email account limit reached"):
+		return errors.New("该邮箱最多注册 3 个账号，已达到上限。")
+	case strings.Contains(message, "duplicate key") && strings.Contains(message, "email"):
+		return errors.New("该邮箱已注册，请使用其他邮箱。")
+	case strings.Contains(message, "unique constraint failed") && strings.Contains(message, "email"):
+		return errors.New("该邮箱已注册，请使用其他邮箱。")
+	case strings.Contains(message, "user not found"):
+		return errors.New("用户名或邮箱不存在，请检查后重试。")
+	case strings.Contains(message, "token not found"), strings.Contains(message, "token expired"):
+		return errors.New("验证链接无效或已过期。")
+	case strings.Contains(message, "invalid credentials"):
+		return errInvalidCredentials
+	case strings.ContainsAny(err.Error(), "一二三四五六七八九十百千万邮箱账号密码用户"):
+		return err
+	default:
+		return errors.New("服务暂时无法处理请求，请稍后重试。")
+	}
+}
+
+func (s *Service) loginLockRemaining(key string) (time.Duration, bool) {
+	if s == nil {
+		return 0, false
+	}
+	now := time.Now()
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	state, ok := s.loginFailures[key]
+	if !ok {
+		return 0, false
+	}
+	if state.LockedUntil.After(now) {
+		return time.Until(state.LockedUntil), true
+	}
+	if !state.LockedUntil.IsZero() {
+		delete(s.loginFailures, key)
+	}
+	return 0, false
+}
+
+func (s *Service) clearLoginFailures(key string) {
+	if s == nil {
+		return
+	}
+	s.authMu.Lock()
+	delete(s.loginFailures, key)
+	s.authMu.Unlock()
+}
+
+func (s *Service) recordLoginFailure(key string, identifier string, userID string) error {
+	if s == nil {
+		return errInvalidCredentials
+	}
+	now := time.Now()
+	s.authMu.Lock()
+	s.pruneAuthStateLocked(now)
+	state := s.loginFailures[key]
+	if state.LockedUntil.After(now) {
+		retryAfter := time.Until(state.LockedUntil)
+		s.authMu.Unlock()
+		return loginLockedError(retryAfter)
+	}
+	state.Count++
+	if state.Count >= maxLoginFailures {
+		state.LockedUntil = now.Add(loginLockDuration)
+	}
+	s.loginFailures[key] = state
+	count := state.Count
+	retryAfter := time.Until(state.LockedUntil)
+	s.authMu.Unlock()
+
+	if count >= maxLoginFailures {
+		log.Printf("auth event=login_locked identifier=%s user_id=%s duration=%s", maskIdentifier(identifier), strings.TrimSpace(userID), loginLockDuration)
+		return loginLockedError(retryAfter)
+	}
+	remaining := maxLoginFailures - count
+	log.Printf("auth event=login_failed reason=invalid_credentials identifier=%s user_id=%s attempts=%d remaining=%d", maskIdentifier(identifier), strings.TrimSpace(userID), count, remaining)
+	return fmt.Errorf("用户名或密码错误，还可尝试 %d 次。", remaining)
+}
+
+func (s *Service) reserveEmailCooldown(purpose string, email string) (time.Duration, bool) {
+	if s == nil {
+		return 0, true
+	}
+	key := strings.ToLower(strings.TrimSpace(purpose)) + ":" + strings.ToLower(strings.TrimSpace(email))
+	now := time.Now()
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	s.pruneAuthStateLocked(now)
+	if deadline, ok := s.emailCooldowns[key]; ok {
+		if deadline.After(now) {
+			return time.Until(deadline), false
+		}
+		delete(s.emailCooldowns, key)
+	}
+	s.emailCooldowns[key] = now.Add(authEmailCooldown)
+	return 0, true
+}
+
+func (s *Service) pruneAuthStateLocked(now time.Time) {
+	for key, state := range s.loginFailures {
+		if !state.LockedUntil.IsZero() && !state.LockedUntil.After(now) {
+			delete(s.loginFailures, key)
+		}
+	}
+	for key, deadline := range s.emailCooldowns {
+		if !deadline.After(now) {
+			delete(s.emailCooldowns, key)
+		}
+	}
+	for len(s.loginFailures) > maxAuthStateEntries {
+		for key := range s.loginFailures {
+			delete(s.loginFailures, key)
+			break
+		}
+	}
+	for len(s.emailCooldowns) > maxAuthStateEntries {
+		for key := range s.emailCooldowns {
+			delete(s.emailCooldowns, key)
+			break
+		}
+	}
+}
+
+func (s *Service) releaseEmailCooldown(purpose string, email string) {
+	if s == nil {
+		return
+	}
+	key := strings.ToLower(strings.TrimSpace(purpose)) + ":" + strings.ToLower(strings.TrimSpace(email))
+	s.authMu.Lock()
+	delete(s.emailCooldowns, key)
+	s.authMu.Unlock()
+}
+
 func validatePassword(password string) error {
 	length := len([]rune(password))
 	if length < 8 || length > 15 {
-		return errors.New("password must be 8-15 characters and include uppercase, lowercase, and number")
+		return errors.New("密码须为 8–15 位，并同时包含大写字母、小写字母和数字。")
 	}
 	var upper, lower, digit bool
 	for _, char := range password {
@@ -296,7 +517,7 @@ func validatePassword(password string) error {
 		}
 	}
 	if !upper || !lower || !digit {
-		return errors.New("password must be 8-15 characters and include uppercase, lowercase, and number")
+		return errors.New("密码须为 8–15 位，并同时包含大写字母、小写字母和数字。")
 	}
 	return nil
 }
@@ -304,7 +525,7 @@ func validatePassword(password string) error {
 func normalizeUsername(username string) (string, error) {
 	username = strings.TrimSpace(username)
 	if !usernamePattern.MatchString(username) {
-		return "", errors.New("username must be 3-24 characters and contain only letters, numbers, underscores, or hyphens")
+		return "", errors.New("用户名须为 3–24 位，只能包含字母、数字、下划线或短横线。")
 	}
 	return username, nil
 }
@@ -312,7 +533,7 @@ func normalizeUsername(username string) (string, error) {
 func normalizeEmail(email string) (string, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if !strings.Contains(email, "@") || strings.HasPrefix(email, "@") || strings.HasSuffix(email, "@") {
-		return "", errors.New("invalid email")
+		return "", errors.New("邮箱格式不正确，请检查后重试。")
 	}
 	return email, nil
 }
@@ -320,31 +541,53 @@ func normalizeEmail(email string) (string, error) {
 func (s *Service) Register(username string, email string, password string) (domain.AuthResult, error) {
 	var err error
 	if username, err = normalizeUsername(username); err != nil {
+		log.Printf("auth event=register_validation_failed field=username reason=%v", err)
 		return domain.AuthResult{}, err
 	}
 	if email, err = normalizeEmail(email); err != nil {
+		log.Printf("auth event=register_validation_failed field=email reason=%v", err)
 		return domain.AuthResult{}, err
 	}
 	if err = validatePassword(password); err != nil {
+		log.Printf("auth event=register_validation_failed field=password email=%s reason=%v", maskEmail(email), err)
 		return domain.AuthResult{}, err
 	}
+	log.Printf("auth event=register_start username=%s email=%s", username, maskEmail(email))
 	if s.requireEmailVerification && s.mailer == nil {
+		log.Printf("auth event=register_failed username=%s email=%s reason=smtp_not_configured", username, maskEmail(email))
 		return domain.AuthResult{}, errors.New("邮箱验证暂不可用：未配置 SMTP。")
+	}
+	emailCooldownReserved := false
+	if s.requireEmailVerification {
+		if retryAfter, ok := s.reserveEmailCooldown("verify_email", email); !ok {
+			log.Printf("auth event=email_rate_limited purpose=verify_email email=%s retry_after=%s", maskEmail(email), retryAfter.Round(time.Second))
+			return domain.AuthResult{}, emailRateLimitedError(retryAfter)
+		}
+		emailCooldownReserved = true
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
+		if emailCooldownReserved {
+			s.releaseEmailCooldown("verify_email", email)
+		}
 		return domain.AuthResult{}, err
 	}
 	user, err := s.store.CreateUser(username, email, string(hash), !s.requireEmailVerification)
 	if err != nil {
-		return domain.AuthResult{}, err
+		if emailCooldownReserved {
+			s.releaseEmailCooldown("verify_email", email)
+		}
+		log.Printf("auth event=register_failed username=%s email=%s reason=%v", username, maskEmail(email), err)
+		return domain.AuthResult{}, localizeAuthStoreError(err)
 	}
-	result := domain.AuthResult{UserID: user.ID, EmailVerificationRequired: s.requireEmailVerification}
+	log.Printf("auth event=register_user_created user_id=%s username=%s email=%s", user.ID, username, maskEmail(email))
+	result := domain.AuthResult{UserID: user.ID, EmailVerificationRequired: s.requireEmailVerification, OnboardingRequired: true}
 	if s.requireEmailVerification {
-		sent, sendErr := s.sendVerification(user)
+		sent, sendErr := s.sendVerificationWithCooldown(user, emailCooldownReserved)
 		result.EmailSent = sent
 		if sendErr != nil {
 			result.Message = "账号已创建，但验证邮件发送失败。"
+			log.Printf("auth event=register_email_failed user_id=%s email=%s err=%v", user.ID, maskEmail(user.Email), sendErr)
 		} else {
 			result.Message = "验证邮件已发送。"
 		}
@@ -362,7 +605,8 @@ func (s *Service) Register(username string, email string, password string) (doma
 func (s *Service) LoginCandidates(identifier string) ([]domain.LoginCandidate, error) {
 	users, err := s.findUsers(identifier)
 	if err != nil {
-		return nil, err
+		log.Printf("auth event=login_candidates_failed identifier=%s err=%v", maskIdentifier(identifier), err)
+		return nil, localizeAuthStoreError(err)
 	}
 	result := make([]domain.LoginCandidate, 0, len(users))
 	for _, user := range users {
@@ -372,20 +616,43 @@ func (s *Service) LoginCandidates(identifier string) ([]domain.LoginCandidate, e
 }
 
 func (s *Service) Login(identifier string, password string, userID string) (domain.AuthResult, error) {
+	loginKey := loginFailureKey(identifier, "")
+	if retryAfter, locked := s.loginLockRemaining(loginKey); locked {
+		log.Printf("auth event=login_locked identifier=%s user_id=%s retry_after=%s", maskIdentifier(identifier), strings.TrimSpace(userID), retryAfter.Round(time.Second))
+		return domain.AuthResult{}, loginLockedError(retryAfter)
+	}
+	log.Printf("auth event=login_start identifier=%s user_id=%s", maskIdentifier(identifier), strings.TrimSpace(userID))
 	user, err := s.selectUser(identifier, userID)
 	if err != nil {
+		if errors.Is(err, errInvalidCredentials) {
+			return domain.AuthResult{}, s.recordLoginFailure(loginKey, identifier, userID)
+		}
 		return domain.AuthResult{}, err
+	}
+	loginKey = loginFailureKey(identifier, user.ID)
+	if retryAfter, locked := s.loginLockRemaining(loginKey); locked {
+		log.Printf("auth event=login_locked identifier=%s user_id=%s retry_after=%s", maskIdentifier(identifier), user.ID, retryAfter.Round(time.Second))
+		return domain.AuthResult{}, loginLockedError(retryAfter)
 	}
 	if s.requireEmailVerification && !user.EmailVerified {
 		return domain.AuthResult{}, errors.New("邮箱尚未验证。")
 	}
 	if err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		return domain.AuthResult{}, errors.New("invalid credentials")
+		return domain.AuthResult{}, s.recordLoginFailure(loginKey, identifier, userID)
 	}
-	return s.issueAuthResult(user)
+	s.clearLoginFailures(loginKey)
+	log.Printf("auth event=login_success user_id=%s identifier=%s", user.ID, maskIdentifier(identifier))
+	result, err := s.issueAuthResult(user)
+	if err != nil {
+		return domain.AuthResult{}, err
+	}
+	// 普通登录不触发新手引导；只有注册和邮箱验证流程会显式标记新用户。
+	result.OnboardingRequired = false
+	return result, nil
 }
 
 func (s *Service) RequestEmailVerification(identifier string, userID string) (domain.EmailActionResult, error) {
+	log.Printf("auth event=email_verification_request identifier=%s user_id=%s", maskIdentifier(identifier), strings.TrimSpace(userID))
 	user, result, err := s.selectUserForEmailAction(identifier, userID)
 	if err != nil || result.RequiresSelection {
 		return result, err
@@ -406,16 +673,26 @@ func (s *Service) RequestEmailVerification(identifier string, userID string) (do
 func (s *Service) VerifyEmail(token string) (domain.AuthResult, error) {
 	userID, err := s.consumeToken(token, "verify_email")
 	if err != nil {
+		log.Printf("auth event=email_verify_failed reason=invalid_or_expired_token")
 		return domain.AuthResult{}, err
 	}
 	if err = s.store.SetUserEmailVerified(userID, true); err != nil {
-		return domain.AuthResult{}, err
+		log.Printf("auth event=email_verify_failed user_id=%s err=%v", userID, err)
+		return domain.AuthResult{}, errors.New("邮箱验证失败，请稍后重试。")
 	}
 	user, err := s.store.GetUserByID(userID)
 	if err != nil {
+		log.Printf("auth event=email_verify_failed user_id=%s err=%v", userID, err)
+		return domain.AuthResult{}, errors.New("邮箱验证失败，请稍后重试。")
+	}
+	log.Printf("auth event=email_verify_success user_id=%s", userID)
+	result, err := s.issueAuthResult(user)
+	if err != nil {
 		return domain.AuthResult{}, err
 	}
-	return s.issueAuthResult(user)
+	// 邮箱验证完成代表新注册流程完成，首次进入时显示新手引导。
+	result.OnboardingRequired = true
+	return result, nil
 }
 
 func (s *Service) RequestPasswordReset(identifier string, userID string) (domain.EmailActionResult, error) {
@@ -424,17 +701,26 @@ func (s *Service) RequestPasswordReset(identifier string, userID string) (domain
 		return result, err
 	}
 	if s.mailer == nil {
-		return domain.EmailActionResult{}, errors.New("password reset is unavailable: SMTP is not configured")
+		log.Printf("auth event=password_reset_failed identifier=%s reason=smtp_not_configured", maskIdentifier(identifier))
+		return domain.EmailActionResult{}, errors.New("密码找回暂不可用，请联系管理员配置邮箱服务。")
+	}
+	if retryAfter, ok := s.reserveEmailCooldown("reset_password", user.Email); !ok {
+		log.Printf("auth event=email_rate_limited purpose=reset_password email=%s retry_after=%s", maskEmail(user.Email), retryAfter.Round(time.Second))
+		return domain.EmailActionResult{}, emailRateLimitedError(retryAfter)
 	}
 	raw, err := s.createToken(user.ID, "reset_password")
 	if err != nil {
-		return domain.EmailActionResult{}, err
+		s.releaseEmailCooldown("reset_password", user.Email)
+		log.Printf("auth event=password_reset_failed user_id=%s err=%v", user.ID, err)
+		return domain.EmailActionResult{}, errors.New("密码重置邮件准备失败，请稍后重试。")
 	}
 	resetURL := s.tokenURL("/login", "reset", raw)
 	if err = s.mailer.SendPasswordReset(context.Background(), user.Email, user.Username, resetURL); err != nil {
-		return domain.EmailActionResult{}, err
+		log.Printf("auth event=email_send_failed purpose=reset_password email=%s err=%v", maskEmail(user.Email), err)
+		return domain.EmailActionResult{}, errors.New("密码重置邮件发送失败，请稍后重试。")
 	}
-	return domain.EmailActionResult{Message: "password reset email sent"}, nil
+	log.Printf("auth event=email_send_success purpose=reset_password email=%s", maskEmail(user.Email))
+	return domain.EmailActionResult{Message: "密码重置邮件已发送。"}, nil
 }
 
 func (s *Service) ResetPassword(token string, password string) error {
@@ -447,9 +733,17 @@ func (s *Service) ResetPassword(token string, password string) error {
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return err
+		return errors.New("密码更新失败，请稍后重试。")
 	}
-	return s.store.UpdateUserPassword(userID, string(hash))
+	if err := s.store.UpdateUserPassword(userID, string(hash)); err != nil {
+		log.Printf("auth event=password_reset_failed user_id=%s err=%v", userID, err)
+		return errors.New("密码更新失败，请稍后重试。")
+	}
+	if user, lookupErr := s.store.GetUserByID(userID); lookupErr == nil {
+		s.clearLoginFailures(loginFailureKey(user.Username, user.ID))
+	}
+	log.Printf("auth event=password_reset_success user_id=%s", userID)
+	return nil
 }
 
 func (s *Service) RequestUsernameRecovery(email string) error {
@@ -458,7 +752,7 @@ func (s *Service) RequestUsernameRecovery(email string) error {
 		return err
 	}
 	if s.mailer == nil {
-		return errors.New("username recovery is unavailable: SMTP is not configured")
+		return errors.New("用户名找回暂不可用，请联系管理员配置邮箱服务。")
 	}
 	users, err := s.store.ListUsersByEmail(email)
 	if err != nil || len(users) == 0 {
@@ -468,7 +762,16 @@ func (s *Service) RequestUsernameRecovery(email string) error {
 	for _, user := range users {
 		usernames = append(usernames, user.Username)
 	}
-	return s.mailer.SendUsernameRecovery(context.Background(), email, usernames)
+	if retryAfter, ok := s.reserveEmailCooldown("username_recovery", email); !ok {
+		log.Printf("auth event=email_rate_limited purpose=username_recovery email=%s retry_after=%s", maskEmail(email), retryAfter.Round(time.Second))
+		return emailRateLimitedError(retryAfter)
+	}
+	if err := s.mailer.SendUsernameRecovery(context.Background(), email, usernames); err != nil {
+		log.Printf("auth event=email_send_failed purpose=username_recovery email=%s err=%v", maskEmail(email), err)
+		return errors.New("用户名找回邮件发送失败，请稍后重试。")
+	}
+	log.Printf("auth event=email_send_success purpose=username_recovery email=%s", maskEmail(email))
+	return nil
 }
 
 func (s *Service) findUsers(identifier string) ([]domain.User, error) {
@@ -489,24 +792,31 @@ func (s *Service) findUsers(identifier string) ([]domain.User, error) {
 
 func (s *Service) selectUser(identifier string, userID string) (domain.User, error) {
 	users, err := s.findUsers(identifier)
-	if err != nil || len(users) == 0 {
-		return domain.User{}, errors.New("invalid credentials")
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "user not found") {
+			return domain.User{}, errInvalidCredentials
+		}
+		log.Printf("auth event=login_lookup_failed identifier=%s err=%v", maskIdentifier(identifier), err)
+		return domain.User{}, errors.New("账号查询失败，请稍后重试。")
+	}
+	if len(users) == 0 {
+		return domain.User{}, errInvalidCredentials
 	}
 	if len(users) > 1 && strings.TrimSpace(userID) == "" {
-		return domain.User{}, errors.New("multiple accounts found: select a user")
+		return domain.User{}, errors.New("该邮箱关联多个账号，请选择要登录的账号。")
 	}
 	for _, user := range users {
 		if len(users) == 1 || user.ID == userID {
 			return user, nil
 		}
 	}
-	return domain.User{}, errors.New("invalid account selection")
+	return domain.User{}, errors.New("账号选择无效，请重新选择。")
 }
 
 func (s *Service) selectUserForEmailAction(identifier string, userID string) (domain.User, domain.EmailActionResult, error) {
 	users, err := s.findUsers(identifier)
 	if err != nil || len(users) == 0 {
-		return domain.User{}, domain.EmailActionResult{Message: "if the account exists, an email will be sent"}, nil
+		return domain.User{}, domain.EmailActionResult{Message: "如果账号存在，邮件将发送到对应邮箱。"}, nil
 	}
 	candidates := make([]domain.LoginCandidate, 0, len(users))
 	for _, user := range users {
@@ -520,20 +830,34 @@ func (s *Service) selectUserForEmailAction(identifier string, userID string) (do
 			return user, domain.EmailActionResult{}, nil
 		}
 	}
-	return domain.User{}, domain.EmailActionResult{}, errors.New("invalid account selection")
+	return domain.User{}, domain.EmailActionResult{}, errors.New("账号选择无效，请重新选择。")
 }
 
 func (s *Service) sendVerification(user domain.User) (bool, error) {
+	return s.sendVerificationWithCooldown(user, false)
+}
+
+func (s *Service) sendVerificationWithCooldown(user domain.User, cooldownReserved bool) (bool, error) {
 	if s.mailer == nil {
 		return false, errors.New("邮箱验证暂不可用：未配置 SMTP。")
 	}
+	if !cooldownReserved {
+		if retryAfter, ok := s.reserveEmailCooldown("verify_email", user.Email); !ok {
+			log.Printf("auth event=email_rate_limited purpose=verify_email email=%s retry_after=%s", maskEmail(user.Email), retryAfter.Round(time.Second))
+			return false, emailRateLimitedError(retryAfter)
+		}
+	}
 	raw, err := s.createToken(user.ID, "verify_email")
 	if err != nil {
-		return false, err
+		s.releaseEmailCooldown("verify_email", user.Email)
+		log.Printf("auth event=email_send_failed purpose=verify_email email=%s err=%v", maskEmail(user.Email), err)
+		return false, errors.New("验证邮件准备失败，请稍后重试。")
 	}
 	if err = s.mailer.SendEmailVerification(context.Background(), user.Email, user.Username, s.tokenURL("/login", "verify", raw)); err != nil {
-		return false, err
+		log.Printf("auth event=email_send_failed purpose=verify_email email=%s err=%v", maskEmail(user.Email), err)
+		return false, errors.New("验证邮件发送失败，请稍后重试。")
 	}
+	log.Printf("auth event=email_send_success purpose=verify_email email=%s", maskEmail(user.Email))
 	return true, nil
 }
 
@@ -611,19 +935,19 @@ func hashRefreshToken(token string) string {
 // Refresh rotates a valid independent refresh token without parsing the access token.
 func (s *Service) Refresh(refreshToken string) (domain.AuthResult, error) {
 	if s.session == nil {
-		return domain.AuthResult{}, errors.New("refresh is unavailable")
+		return domain.AuthResult{}, errors.New("登录服务暂不可用，请稍后重试。")
 	}
 	userID, ok := refreshTokenUserID(refreshToken)
 	if !ok {
-		return domain.AuthResult{}, errors.New("refresh token invalid")
+		return domain.AuthResult{}, errors.New("登录状态已失效，请重新登录。")
 	}
 	stored, err := s.session.GetRefreshToken(context.Background(), userID)
 	if err != nil || stored == "" || stored != hashRefreshToken(refreshToken) {
-		return domain.AuthResult{}, errors.New("refresh token invalid")
+		return domain.AuthResult{}, errors.New("登录状态已失效，请重新登录。")
 	}
 	user, err := s.store.GetUserByID(userID)
 	if err != nil {
-		return domain.AuthResult{}, errors.New("refresh token invalid")
+		return domain.AuthResult{}, errors.New("登录状态已失效，请重新登录。")
 	}
 	return s.issueAuthResult(user)
 }
@@ -632,7 +956,7 @@ func (s *Service) Refresh(refreshToken string) (domain.AuthResult, error) {
 // stored the access token itself. It cannot recover expired or rotated JWTs.
 func (s *Service) RefreshLegacyAccessToken(accessToken string) (domain.AuthResult, error) {
 	if s.session == nil {
-		return domain.AuthResult{}, errors.New("refresh is unavailable")
+		return domain.AuthResult{}, errors.New("登录服务暂不可用，请稍后重试。")
 	}
 	claims, err := auth.ParseAccessToken(s.jwtSecret, accessToken)
 	if err != nil {
@@ -640,11 +964,11 @@ func (s *Service) RefreshLegacyAccessToken(accessToken string) (domain.AuthResul
 	}
 	stored, err := s.session.GetRefreshToken(context.Background(), claims.UserID)
 	if err != nil || stored == "" || stored != accessToken {
-		return domain.AuthResult{}, errors.New("refresh token invalid")
+		return domain.AuthResult{}, errors.New("登录状态已失效，请重新登录。")
 	}
 	user, err := s.store.GetUserByID(claims.UserID)
 	if err != nil {
-		return domain.AuthResult{}, errors.New("refresh token invalid")
+		return domain.AuthResult{}, errors.New("登录状态已失效，请重新登录。")
 	}
 	return s.issueAuthResult(user)
 }
@@ -1061,10 +1385,21 @@ func defaultASRModel(provider string) string {
 }
 
 func (s *Service) VoiceProfiles(userID string) ([]domain.VoiceProfile, error) {
+	if s.isDemoAccount(userID) {
+		if err := s.ensureDemoVoiceProfiles(userID); err != nil {
+			return nil, err
+		}
+	}
 	return s.store.ListVoiceProfiles(userID)
 }
 
 func (s *Service) CreateVoiceProfile(userID string, name string, prompt string, language string) (domain.VoiceProfile, error) {
+	if s.isDemoAccount(userID) {
+		return s.createDemoVoiceProfile(userID, name, prompt, language)
+	}
+	if err := s.rejectDemoAccountAI(userID); err != nil {
+		return domain.VoiceProfile{}, err
+	}
 	name = strings.TrimSpace(name)
 	prompt = strings.TrimSpace(prompt)
 	language = strings.ToUpper(strings.TrimSpace(language))
@@ -1345,6 +1680,12 @@ func (s *Service) GenerateTheater(userID string, language string, topic string, 
 }
 
 func (s *Service) GenerateTheaterWithVoices(userID string, language string, topic string, difficulty float64, mode string, voiceMode string, voiceProfileIDs []string) (domain.Theater, error) {
+	if s.isDemoAccount(userID) {
+		return s.generateDemoTheater(userID, language, topic, difficulty, mode)
+	}
+	if err := s.rejectDemoAccountAI(userID); err != nil {
+		return domain.Theater{}, err
+	}
 	voiceMode = strings.ToUpper(strings.TrimSpace(voiceMode))
 	if voiceMode == "" {
 		voiceMode = "AUTO"
@@ -2085,6 +2426,11 @@ func (s *Service) SharedTheater(shareCode string) (domain.Theater, error) {
 }
 
 func (s *Service) MyTheaters(userID string, language string, status string, favorite *bool) ([]domain.Theater, error) {
+	if s.isDemoAccount(userID) {
+		if err := s.EnsureDemoFixtures(); err != nil {
+			log.Printf("demo theater fixtures unavailable user_id=%s err=%v", userID, err)
+		}
+	}
 	items, err := s.store.ListTheatersByUser(userID, language, status, favorite)
 	if err != nil {
 		return nil, err
@@ -2263,6 +2609,12 @@ func (s *Service) GenerateReadingMaterial(userID string, exam string, topic stri
 }
 
 func (s *Service) GenerateReadingMaterialWithInput(userID string, input domain.ReadingGenerationInput) (domain.ReadingMaterial, error) {
+	if s.isDemoAccount(userID) {
+		return s.generateDemoReading(userID, input)
+	}
+	if err := s.rejectDemoAccountAI(userID); err != nil {
+		return domain.ReadingMaterial{}, err
+	}
 	exam := strings.TrimSpace(strings.ToUpper(input.Exam))
 	topic := strings.TrimSpace(input.Topic)
 	level := strings.TrimSpace(input.Level)
@@ -3005,6 +3357,11 @@ func splitTextChunks(text string, maxLen int) []string {
 
 func (s *Service) ReadingMaterials(userID string, exam string) ([]domain.ReadingMaterial, error) {
 	exam = strings.TrimSpace(strings.ToUpper(exam))
+	if s.isDemoAccount(userID) {
+		if err := s.ensureDemoLearningFixtures(userID, ""); err != nil {
+			log.Printf("demo learning fixtures unavailable user_id=%s err=%v", userID, err)
+		}
+	}
 	result, err := s.store.ListReadingMaterialsByUser(userID, exam)
 	if err != nil {
 		return nil, err
@@ -3299,6 +3656,12 @@ func containsLowQualityTemplate(text string) bool {
 }
 
 func (s *Service) StartRoleplay(userID string, theaterID string, userRole string) (domain.RoleplaySession, error) {
+	if s.isDemoAccount(userID) {
+		return s.startDemoRoleplay(userID, theaterID, userRole)
+	}
+	if err := s.rejectDemoAccountAI(userID); err != nil {
+		return domain.RoleplaySession{}, err
+	}
 	theater, err := s.store.GetTheater(theaterID)
 	if err != nil {
 		return domain.RoleplaySession{}, err
@@ -3365,6 +3728,12 @@ func (s *Service) GetRoleplaySession(userID string, sessionID string) (domain.Ro
 }
 
 func (s *Service) SubmitRoleplayReply(userID string, sessionID string, text string) (domain.RoleplaySession, error) {
+	if s.isDemoAccount(userID) {
+		return s.submitDemoRoleplayReply(userID, sessionID, text)
+	}
+	if err := s.rejectDemoAccountAI(userID); err != nil {
+		return domain.RoleplaySession{}, err
+	}
 	release, err := s.reserveAIRequest(userID)
 	if err != nil {
 		return domain.RoleplaySession{}, err
@@ -3374,6 +3743,15 @@ func (s *Service) SubmitRoleplayReply(userID string, sessionID string, text stri
 }
 
 func (s *Service) SubmitRoleplayAudio(userID string, sessionID string, audioDataURL string, language string) (domain.RoleplaySession, error) {
+	if s.isDemoAccount(userID) {
+		if len(audioDataURL) > 14*1024*1024 || !strings.HasPrefix(strings.TrimSpace(audioDataURL), "data:audio/") {
+			return domain.RoleplaySession{}, errors.New("音频格式无效，请重新录音后再试。")
+		}
+		return s.submitDemoRoleplayAudio(userID, sessionID, language)
+	}
+	if err := s.rejectDemoAccountAI(userID); err != nil {
+		return domain.RoleplaySession{}, err
+	}
 	if s.asr == nil {
 		return domain.RoleplaySession{}, errors.New("asr is unavailable: configure ASR first")
 	}
@@ -3545,7 +3923,10 @@ func (s *Service) EndRoleplay(userID string, sessionID string) (domain.RoleplayS
 	if terr != nil {
 		return domain.RoleplaySession{}, terr
 	}
-	if engine, ok := any(s.generator).(roleplayEngine); ok {
+	if s.isDemoAccount(userID) {
+		session.FinalFeedback = fallbackRoleplaySummary(th.Language, session.CurrentScore)
+		session.ProcessingMessage = "演示模式：总结来自预置规则，不调用模型。"
+	} else if engine, ok := any(s.generator).(roleplayEngine); ok {
 		if summary, e := engine.RoleplaySummary(context.Background(), th, session.Transcript, session.CurrentScore); e == nil && strings.TrimSpace(summary) != "" {
 			session.FinalFeedback = summary
 		}

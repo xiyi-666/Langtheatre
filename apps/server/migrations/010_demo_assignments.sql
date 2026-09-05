@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS demo_assignments (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  difficulty TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

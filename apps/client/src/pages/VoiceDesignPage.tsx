@@ -3,6 +3,8 @@ import { ArrowLeft, Sparkles, Volume2, Waves } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { createVoiceProfile, getTTSConfig } from "../api";
 import { AICreditCostNotice } from "../components/AICreditCostNotice";
+import { isDemoUser, waitForDemoGeneration } from "../demoExperience";
+import { useAppStore } from "../store";
 import type { TTSConfig } from "../types";
 
 type VoiceDesignPreset = {
@@ -43,6 +45,8 @@ const voiceDesignPresets: Record<"CANTONESE" | "ENGLISH", VoiceDesignPreset[]> =
 
 export function VoiceDesignPage() {
   const navigate = useNavigate();
+  const user = useAppStore((state) => state.user);
+  const demoMode = isDemoUser(user);
   const [ttsConfig, setTTSConfig] = useState<TTSConfig>();
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -51,15 +55,16 @@ export function VoiceDesignPage() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
+    if (demoMode) return;
     void getTTSConfig()
       .then(setTTSConfig)
       .catch((error) => {
         console.error("load tts config failed", error);
         setMessage("无法读取线上语音服务状态，请稍后重试。");
       });
-  }, []);
+  }, [demoMode]);
 
-  const canCreate = ttsConfig?.provider === "XIAOMI" && ttsConfig.hasApiKey;
+  const canCreate = demoMode || (ttsConfig?.provider === "XIAOMI" && ttsConfig.hasApiKey);
   const presets = voiceDesignPresets[language];
 
   function applyPreset(preset: VoiceDesignPreset) {
@@ -76,9 +81,11 @@ export function VoiceDesignPage() {
     }
     setCreating(true);
     setMessage("");
+    const startedAt = Date.now();
     try {
       await createVoiceProfile({ name: name.trim(), prompt: prompt.trim(), language });
-      navigate("/voices", { state: { message: "音色已加入后台创建队列；完成后可在这里试听并用于剧场。" } });
+      if (demoMode) await waitForDemoGeneration(startedAt, 900);
+      navigate("/voices", { state: { message: demoMode ? "演示音色已创建完成：未调用 TTS，也未消耗 AI 点数。" : "音色已加入后台创建队列；完成后可在这里试听并用于剧场。" } });
     } catch (error) {
       console.error("create voice profile failed", error);
       setMessage((error as Error).message || "创建失败，请检查音色描述后稍后重试。");
@@ -135,10 +142,15 @@ export function VoiceDesignPage() {
             </div>
           </section>
           <aside className="voice-design-tip"><Volume2 size={18} /><span>建议写明年龄感、性别呈现、地区口音、语速、情绪和角色场景，生成效果会更稳定。</span></aside>
-          <AICreditCostNotice action="VOICE_DESIGN" />
+          {demoMode ? (
+            <aside className="stage-banner">
+              <strong>演示模式 · 音色设计权限已开放</strong>
+              <p>创建后会得到本地预置演示音色，不调用 TTS，也不会消耗 AI 点数。</p>
+            </aside>
+          ) : <AICreditCostNotice action="VOICE_DESIGN" />}
           <div className="voice-design-submit">
-            <button type="submit" disabled={creating || !canCreate}><Sparkles size={16} /> {creating ? "正在创建…" : "创建音色"}</button>
-            <small>支持 8–500 字的角色描述，生成过程不阻塞其他服务；生成结果需要试听确认。</small>
+            <button type="submit" disabled={creating || !canCreate}><Sparkles size={16} /> {creating ? (demoMode ? "正在准备演示音色…" : "正在创建…") : "创建音色"}</button>
+            <small>{demoMode ? "支持 8–500 字的角色描述；演示结果会直接保存到音色库。" : "支持 8–500 字的角色描述，生成过程不阻塞其他服务；生成结果需要试听确认。"}</small>
           </div>
           {!canCreate ? <p className="error">线上音色服务暂未就绪，请稍后再试。</p> : null}
           {message ? <p className="muted-note" role="status">{message}</p> : null}

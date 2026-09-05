@@ -78,3 +78,23 @@ func (s *Service) reserveAIRequest(userID string) (func(), error) {
 	}
 	return s.usageGuard.reserve(userID)
 }
+
+// rejectDemoAccountAI remains the final safety boundary for model-backed
+// operations. Supported demo experiences must return from a preset branch
+// before reaching this check.
+func (s *Service) rejectDemoAccountAI(userID string) error {
+	if s.isDemoAccount(userID) {
+		return errors.New("演示账号仅可使用预置内容，不能调用 AI 服务。")
+	}
+	return nil
+}
+
+func (s *Service) isDemoAccount(userID string) bool {
+	user, err := s.store.GetUserByID(strings.TrimSpace(userID))
+	if err != nil {
+		// Preserve service-level compatibility for tests and internal callers that
+		// use synthetic user IDs; authenticated requests always resolve a user.
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(user.Username), demoAccountUsername)
+}

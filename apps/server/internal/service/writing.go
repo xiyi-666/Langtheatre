@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -17,12 +18,22 @@ type writingEngine interface {
 }
 
 func (s *Service) StartWritingSession(userID, exam string, timeLimitSeconds int) (domain.WritingSession, error) {
+	return s.StartWritingSessionWithDifficulty(userID, exam, timeLimitSeconds, "")
+}
+
+func (s *Service) StartWritingSessionWithDifficulty(userID, exam string, timeLimitSeconds int, difficulty string) (domain.WritingSession, error) {
 	exam = normalizeWritingExam(exam)
 	if exam == "" {
 		return domain.WritingSession{}, errors.New("exam must be IELTS, CET4, or CET6")
 	}
 	if timeLimitSeconds < 300 || timeLimitSeconds > 7200 {
 		return domain.WritingSession{}, errors.New("time limit must be between 5 and 120 minutes")
+	}
+	if s.isDemoAccount(userID) {
+		return s.generateDemoWriting(userID, exam, timeLimitSeconds, difficulty)
+	}
+	if err := s.rejectDemoAccountAI(userID); err != nil {
+		return domain.WritingSession{}, err
 	}
 	sessionID := uuid.NewString()
 	release, err := s.reserveAIRequest(userID)
@@ -54,6 +65,11 @@ func (s *Service) WritingSession(userID, sessionID string) (domain.WritingSessio
 	return s.store.GetWritingSession(sessionID, userID)
 }
 func (s *Service) WritingSessions(userID string) ([]domain.WritingSession, error) {
+	if s.isDemoAccount(userID) {
+		if err := s.ensureDemoLearningFixtures(userID, ""); err != nil {
+			log.Printf("demo writing fixtures unavailable user_id=%s err=%v", userID, err)
+		}
+	}
 	return s.store.ListWritingSessions(userID)
 }
 
@@ -72,6 +88,12 @@ func (s *Service) DeleteWritingSession(userID, sessionID string) error {
 }
 
 func (s *Service) SubmitWritingSession(userID, sessionID, essay string) (domain.WritingSession, error) {
+	if s.isDemoAccount(userID) {
+		return s.submitDemoWriting(userID, sessionID, essay)
+	}
+	if err := s.rejectDemoAccountAI(userID); err != nil {
+		return domain.WritingSession{}, err
+	}
 	session, err := s.store.GetWritingSession(sessionID, userID)
 	if err != nil {
 		return domain.WritingSession{}, err

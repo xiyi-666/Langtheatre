@@ -4,6 +4,9 @@ import { listWritingSessions, startWritingSession } from "../api";
 import type { WritingSession } from "../types";
 import { useLocation, useNavigate } from "react-router-dom";
 import { isMiniProgramEdition } from "../edition";
+import { getDemoSessionDifficulty, isDemoUser, waitForDemoGeneration } from "../demoExperience";
+import { useAppStore } from "../store";
+import { DemoGenerationProgress } from "../components/DemoGenerationProgress";
 
 function parseWritingMinutes(value: string): { value?: number; error?: string } {
   const normalized = value.trim();
@@ -26,6 +29,8 @@ function formatStartedAt(startedAt: string): string {
 }
 
 export function WritingPage() {
+	const user = useAppStore((state) => state.user);
+  const demoUser = isDemoUser(user);
   const navigate = useNavigate();
   const location = useLocation();
   const isLibraryPage = location.pathname === "/writing/library";
@@ -38,6 +43,7 @@ export function WritingPage() {
   const [message, setMessage] = useState("");
   const [historyMessage, setHistoryMessage] = useState("");
   const [starting, setStarting] = useState(false);
+  const [demoProgressComplete, setDemoProgressComplete] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyExam, setHistoryExam] = useState<"ALL" | "IELTS" | "CET4" | "CET6">("ALL");
   const [historyStatus, setHistoryStatus] = useState<"ALL" | WritingSession["status"]>("ALL");
@@ -98,9 +104,15 @@ export function WritingPage() {
       minutesInputRef.current?.focus();
       return;
     }
-    setStarting(true); setMessage("");
+    setStarting(true); setMessage(""); setDemoProgressComplete(false);
+    const startedAt = Date.now();
     try {
-      const created = await startWritingSession(exam, parsedMinutes.value * 60);
+      const created = await startWritingSession(exam, parsedMinutes.value * 60, getDemoSessionDifficulty(user));
+      if (demoUser) {
+        await waitForDemoGeneration(startedAt);
+        setDemoProgressComplete(true);
+        await new Promise((resolve) => window.setTimeout(resolve, 350));
+      }
       navigate(`/writing/${created.id}`);
     } catch (error) { setMessage((error as Error).message || (isMiniProgramEdition ? "题目生成失败，线上 AI 服务暂时不可用，请稍后重试。" : "题目生成失败，请检查模型配置。")); }
     finally { setStarting(false); }
@@ -112,6 +124,7 @@ export function WritingPage() {
         <span className="eyebrow"><FilePenLine size={15} /> English writing lab</span>
         <h2>限时英语写作</h2>
         <p>生成主题后在规定时间内写作；历史练习可随时回访评分与建议。</p>
+        {demoUser ? <article className="stage-banner"><strong>演示模式 · 学习权限已开放</strong><p>IELTS、四级和六级写作均使用预置题目与评分流程，不调用 AI，不消耗点数。</p></article> : null}
         <form className="writing-start" onSubmit={handleStart}>
           <label>考试类型<select value={exam} onChange={(event) => setExam(event.target.value as typeof exam)}><option value="IELTS">IELTS</option><option value="CET4">大学英语四级</option><option value="CET6">大学英语六级</option></select></label>
           <label>
@@ -142,6 +155,13 @@ export function WritingPage() {
           </label>
           <button type="submit" disabled={starting}><Sparkles size={16} /> {starting ? "生成中…" : "生成写作主题"}</button>
         </form>
+        <DemoGenerationProgress
+          active={demoUser && starting}
+          complete={demoProgressComplete}
+          title="正在准备你的英语写作任务"
+          note="正在载入预置题目、限时配置和评分维度，不调用 AI，不消耗点数。"
+          steps={["确认考试类型", "准备写作主题", "配置限时时间", "即将开始写作"]}
+        />
         {message ? <p className="muted-note">{message}</p> : null}
       </section>
       <section className="card stage-banner" style={{ marginTop: 16 }}><h3>我的写作库</h3><p>在独立子页中搜索、筛选并按页查看全部写作练习。</p><button type="button" className="btn-ghost" onClick={() => navigate("/writing/library")}>查看写作材料</button></section></> : null}

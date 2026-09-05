@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { BookOpenText, CircleAlert, Clapperboard, Compass, FilePenLine, ScrollText, UserRound } from "lucide-react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { LoginPage } from "./pages/LoginPage";
@@ -22,6 +22,8 @@ import { isCommercialEdition, isMiniProgramEdition } from "./edition";
 import { useAppStore } from "./store";
 import { CREDIT_INSUFFICIENT_EVENT, trackClick } from "./api";
 import { membershipRoutePaths } from "./membershipRoutes";
+import { DemoPage } from "./pages/DemoPage";
+import { OnboardingTour } from "./components/OnboardingTour";
 
 const CommercialMembershipPage = __LINGUAQUEST_APP_EDITION__ === "COMMERCIAL"
   ? lazy(() => import("./pages/MembershipPage").then((module) => ({ default: module.MembershipPage })))
@@ -116,6 +118,7 @@ function MobileBottomNav() {
     >
       <NavLink
         to="/courses"
+		data-onboarding="courses-nav"
 		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
 		data-analytics-click="NAV_COURSES"
 		onClick={() => trackClick("NAV_COURSES")}
@@ -126,6 +129,7 @@ function MobileBottomNav() {
       </NavLink>
       <NavLink
         to="/reading"
+		data-onboarding="reading-nav"
 		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
 		data-analytics-click="NAV_READING"
 		onClick={() => trackClick("NAV_READING")}
@@ -134,11 +138,12 @@ function MobileBottomNav() {
         <ScrollText size={16} />
         <span>阅读</span>
       </NavLink>
-	  <NavLink to="/writing" className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")} data-analytics-click="NAV_WRITING" onClick={() => trackClick("NAV_WRITING")} onFocus={() => setDesktopVisible(true)}>
+	  <NavLink to="/writing" data-onboarding="writing-nav" className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")} data-analytics-click="NAV_WRITING" onClick={() => trackClick("NAV_WRITING")} onFocus={() => setDesktopVisible(true)}>
         <FilePenLine size={16} /><span>写作</span>
       </NavLink>
       <NavLink
         to="/library"
+		data-onboarding="library-nav"
 		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
 		data-analytics-click="NAV_LIBRARY"
 		onClick={() => trackClick("NAV_LIBRARY")}
@@ -149,6 +154,7 @@ function MobileBottomNav() {
       </NavLink>
       <NavLink
         to="/generate"
+		data-onboarding="generate-nav"
 		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
 		data-analytics-click="NAV_GENERATE"
 		onClick={() => trackClick("NAV_GENERATE")}
@@ -185,6 +191,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
 		<Route path="/login" element={<LoginPage />} />
+		<Route path="/demo" element={<DemoPage />} />
 		<Route path="/updates" element={<ReleaseNotesPage />} />
         <Route path="/generate" element={<GeneratePage />} />
         <Route path="/courses" element={<CoursesPage />} />
@@ -208,6 +215,7 @@ export function App() {
         <Route path="/roleplay/:theaterId" element={<RoleplayPage />} />
       </Routes>
       <MobileBottomNav />
+      <OnboardingTour />
       <AICreditInsufficientDialog />
     </>
   );
@@ -216,23 +224,43 @@ export function App() {
 function AICreditInsufficientDialog() {
   const navigate = useNavigate();
   const [message, setMessage] = useState("");
+  const dialogRef = useRef<HTMLElement>(null);
+  const lastFocusedRef = useRef<HTMLElement | null>(null);
   const canPurchaseCredits = isCommercialEdition && !isMiniProgramEdition;
+
+  const close = useCallback(() => {
+    setMessage("");
+    window.setTimeout(() => lastFocusedRef.current?.focus(), 0);
+  }, []);
 
   useEffect(() => {
     const showDialog = (event: Event) => {
       const detail = (event as CustomEvent<{ message?: string }>).detail;
+      lastFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setMessage(detail?.message?.trim() || "AI 点数不足，请等待每日点数重置后再试。");
     };
     window.addEventListener(CREDIT_INSUFFICIENT_EVENT, showDialog);
     return () => window.removeEventListener(CREDIT_INSUFFICIENT_EVENT, showDialog);
   }, []);
 
+  useEffect(() => {
+    if (!message) return;
+    dialogRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [close, message]);
+
   if (!message) return null;
 
-  const close = () => setMessage("");
   return (
     <div className="credit-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
-      <section className="credit-dialog" role="alertdialog" aria-modal="true" aria-labelledby="credit-dialog-title" aria-describedby="credit-dialog-description">
+      <section ref={dialogRef} tabIndex={-1} className="credit-dialog" role="alertdialog" aria-modal="true" aria-labelledby="credit-dialog-title" aria-describedby="credit-dialog-description">
         <span className="credit-dialog-icon"><CircleAlert size={22} /></span>
         <div>
           <p className="credit-dialog-kicker">本次任务未开始</p>
