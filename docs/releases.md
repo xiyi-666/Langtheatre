@@ -6,6 +6,14 @@
 - `apps/client/src/product.ts` 中的 `currentProductVersion` 和 `releaseNotes`（新版本置顶）
 - 本文件中的文字版记录
 
+## V1.0.3 · 2026-09-23
+
+- 新增 IELTS 听力专项训练、题库导入和难度审核流程。
+- 新增 AI 考官口语模拟、会话恢复与口语题目独立质量审核。
+- 新增 IELTS、CET-4、CET-6 模拟考试和考试结果记录。
+- 优化模型传输失败重试、前端导航和小程序版回归测试。
+- 发布流程同步构建小程序镜像、Android APK 和 Linux、Windows、macOS 安装包。
+
 ## V1.0.1 · 2026-08-02
 
 - 新增仅后端可见的匿名日聚合统计：模型 Token、核心功能使用和导航点击。

@@ -7,9 +7,22 @@ export type ReleaseNote = {
 };
 
 // 发布新版本时只需在这里置顶添加一条记录，并同步更新 package.json 的版本号。
-export const currentProductVersion = "1.0.2";
+export const currentProductVersion = "1.0.3";
 
 export const releaseNotes: ReleaseNote[] = [
+  {
+    version: "1.0.3",
+    releasedOn: "2026-09-23",
+    title: "听力、口语与模拟考试发布",
+    summary: "新增听力专项、口语模拟和 IELTS/CET 模拟考试，并强化生产质量审核与多平台发布流程。",
+    highlights: [
+      "新增 IELTS 听力专项训练、题库导入和难度审核流程。",
+      "新增 AI 考官口语模拟、会话恢复与口语题目独立质量审核。",
+      "新增 IELTS、CET-4、CET-6 模拟考试和考试结果记录。",
+      "优化模型传输失败重试、前端导航和小程序版回归测试。",
+      "同步构建小程序镜像、Android APK 和 Linux、Windows、macOS 安装包。"
+    ]
+  },
   {
     version: "1.0.2",
     releasedOn: "2026-08-25",

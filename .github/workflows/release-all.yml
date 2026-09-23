@@ -206,6 +206,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # 统一在下一步接受许可证，避免 setup-android 自带的 license
+          # 处理在 runner 镜像更新或网络波动时提前终止整个 Android job。
+          accept-android-sdk-licenses: false
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android SDK and NDK components
         shell: bash
