@@ -6,6 +6,12 @@
 - `apps/client/src/product.ts` 中的 `currentProductVersion` 和 `releaseNotes`（新版本置顶）
 - 本文件中的文字版记录
 
+## V1.0.5 · 2026-09-23
+
+- 统一桌面端、Android、Web 和小程序版本号为 V1.0.5。
+- 小程序发布质量门禁不再重复执行已由 Docker 构建验证的跨架构编译。
+- 最新源码、镜像和多平台安装包使用同一发布版本。
+
 ## V1.0.4 · 2026-09-23
 
 - 修复 Android SDK 初始化和 Linux 服务端交叉编译流程，确保最新版本可以正常生成安装包。

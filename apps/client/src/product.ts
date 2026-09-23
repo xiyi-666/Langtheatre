@@ -7,9 +7,20 @@ export type ReleaseNote = {
 };
 
 // 发布新版本时只需在这里置顶添加一条记录，并同步更新 package.json 的版本号。
-export const currentProductVersion = "1.0.4";
+export const currentProductVersion = "1.0.5";
 
 export const releaseNotes: ReleaseNote[] = [
+  {
+    version: "1.0.5",
+    releasedOn: "2026-09-23",
+    title: "发布版本统一",
+    summary: "统一桌面端、Android、Web 和小程序版本号，并修复小程序发布质量门禁。",
+    highlights: [
+      "桌面端和 Android 安装包版本号统一为 V1.0.5。",
+      "小程序发布质量门禁不再重复执行已由 Docker 构建验证的跨架构编译。",
+      "最新源码、镜像和多平台安装包使用同一发布版本。"
+    ]
+  },
   {
     version: "1.0.4",
     releasedOn: "2026-09-23",
