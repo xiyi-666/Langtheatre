@@ -1,0 +1,927 @@
+{
+  "ID": "",
+  "UserID": "",
+  "Exam": "IELTS",
+  "Status": "",
+  "CurrentSection": "",
+  "TotalDurationSeconds": 9000,
+  "Sections": [
+    {
+      "AudioURLs": null,
+      "PaperVersion": "IELTS-Academic-v2",
+      "TargetBand": 7,
+      "QualityApproved": true,
+      "Key": "LISTENING_1",
+      "Title": "River planning LISTENING_1",
+      "Skill": "LISTENING",
+      "DurationSeconds": 450,
+      "Instructions": "Read or listen to the complete source and answer each question using the specified format.",
+      "Passage": "",
+      "AudioURL": "",
+      "AudioScript": "Maya: The regional planning group began its investigation with a detailed survey of public spaces around the river. Residents were invited to describe how they used the paths during different seasons and explain what prevented them from visiting more frequently. Rather than assuming that everyone shared the same priorities, researchers recorded contrasting views about safety, convenience, and the protection of wildlife. Interviews revealed several practical concerns which had not appeared in the original proposal, particularly among people who travelled with children or needed assistance when walking. For the listening1 entrance, researchers selected oak after comparing several suitable materials. For the listening1 workshop, researchers selected copper after comparing several suitable materials.\n\nDaniel: Historical records offered another perspective on the landscape. Maps from the municipal archive showed that small industrial buildings had once occupied much of the eastern bank, while photographs documented gradual changes in vegetation. The team compared these sources with measurements taken during recent field visits. Although some boundaries could be identified precisely, others remained uncertain because earlier surveys had used inconsistent reference points. This uncertainty influenced the decision to preserve several features until their relationship with the surrounding area could be investigated more thoroughly. For the listening1 archive, researchers selected slate after comparing several suitable materials. For the listening1 shelter, researchers selected granite after comparing several suitable materials.\n\nMaya: Financial constraints also shaped the available choices. An independent assessment compared the initial construction budget with likely maintenance expenses over the following decade. Materials that appeared economical at first sometimes required specialist repairs or frequent replacement, making them less attractive when considered over a longer period. Local contractors suggested several alternatives, but the committee requested further evidence before accepting their estimates. Funding was eventually divided between essential improvements and a smaller experimental programme intended to evaluate approaches that had not previously been tried locally. For the listening1 platform, researchers selected bamboo after comparing several suitable materials. For the listening1 garden, researchers selected cedar after comparing several suitable materials.\n\nDaniel: Community workshops provided an opportunity to challenge the emerging design. Participants worked in small groups, using photographs and large printed plans to identify potential conflicts between activities. Cyclists wanted uninterrupted routes, whereas older residents preferred quieter places where they could rest without feeling hurried. These differences did not produce a single compromise immediately. Instead, the facilitators asked each group to explain its reasoning and consider circumstances in which another arrangement might work better. The resulting proposals were more varied than the original consultation responses suggested. For the listening1 footbridge, researchers selected steel after comparing several suitable materials. For the listening1 laboratory, researchers selected clay after comparing several suitable materials.\n\nMaya: Environmental monitoring continued while the consultation was taking place. Volunteers recorded bird activity at fixed observation points and noted how rainfall affected the shallow pools near the southern boundary. Specialists checked a selection of these observations to estimate their reliability. They found that training improved agreement between observers, although poor visibility still caused difficulties on some mornings. The findings encouraged the project managers to revise the monitoring schedule and distinguish short term changes from patterns that might indicate a lasting alteration in habitat quality. For the listening1 gallery, researchers selected marble after comparing several suitable materials. For the listening1 terrace, researchers selected glass after comparing several suitable materials.\n\nDaniel: Communication became particularly important when construction arrangements were announced. Earlier notices had described the overall ambition but provided little information about temporary closures or alternative access. A revised information campaign therefore explained the sequence of work and gave residents a clear contact point for practical enquiries. Staff also visited nearby businesses to discuss deliveries and customer access. This approach required additional preparation, yet it reduced confusion during the busiest stage and helped the organisers identify problems before they disrupted essential local services or scheduled activities. For the listening1 courtyard, researchers selected brick after comparing several suitable materials. For the listening1 pavilion, researchers selected limestone after comparing several suitable materials.\n\nMaya: The final evaluation considered both measurable outcomes and the experience of those involved. Visitor counts indicated a substantial increase in use, but interviews suggested that the distribution of benefits was uneven. Some residents welcomed the additional facilities, while others remained concerned about crowding during weekends. The report recommended continued observation rather than treating the opening ceremony as the end of the process. Its authors argued that successful management would depend on responding to new evidence and maintaining the relationships established during the planning and consultation stages. For the listening1 classroom, researchers selected cork after comparing several suitable materials. For the listening1 observatory, researchers selected aluminium after comparing several suitable materials.",
+      "Questions": [
+        {
+          "question": "Which material was selected for the listening1 entrance?",
+          "options": [
+            "A. oak",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening1 entrance, researchers selected oak after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening1 workshop, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "copper",
+          "type": "sentence_completion",
+          "evidence": "For the listening1 workshop, researchers selected copper after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening1 archive, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "slate",
+          "type": "sentence_completion",
+          "evidence": "For the listening1 archive, researchers selected slate after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening1 shelter, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "granite",
+          "type": "sentence_completion",
+          "evidence": "For the listening1 shelter, researchers selected granite after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the listening1 platform?",
+          "options": [
+            "A. bamboo",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening1 platform, researchers selected bamboo after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening1 garden, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "cedar",
+          "type": "sentence_completion",
+          "evidence": "For the listening1 garden, researchers selected cedar after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening1 footbridge, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "steel",
+          "type": "sentence_completion",
+          "evidence": "For the listening1 footbridge, researchers selected steel after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening1 laboratory, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "clay",
+          "type": "sentence_completion",
+          "evidence": "For the listening1 laboratory, researchers selected clay after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the listening1 gallery?",
+          "options": [
+            "A. marble",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening1 gallery, researchers selected marble after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening1 terrace, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "glass",
+          "type": "sentence_completion",
+          "evidence": "For the listening1 terrace, researchers selected glass after comparing several suitable materials."
+        }
+      ],
+      "WritingPrompts": null,
+      "Answers": null,
+      "Responses": null
+    },
+    {
+      "AudioURLs": null,
+      "PaperVersion": "IELTS-Academic-v2",
+      "TargetBand": 7,
+      "QualityApproved": true,
+      "Key": "LISTENING_2",
+      "Title": "River planning LISTENING_2",
+      "Skill": "LISTENING",
+      "DurationSeconds": 450,
+      "Instructions": "Read or listen to the complete source and answer each question using the specified format.",
+      "Passage": "",
+      "AudioURL": "",
+      "AudioScript": "Maya: The regional planning group began its investigation with a detailed survey of public spaces around the river. Residents were invited to describe how they used the paths during different seasons and explain what prevented them from visiting more frequently. Rather than assuming that everyone shared the same priorities, researchers recorded contrasting views about safety, convenience, and the protection of wildlife. Interviews revealed several practical concerns which had not appeared in the original proposal, particularly among people who travelled with children or needed assistance when walking. For the listening2 entrance, researchers selected oak after comparing several suitable materials. For the listening2 workshop, researchers selected copper after comparing several suitable materials.\n\nMaya: Historical records offered another perspective on the landscape. Maps from the municipal archive showed that small industrial buildings had once occupied much of the eastern bank, while photographs documented gradual changes in vegetation. The team compared these sources with measurements taken during recent field visits. Although some boundaries could be identified precisely, others remained uncertain because earlier surveys had used inconsistent reference points. This uncertainty influenced the decision to preserve several features until their relationship with the surrounding area could be investigated more thoroughly. For the listening2 archive, researchers selected slate after comparing several suitable materials. For the listening2 shelter, researchers selected granite after comparing several suitable materials.\n\nMaya: Financial constraints also shaped the available choices. An independent assessment compared the initial construction budget with likely maintenance expenses over the following decade. Materials that appeared economical at first sometimes required specialist repairs or frequent replacement, making them less attractive when considered over a longer period. Local contractors suggested several alternatives, but the committee requested further evidence before accepting their estimates. Funding was eventually divided between essential improvements and a smaller experimental programme intended to evaluate approaches that had not previously been tried locally. For the listening2 platform, researchers selected bamboo after comparing several suitable materials. For the listening2 garden, researchers selected cedar after comparing several suitable materials.\n\nMaya: Community workshops provided an opportunity to challenge the emerging design. Participants worked in small groups, using photographs and large printed plans to identify potential conflicts between activities. Cyclists wanted uninterrupted routes, whereas older residents preferred quieter places where they could rest without feeling hurried. These differences did not produce a single compromise immediately. Instead, the facilitators asked each group to explain its reasoning and consider circumstances in which another arrangement might work better. The resulting proposals were more varied than the original consultation responses suggested. For the listening2 footbridge, researchers selected steel after comparing several suitable materials. For the listening2 laboratory, researchers selected clay after comparing several suitable materials.\n\nMaya: Environmental monitoring continued while the consultation was taking place. Volunteers recorded bird activity at fixed observation points and noted how rainfall affected the shallow pools near the southern boundary. Specialists checked a selection of these observations to estimate their reliability. They found that training improved agreement between observers, although poor visibility still caused difficulties on some mornings. The findings encouraged the project managers to revise the monitoring schedule and distinguish short term changes from patterns that might indicate a lasting alteration in habitat quality. For the listening2 gallery, researchers selected marble after comparing several suitable materials. For the listening2 terrace, researchers selected glass after comparing several suitable materials.\n\nMaya: Communication became particularly important when construction arrangements were announced. Earlier notices had described the overall ambition but provided little information about temporary closures or alternative access. A revised information campaign therefore explained the sequence of work and gave residents a clear contact point for practical enquiries. Staff also visited nearby businesses to discuss deliveries and customer access. This approach required additional preparation, yet it reduced confusion during the busiest stage and helped the organisers identify problems before they disrupted essential local services or scheduled activities. For the listening2 courtyard, researchers selected brick after comparing several suitable materials. For the listening2 pavilion, researchers selected limestone after comparing several suitable materials.\n\nMaya: The final evaluation considered both measurable outcomes and the experience of those involved. Visitor counts indicated a substantial increase in use, but interviews suggested that the distribution of benefits was uneven. Some residents welcomed the additional facilities, while others remained concerned about crowding during weekends. The report recommended continued observation rather than treating the opening ceremony as the end of the process. Its authors argued that successful management would depend on responding to new evidence and maintaining the relationships established during the planning and consultation stages. For the listening2 classroom, researchers selected cork after comparing several suitable materials. For the listening2 observatory, researchers selected aluminium after comparing several suitable materials.",
+      "Questions": [
+        {
+          "question": "Which material was selected for the listening2 entrance?",
+          "options": [
+            "A. oak",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening2 entrance, researchers selected oak after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening2 workshop, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "copper",
+          "type": "sentence_completion",
+          "evidence": "For the listening2 workshop, researchers selected copper after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening2 archive, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "slate",
+          "type": "sentence_completion",
+          "evidence": "For the listening2 archive, researchers selected slate after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening2 shelter, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "granite",
+          "type": "sentence_completion",
+          "evidence": "For the listening2 shelter, researchers selected granite after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the listening2 platform?",
+          "options": [
+            "A. bamboo",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening2 platform, researchers selected bamboo after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening2 garden, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "cedar",
+          "type": "sentence_completion",
+          "evidence": "For the listening2 garden, researchers selected cedar after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening2 footbridge, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "steel",
+          "type": "sentence_completion",
+          "evidence": "For the listening2 footbridge, researchers selected steel after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening2 laboratory, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "clay",
+          "type": "sentence_completion",
+          "evidence": "For the listening2 laboratory, researchers selected clay after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the listening2 gallery?",
+          "options": [
+            "A. marble",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening2 gallery, researchers selected marble after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening2 terrace, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "glass",
+          "type": "sentence_completion",
+          "evidence": "For the listening2 terrace, researchers selected glass after comparing several suitable materials."
+        }
+      ],
+      "WritingPrompts": null,
+      "Answers": null,
+      "Responses": null
+    },
+    {
+      "AudioURLs": null,
+      "PaperVersion": "IELTS-Academic-v2",
+      "TargetBand": 7,
+      "QualityApproved": true,
+      "Key": "LISTENING_3",
+      "Title": "River planning LISTENING_3",
+      "Skill": "LISTENING",
+      "DurationSeconds": 450,
+      "Instructions": "Read or listen to the complete source and answer each question using the specified format.",
+      "Passage": "",
+      "AudioURL": "",
+      "AudioScript": "Maya: The regional planning group began its investigation with a detailed survey of public spaces around the river. Residents were invited to describe how they used the paths during different seasons and explain what prevented them from visiting more frequently. Rather than assuming that everyone shared the same priorities, researchers recorded contrasting views about safety, convenience, and the protection of wildlife. Interviews revealed several practical concerns which had not appeared in the original proposal, particularly among people who travelled with children or needed assistance when walking. For the listening3 entrance, researchers selected oak after comparing several suitable materials. For the listening3 workshop, researchers selected copper after comparing several suitable materials.\n\nDaniel: Historical records offered another perspective on the landscape. Maps from the municipal archive showed that small industrial buildings had once occupied much of the eastern bank, while photographs documented gradual changes in vegetation. The team compared these sources with measurements taken during recent field visits. Although some boundaries could be identified precisely, others remained uncertain because earlier surveys had used inconsistent reference points. This uncertainty influenced the decision to preserve several features until their relationship with the surrounding area could be investigated more thoroughly. For the listening3 archive, researchers selected slate after comparing several suitable materials. For the listening3 shelter, researchers selected granite after comparing several suitable materials.\n\nMaya: Financial constraints also shaped the available choices. An independent assessment compared the initial construction budget with likely maintenance expenses over the following decade. Materials that appeared economical at first sometimes required specialist repairs or frequent replacement, making them less attractive when considered over a longer period. Local contractors suggested several alternatives, but the committee requested further evidence before accepting their estimates. Funding was eventually divided between essential improvements and a smaller experimental programme intended to evaluate approaches that had not previously been tried locally. For the listening3 platform, researchers selected bamboo after comparing several suitable materials. For the listening3 garden, researchers selected cedar after comparing several suitable materials.\n\nDaniel: Community workshops provided an opportunity to challenge the emerging design. Participants worked in small groups, using photographs and large printed plans to identify potential conflicts between activities. Cyclists wanted uninterrupted routes, whereas older residents preferred quieter places where they could rest without feeling hurried. These differences did not produce a single compromise immediately. Instead, the facilitators asked each group to explain its reasoning and consider circumstances in which another arrangement might work better. The resulting proposals were more varied than the original consultation responses suggested. For the listening3 footbridge, researchers selected steel after comparing several suitable materials. For the listening3 laboratory, researchers selected clay after comparing several suitable materials.\n\nMaya: Environmental monitoring continued while the consultation was taking place. Volunteers recorded bird activity at fixed observation points and noted how rainfall affected the shallow pools near the southern boundary. Specialists checked a selection of these observations to estimate their reliability. They found that training improved agreement between observers, although poor visibility still caused difficulties on some mornings. The findings encouraged the project managers to revise the monitoring schedule and distinguish short term changes from patterns that might indicate a lasting alteration in habitat quality. For the listening3 gallery, researchers selected marble after comparing several suitable materials. For the listening3 terrace, researchers selected glass after comparing several suitable materials.\n\nDaniel: Communication became particularly important when construction arrangements were announced. Earlier notices had described the overall ambition but provided little information about temporary closures or alternative access. A revised information campaign therefore explained the sequence of work and gave residents a clear contact point for practical enquiries. Staff also visited nearby businesses to discuss deliveries and customer access. This approach required additional preparation, yet it reduced confusion during the busiest stage and helped the organisers identify problems before they disrupted essential local services or scheduled activities. For the listening3 courtyard, researchers selected brick after comparing several suitable materials. For the listening3 pavilion, researchers selected limestone after comparing several suitable materials.\n\nMaya: The final evaluation considered both measurable outcomes and the experience of those involved. Visitor counts indicated a substantial increase in use, but interviews suggested that the distribution of benefits was uneven. Some residents welcomed the additional facilities, while others remained concerned about crowding during weekends. The report recommended continued observation rather than treating the opening ceremony as the end of the process. Its authors argued that successful management would depend on responding to new evidence and maintaining the relationships established during the planning and consultation stages. For the listening3 classroom, researchers selected cork after comparing several suitable materials. For the listening3 observatory, researchers selected aluminium after comparing several suitable materials.",
+      "Questions": [
+        {
+          "question": "Which material was selected for the listening3 entrance?",
+          "options": [
+            "A. oak",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening3 entrance, researchers selected oak after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening3 workshop, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "copper",
+          "type": "sentence_completion",
+          "evidence": "For the listening3 workshop, researchers selected copper after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening3 archive, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "slate",
+          "type": "sentence_completion",
+          "evidence": "For the listening3 archive, researchers selected slate after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening3 shelter, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "granite",
+          "type": "sentence_completion",
+          "evidence": "For the listening3 shelter, researchers selected granite after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the listening3 platform?",
+          "options": [
+            "A. bamboo",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening3 platform, researchers selected bamboo after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening3 garden, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "cedar",
+          "type": "sentence_completion",
+          "evidence": "For the listening3 garden, researchers selected cedar after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening3 footbridge, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "steel",
+          "type": "sentence_completion",
+          "evidence": "For the listening3 footbridge, researchers selected steel after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening3 laboratory, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "clay",
+          "type": "sentence_completion",
+          "evidence": "For the listening3 laboratory, researchers selected clay after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the listening3 gallery?",
+          "options": [
+            "A. marble",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening3 gallery, researchers selected marble after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening3 terrace, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "glass",
+          "type": "sentence_completion",
+          "evidence": "For the listening3 terrace, researchers selected glass after comparing several suitable materials."
+        }
+      ],
+      "WritingPrompts": null,
+      "Answers": null,
+      "Responses": null
+    },
+    {
+      "AudioURLs": null,
+      "PaperVersion": "IELTS-Academic-v2",
+      "TargetBand": 7,
+      "QualityApproved": true,
+      "Key": "LISTENING_4",
+      "Title": "River planning LISTENING_4",
+      "Skill": "LISTENING",
+      "DurationSeconds": 450,
+      "Instructions": "Read or listen to the complete source and answer each question using the specified format.",
+      "Passage": "",
+      "AudioURL": "",
+      "AudioScript": "Maya: The regional planning group began its investigation with a detailed survey of public spaces around the river. Residents were invited to describe how they used the paths during different seasons and explain what prevented them from visiting more frequently. Rather than assuming that everyone shared the same priorities, researchers recorded contrasting views about safety, convenience, and the protection of wildlife. Interviews revealed several practical concerns which had not appeared in the original proposal, particularly among people who travelled with children or needed assistance when walking. For the listening4 entrance, researchers selected oak after comparing several suitable materials. For the listening4 workshop, researchers selected copper after comparing several suitable materials.\n\nMaya: Historical records offered another perspective on the landscape. Maps from the municipal archive showed that small industrial buildings had once occupied much of the eastern bank, while photographs documented gradual changes in vegetation. The team compared these sources with measurements taken during recent field visits. Although some boundaries could be identified precisely, others remained uncertain because earlier surveys had used inconsistent reference points. This uncertainty influenced the decision to preserve several features until their relationship with the surrounding area could be investigated more thoroughly. For the listening4 archive, researchers selected slate after comparing several suitable materials. For the listening4 shelter, researchers selected granite after comparing several suitable materials.\n\nMaya: Financial constraints also shaped the available choices. An independent assessment compared the initial construction budget with likely maintenance expenses over the following decade. Materials that appeared economical at first sometimes required specialist repairs or frequent replacement, making them less attractive when considered over a longer period. Local contractors suggested several alternatives, but the committee requested further evidence before accepting their estimates. Funding was eventually divided between essential improvements and a smaller experimental programme intended to evaluate approaches that had not previously been tried locally. For the listening4 platform, researchers selected bamboo after comparing several suitable materials. For the listening4 garden, researchers selected cedar after comparing several suitable materials.\n\nMaya: Community workshops provided an opportunity to challenge the emerging design. Participants worked in small groups, using photographs and large printed plans to identify potential conflicts between activities. Cyclists wanted uninterrupted routes, whereas older residents preferred quieter places where they could rest without feeling hurried. These differences did not produce a single compromise immediately. Instead, the facilitators asked each group to explain its reasoning and consider circumstances in which another arrangement might work better. The resulting proposals were more varied than the original consultation responses suggested. For the listening4 footbridge, researchers selected steel after comparing several suitable materials. For the listening4 laboratory, researchers selected clay after comparing several suitable materials.\n\nMaya: Environmental monitoring continued while the consultation was taking place. Volunteers recorded bird activity at fixed observation points and noted how rainfall affected the shallow pools near the southern boundary. Specialists checked a selection of these observations to estimate their reliability. They found that training improved agreement between observers, although poor visibility still caused difficulties on some mornings. The findings encouraged the project managers to revise the monitoring schedule and distinguish short term changes from patterns that might indicate a lasting alteration in habitat quality. For the listening4 gallery, researchers selected marble after comparing several suitable materials. For the listening4 terrace, researchers selected glass after comparing several suitable materials.\n\nMaya: Communication became particularly important when construction arrangements were announced. Earlier notices had described the overall ambition but provided little information about temporary closures or alternative access. A revised information campaign therefore explained the sequence of work and gave residents a clear contact point for practical enquiries. Staff also visited nearby businesses to discuss deliveries and customer access. This approach required additional preparation, yet it reduced confusion during the busiest stage and helped the organisers identify problems before they disrupted essential local services or scheduled activities. For the listening4 courtyard, researchers selected brick after comparing several suitable materials. For the listening4 pavilion, researchers selected limestone after comparing several suitable materials.\n\nMaya: The final evaluation considered both measurable outcomes and the experience of those involved. Visitor counts indicated a substantial increase in use, but interviews suggested that the distribution of benefits was uneven. Some residents welcomed the additional facilities, while others remained concerned about crowding during weekends. The report recommended continued observation rather than treating the opening ceremony as the end of the process. Its authors argued that successful management would depend on responding to new evidence and maintaining the relationships established during the planning and consultation stages. For the listening4 classroom, researchers selected cork after comparing several suitable materials. For the listening4 observatory, researchers selected aluminium after comparing several suitable materials.",
+      "Questions": [
+        {
+          "question": "Which material was selected for the listening4 entrance?",
+          "options": [
+            "A. oak",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening4 entrance, researchers selected oak after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening4 workshop, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "copper",
+          "type": "sentence_completion",
+          "evidence": "For the listening4 workshop, researchers selected copper after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening4 archive, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "slate",
+          "type": "sentence_completion",
+          "evidence": "For the listening4 archive, researchers selected slate after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening4 shelter, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "granite",
+          "type": "sentence_completion",
+          "evidence": "For the listening4 shelter, researchers selected granite after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the listening4 platform?",
+          "options": [
+            "A. bamboo",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening4 platform, researchers selected bamboo after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening4 garden, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "cedar",
+          "type": "sentence_completion",
+          "evidence": "For the listening4 garden, researchers selected cedar after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening4 footbridge, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "steel",
+          "type": "sentence_completion",
+          "evidence": "For the listening4 footbridge, researchers selected steel after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening4 laboratory, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "clay",
+          "type": "sentence_completion",
+          "evidence": "For the listening4 laboratory, researchers selected clay after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the listening4 gallery?",
+          "options": [
+            "A. marble",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the listening4 gallery, researchers selected marble after comparing several suitable materials."
+        },
+        {
+          "question": "For the listening4 terrace, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "glass",
+          "type": "sentence_completion",
+          "evidence": "For the listening4 terrace, researchers selected glass after comparing several suitable materials."
+        }
+      ],
+      "WritingPrompts": null,
+      "Answers": null,
+      "Responses": null
+    },
+    {
+      "AudioURLs": null,
+      "PaperVersion": "IELTS-Academic-v2",
+      "TargetBand": 7,
+      "QualityApproved": true,
+      "Key": "READING_1",
+      "Title": "River planning READING_1",
+      "Skill": "READING",
+      "DurationSeconds": 1200,
+      "Instructions": "Read or listen to the complete source and answer each question using the specified format.",
+      "Passage": "A. The regional planning group began its investigation with a detailed survey of public spaces around the river. Residents were invited to describe how they used the paths during different seasons and explain what prevented them from visiting more frequently. Rather than assuming that everyone shared the same priorities, researchers recorded contrasting views about safety, convenience, and the protection of wildlife. Interviews revealed several practical concerns which had not appeared in the original proposal, particularly among people who travelled with children or needed assistance when walking. For the reading1 entrance, researchers selected oak after comparing several suitable materials. For the reading1 workshop, researchers selected copper after comparing several suitable materials.\n\nB. Historical records offered another perspective on the landscape. Maps from the municipal archive showed that small industrial buildings had once occupied much of the eastern bank, while photographs documented gradual changes in vegetation. The team compared these sources with measurements taken during recent field visits. Although some boundaries could be identified precisely, others remained uncertain because earlier surveys had used inconsistent reference points. This uncertainty influenced the decision to preserve several features until their relationship with the surrounding area could be investigated more thoroughly. For the reading1 archive, researchers selected slate after comparing several suitable materials. For the reading1 shelter, researchers selected granite after comparing several suitable materials.\n\nC. Financial constraints also shaped the available choices. An independent assessment compared the initial construction budget with likely maintenance expenses over the following decade. Materials that appeared economical at first sometimes required specialist repairs or frequent replacement, making them less attractive when considered over a longer period. Local contractors suggested several alternatives, but the committee requested further evidence before accepting their estimates. Funding was eventually divided between essential improvements and a smaller experimental programme intended to evaluate approaches that had not previously been tried locally. For the reading1 platform, researchers selected bamboo after comparing several suitable materials. For the reading1 garden, researchers selected cedar after comparing several suitable materials.\n\nD. Community workshops provided an opportunity to challenge the emerging design. Participants worked in small groups, using photographs and large printed plans to identify potential conflicts between activities. Cyclists wanted uninterrupted routes, whereas older residents preferred quieter places where they could rest without feeling hurried. These differences did not produce a single compromise immediately. Instead, the facilitators asked each group to explain its reasoning and consider circumstances in which another arrangement might work better. The resulting proposals were more varied than the original consultation responses suggested. For the reading1 footbridge, researchers selected steel after comparing several suitable materials. For the reading1 laboratory, researchers selected clay after comparing several suitable materials.\n\nE. Environmental monitoring continued while the consultation was taking place. Volunteers recorded bird activity at fixed observation points and noted how rainfall affected the shallow pools near the southern boundary. Specialists checked a selection of these observations to estimate their reliability. They found that training improved agreement between observers, although poor visibility still caused difficulties on some mornings. The findings encouraged the project managers to revise the monitoring schedule and distinguish short term changes from patterns that might indicate a lasting alteration in habitat quality. For the reading1 gallery, researchers selected marble after comparing several suitable materials. For the reading1 terrace, researchers selected glass after comparing several suitable materials.\n\nF. Communication became particularly important when construction arrangements were announced. Earlier notices had described the overall ambition but provided little information about temporary closures or alternative access. A revised information campaign therefore explained the sequence of work and gave residents a clear contact point for practical enquiries. Staff also visited nearby businesses to discuss deliveries and customer access. This approach required additional preparation, yet it reduced confusion during the busiest stage and helped the organisers identify problems before they disrupted essential local services or scheduled activities. For the reading1 courtyard, researchers selected brick after comparing several suitable materials. For the reading1 pavilion, researchers selected limestone after comparing several suitable materials.\n\nG. The final evaluation considered both measurable outcomes and the experience of those involved. Visitor counts indicated a substantial increase in use, but interviews suggested that the distribution of benefits was uneven. Some residents welcomed the additional facilities, while others remained concerned about crowding during weekends. The report recommended continued observation rather than treating the opening ceremony as the end of the process. Its authors argued that successful management would depend on responding to new evidence and maintaining the relationships established during the planning and consultation stages. For the reading1 classroom, researchers selected cork after comparing several suitable materials. For the reading1 observatory, researchers selected aluminium after comparing several suitable materials.",
+      "AudioURL": "",
+      "AudioScript": "",
+      "Questions": [
+        {
+          "question": "Which material was selected for the reading1 entrance?",
+          "options": [
+            "A. oak",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading1 entrance, researchers selected oak after comparing several suitable materials."
+        },
+        {
+          "question": "For the reading1 workshop, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "copper",
+          "type": "sentence_completion",
+          "evidence": "For the reading1 workshop, researchers selected copper after comparing several suitable materials."
+        },
+        {
+          "question": "Researchers selected slate for the reading1 archive.",
+          "options": [
+            "TRUE",
+            "FALSE",
+            "NOT GIVEN"
+          ],
+          "answerKey": "TRUE",
+          "type": "true_false_not_given",
+          "evidence": "For the reading1 archive, researchers selected slate after comparing several suitable materials."
+        },
+        {
+          "question": "Which paragraph describes selecting materials for the reading1 shelter?",
+          "options": [
+            "A. Paragraph A",
+            "B. Paragraph B",
+            "C. Paragraph C",
+            "D. Paragraph D",
+            "E. Paragraph E",
+            "F. Paragraph F",
+            "G. Paragraph G"
+          ],
+          "answerKey": "B",
+          "type": "matching_information",
+          "evidence": "For the reading1 shelter, researchers selected granite after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the reading1 platform?",
+          "options": [
+            "A. bamboo",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading1 platform, researchers selected bamboo after comparing several suitable materials."
+        },
+        {
+          "question": "For the reading1 garden, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "cedar",
+          "type": "sentence_completion",
+          "evidence": "For the reading1 garden, researchers selected cedar after comparing several suitable materials."
+        },
+        {
+          "question": "Researchers selected steel for the reading1 footbridge.",
+          "options": [
+            "TRUE",
+            "FALSE",
+            "NOT GIVEN"
+          ],
+          "answerKey": "TRUE",
+          "type": "true_false_not_given",
+          "evidence": "For the reading1 footbridge, researchers selected steel after comparing several suitable materials."
+        },
+        {
+          "question": "Which paragraph describes selecting materials for the reading1 laboratory?",
+          "options": [
+            "A. Paragraph A",
+            "B. Paragraph B",
+            "C. Paragraph C",
+            "D. Paragraph D",
+            "E. Paragraph E",
+            "F. Paragraph F",
+            "G. Paragraph G"
+          ],
+          "answerKey": "D",
+          "type": "matching_information",
+          "evidence": "For the reading1 laboratory, researchers selected clay after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the reading1 gallery?",
+          "options": [
+            "A. marble",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading1 gallery, researchers selected marble after comparing several suitable materials."
+        },
+        {
+          "question": "For the reading1 terrace, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "glass",
+          "type": "sentence_completion",
+          "evidence": "For the reading1 terrace, researchers selected glass after comparing several suitable materials."
+        },
+        {
+          "question": "Researchers selected brick for the reading1 courtyard.",
+          "options": [
+            "TRUE",
+            "FALSE",
+            "NOT GIVEN"
+          ],
+          "answerKey": "TRUE",
+          "type": "true_false_not_given",
+          "evidence": "For the reading1 courtyard, researchers selected brick after comparing several suitable materials."
+        },
+        {
+          "question": "Which paragraph describes selecting materials for the reading1 pavilion?",
+          "options": [
+            "A. Paragraph A",
+            "B. Paragraph B",
+            "C. Paragraph C",
+            "D. Paragraph D",
+            "E. Paragraph E",
+            "F. Paragraph F",
+            "G. Paragraph G"
+          ],
+          "answerKey": "F",
+          "type": "matching_information",
+          "evidence": "For the reading1 pavilion, researchers selected limestone after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the reading1 classroom?",
+          "options": [
+            "A. cork",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading1 classroom, researchers selected cork after comparing several suitable materials."
+        }
+      ],
+      "WritingPrompts": null,
+      "Answers": null,
+      "Responses": null
+    },
+    {
+      "AudioURLs": null,
+      "PaperVersion": "IELTS-Academic-v2",
+      "TargetBand": 7,
+      "QualityApproved": true,
+      "Key": "READING_2",
+      "Title": "River planning READING_2",
+      "Skill": "READING",
+      "DurationSeconds": 1200,
+      "Instructions": "Read or listen to the complete source and answer each question using the specified format.",
+      "Passage": "A. The regional planning group began its investigation with a detailed survey of public spaces around the river. Residents were invited to describe how they used the paths during different seasons and explain what prevented them from visiting more frequently. Rather than assuming that everyone shared the same priorities, researchers recorded contrasting views about safety, convenience, and the protection of wildlife. Interviews revealed several practical concerns which had not appeared in the original proposal, particularly among people who travelled with children or needed assistance when walking. For the reading2 entrance, researchers selected oak after comparing several suitable materials. For the reading2 workshop, researchers selected copper after comparing several suitable materials.\n\nB. Historical records offered another perspective on the landscape. Maps from the municipal archive showed that small industrial buildings had once occupied much of the eastern bank, while photographs documented gradual changes in vegetation. The team compared these sources with measurements taken during recent field visits. Although some boundaries could be identified precisely, others remained uncertain because earlier surveys had used inconsistent reference points. This uncertainty influenced the decision to preserve several features until their relationship with the surrounding area could be investigated more thoroughly. For the reading2 archive, researchers selected slate after comparing several suitable materials. For the reading2 shelter, researchers selected granite after comparing several suitable materials.\n\nC. Financial constraints also shaped the available choices. An independent assessment compared the initial construction budget with likely maintenance expenses over the following decade. Materials that appeared economical at first sometimes required specialist repairs or frequent replacement, making them less attractive when considered over a longer period. Local contractors suggested several alternatives, but the committee requested further evidence before accepting their estimates. Funding was eventually divided between essential improvements and a smaller experimental programme intended to evaluate approaches that had not previously been tried locally. For the reading2 platform, researchers selected bamboo after comparing several suitable materials. For the reading2 garden, researchers selected cedar after comparing several suitable materials.\n\nD. Community workshops provided an opportunity to challenge the emerging design. Participants worked in small groups, using photographs and large printed plans to identify potential conflicts between activities. Cyclists wanted uninterrupted routes, whereas older residents preferred quieter places where they could rest without feeling hurried. These differences did not produce a single compromise immediately. Instead, the facilitators asked each group to explain its reasoning and consider circumstances in which another arrangement might work better. The resulting proposals were more varied than the original consultation responses suggested. For the reading2 footbridge, researchers selected steel after comparing several suitable materials. For the reading2 laboratory, researchers selected clay after comparing several suitable materials.\n\nE. Environmental monitoring continued while the consultation was taking place. Volunteers recorded bird activity at fixed observation points and noted how rainfall affected the shallow pools near the southern boundary. Specialists checked a selection of these observations to estimate their reliability. They found that training improved agreement between observers, although poor visibility still caused difficulties on some mornings. The findings encouraged the project managers to revise the monitoring schedule and distinguish short term changes from patterns that might indicate a lasting alteration in habitat quality. For the reading2 gallery, researchers selected marble after comparing several suitable materials. For the reading2 terrace, researchers selected glass after comparing several suitable materials.\n\nF. Communication became particularly important when construction arrangements were announced. Earlier notices had described the overall ambition but provided little information about temporary closures or alternative access. A revised information campaign therefore explained the sequence of work and gave residents a clear contact point for practical enquiries. Staff also visited nearby businesses to discuss deliveries and customer access. This approach required additional preparation, yet it reduced confusion during the busiest stage and helped the organisers identify problems before they disrupted essential local services or scheduled activities. For the reading2 courtyard, researchers selected brick after comparing several suitable materials. For the reading2 pavilion, researchers selected limestone after comparing several suitable materials.\n\nG. The final evaluation considered both measurable outcomes and the experience of those involved. Visitor counts indicated a substantial increase in use, but interviews suggested that the distribution of benefits was uneven. Some residents welcomed the additional facilities, while others remained concerned about crowding during weekends. The report recommended continued observation rather than treating the opening ceremony as the end of the process. Its authors argued that successful management would depend on responding to new evidence and maintaining the relationships established during the planning and consultation stages. For the reading2 classroom, researchers selected cork after comparing several suitable materials. For the reading2 observatory, researchers selected aluminium after comparing several suitable materials.",
+      "AudioURL": "",
+      "AudioScript": "",
+      "Questions": [
+        {
+          "question": "Which material was selected for the reading2 entrance?",
+          "options": [
+            "A. oak",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading2 entrance, researchers selected oak after comparing several suitable materials."
+        },
+        {
+          "question": "For the reading2 workshop, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "copper",
+          "type": "sentence_completion",
+          "evidence": "For the reading2 workshop, researchers selected copper after comparing several suitable materials."
+        },
+        {
+          "question": "Researchers selected slate for the reading2 archive.",
+          "options": [
+            "TRUE",
+            "FALSE",
+            "NOT GIVEN"
+          ],
+          "answerKey": "TRUE",
+          "type": "true_false_not_given",
+          "evidence": "For the reading2 archive, researchers selected slate after comparing several suitable materials."
+        },
+        {
+          "question": "Which paragraph describes selecting materials for the reading2 shelter?",
+          "options": [
+            "A. Paragraph A",
+            "B. Paragraph B",
+            "C. Paragraph C",
+            "D. Paragraph D",
+            "E. Paragraph E",
+            "F. Paragraph F",
+            "G. Paragraph G"
+          ],
+          "answerKey": "B",
+          "type": "matching_information",
+          "evidence": "For the reading2 shelter, researchers selected granite after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the reading2 platform?",
+          "options": [
+            "A. bamboo",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading2 platform, researchers selected bamboo after comparing several suitable materials."
+        },
+        {
+          "question": "For the reading2 garden, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "cedar",
+          "type": "sentence_completion",
+          "evidence": "For the reading2 garden, researchers selected cedar after comparing several suitable materials."
+        },
+        {
+          "question": "Researchers selected steel for the reading2 footbridge.",
+          "options": [
+            "TRUE",
+            "FALSE",
+            "NOT GIVEN"
+          ],
+          "answerKey": "TRUE",
+          "type": "true_false_not_given",
+          "evidence": "For the reading2 footbridge, researchers selected steel after comparing several suitable materials."
+        },
+        {
+          "question": "Which paragraph describes selecting materials for the reading2 laboratory?",
+          "options": [
+            "A. Paragraph A",
+            "B. Paragraph B",
+            "C. Paragraph C",
+            "D. Paragraph D",
+            "E. Paragraph E",
+            "F. Paragraph F",
+            "G. Paragraph G"
+          ],
+          "answerKey": "D",
+          "type": "matching_information",
+          "evidence": "For the reading2 laboratory, researchers selected clay after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the reading2 gallery?",
+          "options": [
+            "A. marble",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading2 gallery, researchers selected marble after comparing several suitable materials."
+        },
+        {
+          "question": "For the reading2 terrace, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "glass",
+          "type": "sentence_completion",
+          "evidence": "For the reading2 terrace, researchers selected glass after comparing several suitable materials."
+        },
+        {
+          "question": "Researchers selected brick for the reading2 courtyard.",
+          "options": [
+            "TRUE",
+            "FALSE",
+            "NOT GIVEN"
+          ],
+          "answerKey": "TRUE",
+          "type": "true_false_not_given",
+          "evidence": "For the reading2 courtyard, researchers selected brick after comparing several suitable materials."
+        },
+        {
+          "question": "Which paragraph describes selecting materials for the reading2 pavilion?",
+          "options": [
+            "A. Paragraph A",
+            "B. Paragraph B",
+            "C. Paragraph C",
+            "D. Paragraph D",
+            "E. Paragraph E",
+            "F. Paragraph F",
+            "G. Paragraph G"
+          ],
+          "answerKey": "F",
+          "type": "matching_information",
+          "evidence": "For the reading2 pavilion, researchers selected limestone after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the reading2 classroom?",
+          "options": [
+            "A. cork",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading2 classroom, researchers selected cork after comparing several suitable materials."
+        }
+      ],
+      "WritingPrompts": null,
+      "Answers": null,
+      "Responses": null
+    },
+    {
+      "AudioURLs": null,
+      "PaperVersion": "IELTS-Academic-v2",
+      "TargetBand": 7,
+      "QualityApproved": true,
+      "Key": "READING_3",
+      "Title": "River planning READING_3",
+      "Skill": "READING",
+      "DurationSeconds": 1200,
+      "Instructions": "Read or listen to the complete source and answer each question using the specified format.",
+      "Passage": "A. The regional planning group began its investigation with a detailed survey of public spaces around the river. Residents were invited to describe how they used the paths during different seasons and explain what prevented them from visiting more frequently. Rather than assuming that everyone shared the same priorities, researchers recorded contrasting views about safety, convenience, and the protection of wildlife. Interviews revealed several practical concerns which had not appeared in the original proposal, particularly among people who travelled with children or needed assistance when walking. For the reading3 entrance, researchers selected oak after comparing several suitable materials. For the reading3 workshop, researchers selected copper after comparing several suitable materials.\n\nB. Historical records offered another perspective on the landscape. Maps from the municipal archive showed that small industrial buildings had once occupied much of the eastern bank, while photographs documented gradual changes in vegetation. The team compared these sources with measurements taken during recent field visits. Although some boundaries could be identified precisely, others remained uncertain because earlier surveys had used inconsistent reference points. This uncertainty influenced the decision to preserve several features until their relationship with the surrounding area could be investigated more thoroughly. For the reading3 archive, researchers selected slate after comparing several suitable materials. For the reading3 shelter, researchers selected granite after comparing several suitable materials.\n\nC. Financial constraints also shaped the available choices. An independent assessment compared the initial construction budget with likely maintenance expenses over the following decade. Materials that appeared economical at first sometimes required specialist repairs or frequent replacement, making them less attractive when considered over a longer period. Local contractors suggested several alternatives, but the committee requested further evidence before accepting their estimates. Funding was eventually divided between essential improvements and a smaller experimental programme intended to evaluate approaches that had not previously been tried locally. For the reading3 platform, researchers selected bamboo after comparing several suitable materials. For the reading3 garden, researchers selected cedar after comparing several suitable materials.\n\nD. Community workshops provided an opportunity to challenge the emerging design. Participants worked in small groups, using photographs and large printed plans to identify potential conflicts between activities. Cyclists wanted uninterrupted routes, whereas older residents preferred quieter places where they could rest without feeling hurried. These differences did not produce a single compromise immediately. Instead, the facilitators asked each group to explain its reasoning and consider circumstances in which another arrangement might work better. The resulting proposals were more varied than the original consultation responses suggested. For the reading3 footbridge, researchers selected steel after comparing several suitable materials. For the reading3 laboratory, researchers selected clay after comparing several suitable materials.\n\nE. Environmental monitoring continued while the consultation was taking place. Volunteers recorded bird activity at fixed observation points and noted how rainfall affected the shallow pools near the southern boundary. Specialists checked a selection of these observations to estimate their reliability. They found that training improved agreement between observers, although poor visibility still caused difficulties on some mornings. The findings encouraged the project managers to revise the monitoring schedule and distinguish short term changes from patterns that might indicate a lasting alteration in habitat quality. For the reading3 gallery, researchers selected marble after comparing several suitable materials. For the reading3 terrace, researchers selected glass after comparing several suitable materials.\n\nF. Communication became particularly important when construction arrangements were announced. Earlier notices had described the overall ambition but provided little information about temporary closures or alternative access. A revised information campaign therefore explained the sequence of work and gave residents a clear contact point for practical enquiries. Staff also visited nearby businesses to discuss deliveries and customer access. This approach required additional preparation, yet it reduced confusion during the busiest stage and helped the organisers identify problems before they disrupted essential local services or scheduled activities. For the reading3 courtyard, researchers selected brick after comparing several suitable materials. For the reading3 pavilion, researchers selected limestone after comparing several suitable materials.\n\nG. The final evaluation considered both measurable outcomes and the experience of those involved. Visitor counts indicated a substantial increase in use, but interviews suggested that the distribution of benefits was uneven. Some residents welcomed the additional facilities, while others remained concerned about crowding during weekends. The report recommended continued observation rather than treating the opening ceremony as the end of the process. Its authors argued that successful management would depend on responding to new evidence and maintaining the relationships established during the planning and consultation stages. For the reading3 classroom, researchers selected cork after comparing several suitable materials. For the reading3 observatory, researchers selected aluminium after comparing several suitable materials.",
+      "AudioURL": "",
+      "AudioScript": "",
+      "Questions": [
+        {
+          "question": "Which material was selected for the reading3 entrance?",
+          "options": [
+            "A. oak",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading3 entrance, researchers selected oak after comparing several suitable materials."
+        },
+        {
+          "question": "For the reading3 workshop, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "copper",
+          "type": "sentence_completion",
+          "evidence": "For the reading3 workshop, researchers selected copper after comparing several suitable materials."
+        },
+        {
+          "question": "Researchers selected slate for the reading3 archive.",
+          "options": [
+            "TRUE",
+            "FALSE",
+            "NOT GIVEN"
+          ],
+          "answerKey": "TRUE",
+          "type": "true_false_not_given",
+          "evidence": "For the reading3 archive, researchers selected slate after comparing several suitable materials."
+        },
+        {
+          "question": "Which paragraph describes selecting materials for the reading3 shelter?",
+          "options": [
+            "A. Paragraph A",
+            "B. Paragraph B",
+            "C. Paragraph C",
+            "D. Paragraph D",
+            "E. Paragraph E",
+            "F. Paragraph F",
+            "G. Paragraph G"
+          ],
+          "answerKey": "B",
+          "type": "matching_information",
+          "evidence": "For the reading3 shelter, researchers selected granite after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the reading3 platform?",
+          "options": [
+            "A. bamboo",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading3 platform, researchers selected bamboo after comparing several suitable materials."
+        },
+        {
+          "question": "For the reading3 garden, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "cedar",
+          "type": "sentence_completion",
+          "evidence": "For the reading3 garden, researchers selected cedar after comparing several suitable materials."
+        },
+        {
+          "question": "Researchers selected steel for the reading3 footbridge.",
+          "options": [
+            "TRUE",
+            "FALSE",
+            "NOT GIVEN"
+          ],
+          "answerKey": "TRUE",
+          "type": "true_false_not_given",
+          "evidence": "For the reading3 footbridge, researchers selected steel after comparing several suitable materials."
+        },
+        {
+          "question": "Which paragraph describes selecting materials for the reading3 laboratory?",
+          "options": [
+            "A. Paragraph A",
+            "B. Paragraph B",
+            "C. Paragraph C",
+            "D. Paragraph D",
+            "E. Paragraph E",
+            "F. Paragraph F",
+            "G. Paragraph G"
+          ],
+          "answerKey": "D",
+          "type": "matching_information",
+          "evidence": "For the reading3 laboratory, researchers selected clay after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the reading3 gallery?",
+          "options": [
+            "A. marble",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading3 gallery, researchers selected marble after comparing several suitable materials."
+        },
+        {
+          "question": "For the reading3 terrace, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "glass",
+          "type": "sentence_completion",
+          "evidence": "For the reading3 terrace, researchers selected glass after comparing several suitable materials."
+        },
+        {
+          "question": "Researchers selected brick for the reading3 courtyard.",
+          "options": [
+            "TRUE",
+            "FALSE",
+            "NOT GIVEN"
+          ],
+          "answerKey": "TRUE",
+          "type": "true_false_not_given",
+          "evidence": "For the reading3 courtyard, researchers selected brick after comparing several suitable materials."
+        },
+        {
+          "question": "Which paragraph describes selecting materials for the reading3 pavilion?",
+          "options": [
+            "A. Paragraph A",
+            "B. Paragraph B",
+            "C. Paragraph C",
+            "D. Paragraph D",
+            "E. Paragraph E",
+            "F. Paragraph F",
+            "G. Paragraph G"
+          ],
+          "answerKey": "F",
+          "type": "matching_information",
+          "evidence": "For the reading3 pavilion, researchers selected limestone after comparing several suitable materials."
+        },
+        {
+          "question": "Which material was selected for the reading3 classroom?",
+          "options": [
+            "A. cork",
+            "B. recycled paper",
+            "C. woven fabric",
+            "D. plastic panels"
+          ],
+          "answerKey": "A",
+          "type": "multiple_choice",
+          "evidence": "For the reading3 classroom, researchers selected cork after comparing several suitable materials."
+        },
+        {
+          "question": "For the reading3 observatory, the selected material was ____. Write NO MORE THAN THREE WORDS.",
+          "answerKey": "aluminium",
+          "type": "sentence_completion",
+          "evidence": "For the reading3 observatory, researchers selected aluminium after comparing several suitable materials."
+        }
+      ],
+      "WritingPrompts": null,
+      "Answers": null,
+      "Responses": null
+    },
+    {
+      "AudioURLs": null,
+      "PaperVersion": "IELTS-Academic-v2",
+      "TargetBand": 7,
+      "QualityApproved": true,
+      "Key": "WRITING",
+      "Title": "River planning WRITING",
+      "Skill": "WRITING",
+      "DurationSeconds": 3600,
+      "Instructions": "Read or listen to the complete source and answer each question using the specified format.",
+      "Passage": "",
+      "AudioURL": "",
+      "AudioScript": "",
+      "Questions": null,
+      "WritingPrompts": [
+        {
+          "Title": "Task 1: Travel to work",
+          "Instructions": "The table gives the percentage of commuters using three forms of transport in the city of Norchester in 2000 and 2020. Summarise the information by selecting and reporting the main features, and make comparisons where relevant. Use the figures in the table to support your description of the changes over time. Write at least 150 words.\n| Transport | 2000 (%) | 2020 (%) |\n| --- | --- | --- |\n| Bus | 30 | 25 |\n| Bicycle | 10 | 20 |\n| Car | 60 | 55 |",
+          "SuggestedWordCount": 150
+        },
+        {
+          "Title": "Task 2: Public investment",
+          "Instructions": "Some people believe local governments should invest more money in public parks, while others argue that improving transport is a greater priority. Discuss both views and give your own opinion. Give reasons for your answer and include relevant examples from your knowledge or experience. Write at least 250 words.",
+          "SuggestedWordCount": 250
+        }
+      ],
+      "Answers": null,
+      "Responses": null
+    }
+  ],
+  "Result": null,
+  "StartedAt": "0001-01-01T00:00:00Z",
+  "SubmittedAt": "0001-01-01T00:00:00Z",
+  "CreatedAt": "0001-01-01T00:00:00Z",
+  "UpdatedAt": "0001-01-01T00:00:00Z"
+}

@@ -86,6 +86,8 @@ func main() {
 	if savedModelConfig, err := dataStore.GetModelConfig(); err == nil {
 		generator.UpdateModelConfig(savedModelConfig)
 		log.Printf("loaded persisted model config provider=%s model=%s", savedModelConfig.Provider, savedModelConfig.Model)
+	} else {
+		log.Printf("persisted model config unavailable error_type=%T; using environment model configuration", err)
 	}
 	tts := ai.NewAPITTS(
 		cfg.TTSProvider,

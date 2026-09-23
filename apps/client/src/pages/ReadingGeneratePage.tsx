@@ -118,7 +118,9 @@ export function ReadingGeneratePage() {
       const generated = await generateReading({
         exam: safeExam,
         topic,
-        level: safeExam === "IELTS" ? "upper-intermediate" : "intermediate",
+		level: safeExam === "IELTS"
+			? ((Number.isFinite(requestedBand) && requestedBand >= 7) || (!Number.isFinite(requestedBand) && demoStageBand >= 7) ? "advanced" : "upper-intermediate")
+			: "intermediate",
         sourceIds: selectedSourceIds.length > 0 ? selectedSourceIds : visibleSources.slice(0, 5).map((s) => s.id),
         band: Number.isFinite(requestedBand) && requestedBand > 0 ? requestedBand : demoUser ? demoStageBand : undefined,
         stage: searchParams.get("stageName")?.trim() || `Stage ${activeStage + 1}`,

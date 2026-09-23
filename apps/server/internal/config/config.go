@@ -78,7 +78,13 @@ type Config struct {
 
 func Load() Config {
 	// In local development, prefer values in .env over inherited shell variables.
-	_ = godotenv.Overload()
+	// Tests and diagnostics can explicitly preserve injected process values while
+	// still loading missing settings from .env.
+	if getenvBool("LINGUAQUEST_PRESERVE_PROCESS_ENV", false) {
+		_ = godotenv.Load()
+	} else {
+		_ = godotenv.Overload()
+	}
 	edition := normalizeEdition(getenv("APP_EDITION", "COMMERCIAL"))
 	port := getenv("PORT", "8177")
 	secret := getenv("JWT_SECRET", "dev-secret-change-me")
@@ -123,7 +129,9 @@ func Load() Config {
 	publicAppURL := getenv("PUBLIC_APP_URL", "http://localhost:5174")
 	requireEmailVerification := getenvBool("EMAIL_VERIFICATION_REQUIRED", true)
 	generationConcurrency := getenvInt("GENERATION_CONCURRENCY", 30)
-	backgroundTaskTimeoutSeconds := getenvInt("BACKGROUND_TASK_TIMEOUT_SECONDS", 1200)
+	// 整卷模拟考试包含 8 个文本审核 section 和 40 个听力片段；
+	// 20 分钟在模型/TTS偶发抖动时余量不足，仍允许通过环境变量收紧或放宽。
+	backgroundTaskTimeoutSeconds := getenvInt("BACKGROUND_TASK_TIMEOUT_SECONDS", 2400)
 	httpRateLimitPerMinute := getenvInt("HTTP_RATE_LIMIT_PER_MINUTE", 180)
 	authRateLimitPerMinute := getenvInt("AUTH_RATE_LIMIT_PER_MINUTE", 12)
 	aiRequestRateLimitPerMinute := getenvInt("AI_REQUEST_RATE_LIMIT_PER_MINUTE", 20)

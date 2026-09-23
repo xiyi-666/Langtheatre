@@ -1,11 +1,126 @@
 package contentquality
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
+
+	"github.com/linguaquest/server/internal/domain"
 )
+
+const (
+	ApprovalPending          = "PENDING"
+	ApprovalApproved         = "APPROVED"
+	ApprovalRejected         = "REJECTED"
+	ApprovalInconclusive     = "INCONCLUSIVE"
+	ApprovalLegacyUnverified = "LEGACY_UNVERIFIED"
+	ApprovalDemoOnly         = "DEMO_ONLY"
+	CheckPassed              = "PASS"
+	CheckFailed              = "FAIL"
+)
+
+var ErrProductionApprovalRequired = errors.New("内容尚未通过生产质量审核")
+
+type ApprovalPolicy struct {
+	RubricVersion  string
+	RequiredChecks []string
+	MaxAge         time.Duration
+	Now            time.Time
+}
+
+// HashCanonical binds an approval to the exact JSON-serializable source used
+// for display and scoring. Callers should pass a purpose-built revision value
+// that excludes mutable progress and user-answer fields.
+func HashCanonical(value any) (string, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("serialize content revision: %w", err)
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func LegacyApproval() domain.ProductionApproval {
+	return domain.ProductionApproval{Status: ApprovalLegacyUnverified}
+}
+
+func PendingApproval() domain.ProductionApproval {
+	return domain.ProductionApproval{Status: ApprovalPending}
+}
+
+func DemoApproval() domain.ProductionApproval {
+	return domain.ProductionApproval{Status: ApprovalDemoOnly}
+}
+
+func ApprovedApproval(rubricVersion, reviewer, contentHash string, reviewedAt time.Time, checks []domain.QualityCheck) domain.ProductionApproval {
+	return domain.ProductionApproval{
+		Status: ApprovalApproved, RubricVersion: strings.TrimSpace(rubricVersion),
+		Reviewer: strings.TrimSpace(reviewer), ContentHash: strings.TrimSpace(contentHash),
+		ReviewedAt: reviewedAt.UTC(), Checks: append([]domain.QualityCheck(nil), checks...),
+	}
+}
+
+func ValidateProductionApproval(approval domain.ProductionApproval, expectedHash string, policy ApprovalPolicy) error {
+	if strings.ToUpper(strings.TrimSpace(approval.Status)) != ApprovalApproved {
+		return ErrProductionApprovalRequired
+	}
+	if strings.TrimSpace(policy.RubricVersion) == "" || approval.RubricVersion != policy.RubricVersion {
+		return fmt.Errorf("%w：审核标准版本不匹配", ErrProductionApprovalRequired)
+	}
+	if strings.TrimSpace(approval.Reviewer) == "" {
+		return fmt.Errorf("%w：缺少审核人", ErrProductionApprovalRequired)
+	}
+	if strings.TrimSpace(expectedHash) == "" || !strings.EqualFold(strings.TrimSpace(approval.ContentHash), strings.TrimSpace(expectedHash)) {
+		return fmt.Errorf("%w：内容已变更，需要重新审核", ErrProductionApprovalRequired)
+	}
+	now := policy.Now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	reviewedAt := approval.ReviewedAt.UTC()
+	if reviewedAt.IsZero() || reviewedAt.After(now.Add(5*time.Minute)) {
+		return fmt.Errorf("%w：审核时间无效", ErrProductionApprovalRequired)
+	}
+	if policy.MaxAge > 0 && reviewedAt.Before(now.Add(-policy.MaxAge)) {
+		return fmt.Errorf("%w：审核已过期", ErrProductionApprovalRequired)
+	}
+
+	allowed := make(map[string]bool, len(policy.RequiredChecks))
+	for _, required := range policy.RequiredChecks {
+		key := strings.TrimSpace(required)
+		if key == "" || allowed[key] {
+			return fmt.Errorf("%w：审核策略包含无效检查项", ErrProductionApprovalRequired)
+		}
+		allowed[key] = true
+	}
+	checks := make(map[string]string, len(approval.Checks))
+	for _, check := range approval.Checks {
+		key := strings.TrimSpace(check.Key)
+		if key == "" || !allowed[key] {
+			return fmt.Errorf("%w：存在无效检查项", ErrProductionApprovalRequired)
+		}
+		if _, exists := checks[key]; exists {
+			return fmt.Errorf("%w：检查项重复", ErrProductionApprovalRequired)
+		}
+		status := strings.ToUpper(strings.TrimSpace(check.Status))
+		if status != CheckPassed {
+			return fmt.Errorf("%w：检查项 %s 未通过", ErrProductionApprovalRequired, key)
+		}
+		checks[key] = status
+	}
+	for key := range allowed {
+		if checks[key] != CheckPassed {
+			return fmt.Errorf("%w：缺少必需检查项 %s", ErrProductionApprovalRequired, key)
+		}
+	}
+	return nil
+}
 
 var punctuationSpacingRE = regexp.MustCompile(`([A-Za-z0-9])([,;:!?])([A-Za-z])`)
 

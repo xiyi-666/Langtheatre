@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { BookOpenText, CircleAlert, Clapperboard, Compass, FilePenLine, ScrollText, UserRound } from "lucide-react";
+import { BookOpenText, CircleAlert, Clapperboard, Compass, FilePenLine, ScrollText, UserRound, ClipboardCheck, Mic2, Headphones } from "lucide-react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { LoginPage } from "./pages/LoginPage";
 import { GeneratePage } from "./pages/GeneratePage";
@@ -24,108 +24,34 @@ import { CREDIT_INSUFFICIENT_EVENT, trackClick } from "./api";
 import { membershipRoutePaths } from "./membershipRoutes";
 import { DemoPage } from "./pages/DemoPage";
 import { OnboardingTour } from "./components/OnboardingTour";
+import { MockExamPage } from "./pages/MockExamPage";
+import { SpeakingPage } from "./pages/SpeakingPage";
+
+const ListeningPage = lazy(() => import("./pages/ListeningPage").then(module => ({ default: module.ListeningPage })));
 
 const CommercialMembershipPage = __LINGUAQUEST_APP_EDITION__ === "COMMERCIAL"
   ? lazy(() => import("./pages/MembershipPage").then((module) => ({ default: module.MembershipPage })))
   : null;
 function MobileBottomNav() {
   const location = useLocation();
-  const hideTimerRef = useRef<number | null>(null);
-  const [desktopMode, setDesktopMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.matchMedia("(min-width: 769px) and (pointer: fine)").matches;
-  });
-  const [desktopVisible, setDesktopVisible] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const media = window.matchMedia("(min-width: 769px) and (pointer: fine)");
-    const onChange = () => {
-      const next = media.matches;
-      setDesktopMode(next);
-      if (!next) {
-        setDesktopVisible(false);
-      }
-    };
-
-    onChange();
-    media.addEventListener("change", onChange);
-    return () => {
-      media.removeEventListener("change", onChange);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!desktopMode || typeof window === "undefined") {
-      if (hideTimerRef.current) {
-        window.clearTimeout(hideTimerRef.current);
-        hideTimerRef.current = null;
-      }
-      return;
-    }
-
-    const reveal = () => {
-      setDesktopVisible(true);
-      if (hideTimerRef.current) {
-        window.clearTimeout(hideTimerRef.current);
-      }
-      hideTimerRef.current = window.setTimeout(() => {
-        setDesktopVisible(false);
-      }, 1300);
-    };
-
-    const onMouseMove = (event: MouseEvent) => {
-      if (event.clientY >= window.innerHeight - 130) {
-        reveal();
-      }
-    };
-
-    window.addEventListener("mousemove", onMouseMove);
-    return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      if (hideTimerRef.current) {
-        window.clearTimeout(hideTimerRef.current);
-        hideTimerRef.current = null;
-      }
-    };
-  }, [desktopMode]);
 
   if (location.pathname.startsWith("/login") || location.pathname.startsWith("/updates")) return null;
   if (location.pathname.startsWith("/theater/shared/")) return null;
 
-  const navClassName = [
-    "mobile-bottom-nav",
-    desktopMode ? "desktop-auto-nav" : "mobile-fixed-nav",
-    desktopMode && desktopVisible ? "visible" : ""
-  ]
-    .filter(Boolean)
-    .join(" ");
-
   return (
-    <nav
-      className={navClassName}
-      aria-label="主导航"
-      onMouseEnter={() => setDesktopVisible(true)}
-      onMouseLeave={() => {
-        if (!desktopMode || typeof window === "undefined") return;
-        if (hideTimerRef.current) {
-          window.clearTimeout(hideTimerRef.current);
-        }
-        hideTimerRef.current = window.setTimeout(() => {
-          setDesktopVisible(false);
-        }, 600);
-      }}
-    >
+    <nav className="mobile-bottom-nav" aria-label="主导航">
       <NavLink
         to="/courses"
 		data-onboarding="courses-nav"
 		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
 		data-analytics-click="NAV_COURSES"
 		onClick={() => trackClick("NAV_COURSES")}
-		onFocus={() => setDesktopVisible(true)}
       >
         <Compass size={16} />
         <span>路线</span>
+      </NavLink>
+      <NavLink to="/listening" data-onboarding="listening-nav" className={({ isActive }) => isActive ? "mobile-nav-link active" : "mobile-nav-link"} onClick={() => trackClick("NAV_LISTENING")}>
+        <Headphones size={16} /><span>听力</span>
       </NavLink>
       <NavLink
         to="/reading"
@@ -133,12 +59,17 @@ function MobileBottomNav() {
 		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
 		data-analytics-click="NAV_READING"
 		onClick={() => trackClick("NAV_READING")}
-        onFocus={() => setDesktopVisible(true)}
       >
         <ScrollText size={16} />
         <span>阅读</span>
       </NavLink>
-	  <NavLink to="/writing" data-onboarding="writing-nav" className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")} data-analytics-click="NAV_WRITING" onClick={() => trackClick("NAV_WRITING")} onFocus={() => setDesktopVisible(true)}>
+	  <NavLink to="/mock-exam" data-onboarding="mock-exam-nav" className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")} data-analytics-click="NAV_MOCK_EXAM" onClick={() => trackClick("NAV_MOCK_EXAM")}>
+        <ClipboardCheck size={16} /><span>模拟考试</span>
+      </NavLink>
+	  <NavLink to="/speaking" data-onboarding="speaking-nav" className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")} data-analytics-click="NAV_SPEAKING" onClick={() => trackClick("NAV_SPEAKING")}>
+        <Mic2 size={16} /><span>口语</span>
+      </NavLink>
+	  <NavLink to="/writing" data-onboarding="writing-nav" className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")} data-analytics-click="NAV_WRITING" onClick={() => trackClick("NAV_WRITING")}>
         <FilePenLine size={16} /><span>写作</span>
       </NavLink>
       <NavLink
@@ -147,7 +78,6 @@ function MobileBottomNav() {
 		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
 		data-analytics-click="NAV_LIBRARY"
 		onClick={() => trackClick("NAV_LIBRARY")}
-        onFocus={() => setDesktopVisible(true)}
       >
         <BookOpenText size={16} />
         <span>剧场库</span>
@@ -158,7 +88,6 @@ function MobileBottomNav() {
 		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
 		data-analytics-click="NAV_GENERATE"
 		onClick={() => trackClick("NAV_GENERATE")}
-        onFocus={() => setDesktopVisible(true)}
       >
         <Clapperboard size={16} />
         <span>生成</span>
@@ -168,7 +97,6 @@ function MobileBottomNav() {
 		className={({ isActive }) => (isActive ? "mobile-nav-link active" : "mobile-nav-link")}
 		data-analytics-click="NAV_PROFILE"
 		onClick={() => trackClick("NAV_PROFILE")}
-        onFocus={() => setDesktopVisible(true)}
       >
         <UserRound size={16} />
         <span>我的</span>
@@ -205,6 +133,10 @@ export function App() {
         <Route path="/reading/generate/:exam/:stage" element={<ReadingGeneratePage />} />
         <Route path="/reading/:id" element={<ReadingDetailRedirect />} />
         <Route path="/reading/:id/:view" element={<ReadingDetailPage />} />
+        <Route path="/mock-exam" element={<MockExamPage />} />
+        <Route path="/speaking" element={<SpeakingPage />} />
+        <Route path="/listening" element={<Suspense fallback={<main className="page"><p>正在加载听力训练…</p></main>}><ListeningPage /></Suspense>} />
+        <Route path="/listening/:id" element={<Suspense fallback={<main className="page"><p>正在加载听力训练…</p></main>}><ListeningPage /></Suspense>} />
         <Route path="/writing" element={<WritingPage />} />
         <Route path="/writing/library" element={<WritingPage />} />
         <Route path="/writing/:id" element={<WritingDetailPage />} />

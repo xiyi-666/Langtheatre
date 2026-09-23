@@ -4,14 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/linguaquest/server/internal/domain"
 	"github.com/linguaquest/server/internal/ielts"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestReadingMinWordsProgressesByBand(t *testing.T) {
 	low := readingMinWords("[IELTS Reading][Band 5.0] urban transport")
@@ -183,6 +191,181 @@ func TestModelPayloadWithStreamingDoesNotMutateInput(t *testing.T) {
 	}
 	if _, ok := payload["stream"]; ok {
 		t.Fatal("modelPayloadWithStreaming mutated input")
+	}
+}
+
+func TestModelCompletionURLSupportsResponsesAndChatEndpoints(t *testing.T) {
+	responses := NewOpenAIGenerator("test-key", "test-model", "https://gateway.example/v1/responses")
+	if got := responses.modelCompletionURL(); got != "https://gateway.example/v1/responses" {
+		t.Fatalf("responses URL = %q", got)
+	}
+	chat := NewOpenAIGenerator("test-key", "test-model", "https://gateway.example/v1")
+	if got := chat.modelCompletionURL(); got != "https://gateway.example/v1/chat/completions" {
+		t.Fatalf("chat URL = %q", got)
+	}
+}
+
+func TestAdaptModelPayloadForResponses(t *testing.T) {
+	g := NewOpenAIGenerator("test-key", "test-model", "https://gateway.example/v1/responses")
+	messages := []map[string]string{{"role": "user", "content": "hello"}}
+	payload := map[string]any{
+		"model":           "test-model",
+		"messages":        messages,
+		"max_tokens":      123,
+		"temperature":     0.5,
+		"response_format": map[string]any{"type": "json_object"},
+	}
+	got := g.adaptModelPayload(payload)
+	if _, ok := got["messages"]; ok {
+		t.Fatal("responses payload retained messages")
+	}
+	if got["input"] == nil || got["max_output_tokens"] != 123 || got["store"] != false {
+		t.Fatalf("responses payload missing converted fields: %#v", got)
+	}
+	if _, ok := got["temperature"]; ok {
+		t.Fatal("responses payload retained unsupported temperature")
+	}
+	textConfig, ok := got["text"].(map[string]any)
+	if !ok || textConfig["format"] == nil {
+		t.Fatalf("responses text format = %#v", got["text"])
+	}
+	if _, ok := payload["input"]; ok {
+		t.Fatal("payload conversion mutated input")
+	}
+}
+
+func TestAdaptModelPayloadFlattensChatJSONSchemaForResponses(t *testing.T) {
+	g := NewOpenAIGenerator("test-key", "test-model", "https://gateway.example/v1/responses")
+	schema := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           map[string]any{"approved": map[string]any{"type": "boolean"}},
+		"required":             []string{"approved"},
+	}
+	got := g.adaptModelPayload(map[string]any{
+		"response_format": map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name":   "review",
+				"strict": true,
+				"schema": schema,
+			},
+		},
+	})
+	textConfig, ok := got["text"].(map[string]any)
+	if !ok {
+		t.Fatalf("responses text config = %#v", got["text"])
+	}
+	format, ok := textConfig["format"].(map[string]any)
+	if !ok || format["type"] != "json_schema" || format["name"] != "review" || format["strict"] != true || format["schema"] == nil {
+		t.Fatalf("responses JSON schema format = %#v", textConfig["format"])
+	}
+	if _, nested := format["json_schema"]; nested {
+		t.Fatalf("responses JSON schema remained chat-nested: %#v", format)
+	}
+}
+
+func TestCallModelJSONPayloadUsesResponsesAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Errorf("request path = %q", r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["input"] == nil || payload["messages"] != nil || payload["store"] != false {
+			t.Errorf("unexpected responses payload: %#v", payload)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"{\"ok\":true}"}]}],"usage":{"input_tokens":4,"output_tokens":3,"total_tokens":7}}`))
+	}))
+	defer server.Close()
+	g := NewOpenAIGenerator("test-key", "test-model", server.URL+"/v1/responses")
+	g.Client = server.Client()
+	got, err := g.callModelJSONPayload(context.Background(), map[string]any{
+		"model":    "test-model",
+		"messages": []map[string]string{{"role": "user", "content": "hello"}},
+	})
+	if err != nil || got != `{"ok":true}` {
+		t.Fatalf("callModelJSONPayload() = %q, %v", got, err)
+	}
+}
+
+func TestMaxModelRetriesForLongAssessmentOperations(t *testing.T) {
+	for _, operation := range []string{"MOCK_EXAM_GENERATION", "LISTENING_SOURCE_REVIEW", "LISTENING_DIFFICULTY_REVIEW", "LISTENING_PLAN_VIABILITY_REVIEW", "CET_MOCK_EXAM_GENERATION"} {
+		if got := maxModelRetriesForOperation(operation); got != 1 {
+			t.Fatalf("operation %s retries=%d, want one bounded retry", operation, got)
+		}
+	}
+	if got := maxModelRetriesForOperation("THEATER_SCENARIO"); got != modelAPIMaxRetries {
+		t.Fatalf("ordinary operation retries=%d, want default %d", got, modelAPIMaxRetries)
+	}
+}
+
+func TestShouldRetryModelTransportForGatewayEOF(t *testing.T) {
+	if !shouldRetryModelTransport(context.Background(), io.ErrUnexpectedEOF) {
+		t.Fatal("unexpected EOF should be retried")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if shouldRetryModelTransport(ctx, io.ErrUnexpectedEOF) {
+		t.Fatal("canceled request must not be retried")
+	}
+}
+
+func TestCallModelJSONPayloadRetriesTransportEOF(t *testing.T) {
+	var calls atomic.Int32
+	g := NewOpenAIGenerator("test-key", "test-model", "https://gateway.example/v1/responses")
+	g.Client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if calls.Add(1) == 1 {
+			return nil, io.ErrUnexpectedEOF
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"output_text":"{\"ok\":true}"}`)),
+			Request:    req,
+		}, nil
+	})}
+	got, err := g.callModelJSONPayload(context.Background(), map[string]any{
+		"model":    "test-model",
+		"messages": []map[string]string{{"role": "user", "content": "hello"}},
+	})
+	if err != nil || got != `{"ok":true}` {
+		t.Fatalf("callModelJSONPayload() = %q, %v", got, err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("model calls = %d, want 2 after transport retry", calls.Load())
+	}
+}
+
+func TestCallModelJSONPayloadDoesNotExposeProviderErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"sensitive-key-or-request-content"}`))
+	}))
+	defer server.Close()
+	g := NewOpenAIGenerator("private-test-key", "test-model", server.URL+"/v1/responses")
+	g.Client = server.Client()
+	_, err := g.callModelJSONPayload(context.Background(), map[string]any{
+		"model":    "test-model",
+		"messages": []map[string]string{{"role": "user", "content": "private request content"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "status 400") {
+		t.Fatalf("expected safe status error, got %v", err)
+	}
+	for _, sensitive := range []string{"sensitive-key-or-request-content", "private-test-key", "private request content"} {
+		if strings.Contains(err.Error(), sensitive) {
+			t.Fatal("model error exposed sensitive content")
+		}
+	}
+}
+
+func TestExtractModelTextFromResponsesOutputText(t *testing.T) {
+	got, err := extractModelTextFromResponse([]byte(`{"output_text":"ready"}`))
+	if err != nil || got != "ready" {
+		t.Fatalf("extractModelTextFromResponse() = %q, %v", got, err)
 	}
 }
 

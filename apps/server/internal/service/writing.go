@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/linguaquest/server/internal/contentquality"
 	"github.com/linguaquest/server/internal/domain"
 )
 
@@ -44,14 +45,41 @@ func (s *Service) StartWritingSessionWithDifficulty(userID, exam string, timeLim
 	if err = s.ConsumeAIConfidence(userID, AICreditActionWritingPrompt, sessionID, aiCreditAmount(AICreditActionWritingPrompt)); err != nil {
 		return domain.WritingSession{}, err
 	}
-	prompt := fallbackWritingPrompt(exam)
-	if engine, ok := any(s.generator).(writingEngine); ok {
-		if generated, err := engine.GenerateWritingPrompt(context.Background(), exam); err == nil {
-			prompt = generated
-		}
+	engine, ok := any(s.generator).(writingEngine)
+	if !ok {
+		return domain.WritingSession{}, errors.New("写作模型未配置，无法生成 IELTS 题目")
+	}
+	prompt, err := engine.GenerateWritingPrompt(context.Background(), exam)
+	if err != nil {
+		s.RefundAIConfidence(userID, AICreditActionWritingPrompt, sessionID, aiCreditAmount(AICreditActionWritingPrompt))
+		return domain.WritingSession{}, fmt.Errorf("写作题目生成失败: %w", err)
 	}
 	now := time.Now().UTC()
-	session := domain.WritingSession{ID: sessionID, UserID: userID, Exam: exam, TimeLimitSeconds: timeLimitSeconds, Prompt: prompt, Status: "WRITING", ProgressMessage: "计时已开始", StartedAt: now, CreatedAt: now, UpdatedAt: now}
+	session := domain.WritingSession{ID: sessionID, UserID: userID, Exam: exam, TimeLimitSeconds: timeLimitSeconds, Prompt: prompt, Status: "QUALITY_REVIEW_PENDING", ProgressMessage: "正在进行独立质量审核", PromptApproval: contentquality.PendingApproval(), CreatedAt: now, UpdatedAt: now}
+	reviewer, reviewErr := productionReviewer[writingProductionReviewer](s.generator)
+	if reviewErr == nil {
+		session.PromptApproval, reviewErr = reviewer.ReviewWritingPrompt(context.Background(), session)
+	} else {
+		hash, _ := contentquality.WritingPromptContentHash(session.Exam, session.TimeLimitSeconds, session.Prompt)
+		session.PromptApproval = inconclusiveApproval(contentquality.WritingPromptRubricVersion, hash, reviewErr.Error())
+	}
+	if reviewErr == nil {
+		reviewErr = ensureWritingPromptProductionApproved(session)
+	}
+	if reviewErr != nil {
+		session.Status = "FAILED"
+		session.ProgressMessage = "题目未通过独立质量审核，已隔离且不会开始计时"
+		saved, saveErr := s.store.SaveWritingSession(session)
+		s.RefundAIConfidence(userID, AICreditActionWritingPrompt, sessionID, aiCreditAmount(AICreditActionWritingPrompt))
+		if saveErr != nil {
+			return domain.WritingSession{}, saveErr
+		}
+		return saved, productionGateError("写作题目", reviewErr)
+	}
+	session.Status = "WRITING"
+	session.ProgressMessage = "题目已通过质量审核，计时已开始"
+	session.StartedAt = time.Now().UTC()
+	session.UpdatedAt = session.StartedAt
 	saved, err := s.store.SaveWritingSession(session)
 	if err != nil {
 		s.RefundAIConfidence(userID, AICreditActionWritingPrompt, sessionID, aiCreditAmount(AICreditActionWritingPrompt))
@@ -62,7 +90,14 @@ func (s *Service) StartWritingSessionWithDifficulty(userID, exam string, timeLim
 }
 
 func (s *Service) WritingSession(userID, sessionID string) (domain.WritingSession, error) {
-	return s.store.GetWritingSession(sessionID, userID)
+	session, err := s.store.GetWritingSession(sessionID, userID)
+	if err != nil {
+		return domain.WritingSession{}, err
+	}
+	if s.isDemoAccount(userID) && (approvalIsDemoOnly(session.PromptApproval) || approvalIsDemoOnly(session.EvaluationApproval)) {
+		return session, nil
+	}
+	return redactWritingForQuality(session), nil
 }
 func (s *Service) WritingSessions(userID string) ([]domain.WritingSession, error) {
 	if s.isDemoAccount(userID) {
@@ -70,7 +105,16 @@ func (s *Service) WritingSessions(userID string) ([]domain.WritingSession, error
 			log.Printf("demo writing fixtures unavailable user_id=%s err=%v", userID, err)
 		}
 	}
-	return s.store.ListWritingSessions(userID)
+	items, err := s.store.ListWritingSessions(userID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if !(s.isDemoAccount(userID) && (approvalIsDemoOnly(items[i].PromptApproval) || approvalIsDemoOnly(items[i].EvaluationApproval))) {
+			items[i] = redactWritingForQuality(items[i])
+		}
+	}
+	return items, nil
 }
 
 func (s *Service) DeleteWritingSession(userID, sessionID string) error {
@@ -100,6 +144,9 @@ func (s *Service) SubmitWritingSession(userID, sessionID, essay string) (domain.
 	}
 	if session.Status != "WRITING" {
 		return domain.WritingSession{}, errors.New("writing has already been submitted")
+	}
+	if err = ensureWritingPromptProductionApproved(session); err != nil {
+		return domain.WritingSession{}, productionGateError("写作题目", err)
 	}
 	essay = strings.TrimSpace(essay)
 	if len([]rune(essay)) < 30 {
@@ -145,21 +192,49 @@ func (s *Service) evaluateWritingTask(ctx context.Context, userID, sessionID str
 		return
 	}
 	elapsed := int(session.SubmittedAt.Sub(session.StartedAt).Seconds())
-	evaluation := fallbackWritingEvaluation(session)
-	if engine, ok := any(s.generator).(writingEngine); ok {
-		if generated, evalErr := engine.EvaluateWriting(ctx, session.Exam, session.Prompt, session.Essay, session.TimeLimitSeconds, elapsed); evalErr == nil {
-			evaluation = generated
-		}
+	engine, ok := any(s.generator).(writingEngine)
+	if !ok {
+		s.markWritingEvaluationFailed(userID, session, "评分系统未配置")
+		return
+	}
+	evaluation, evalErr := engine.EvaluateWriting(ctx, session.Exam, session.Prompt, session.Essay, session.TimeLimitSeconds, elapsed)
+	if evalErr != nil {
+		s.markWritingEvaluationFailed(userID, session, fmt.Sprintf("AI 评分失败：%s", evalErr.Error()))
+		return
 	}
 	session.Evaluation = &evaluation
+	reviewer, reviewErr := productionReviewer[writingProductionReviewer](s.generator)
+	if reviewErr == nil {
+		session.EvaluationApproval, reviewErr = reviewer.ReviewWritingEvaluation(ctx, session)
+	} else {
+		hash, _ := contentquality.WritingEvaluationContentHash(session)
+		session.EvaluationApproval = inconclusiveApproval(contentquality.WritingEvaluationRubricVersion, hash, reviewErr.Error())
+	}
+	if reviewErr == nil {
+		reviewErr = ensureWritingEvaluationProductionApproved(session)
+	}
+	if reviewErr != nil {
+		session.ProgressMessage = "评分未通过独立质量审核，结果已隔离，请稍后重试"
+		s.markWritingEvaluationFailed(userID, session, session.ProgressMessage)
+		return
+	}
 	session.Status = "COMPLETED"
-	session.ProgressMessage = "评分完成"
+	session.ProgressMessage = "评分完成并通过质量审核"
 	_, err = s.store.UpdateWritingSessionExisting(session)
 	if err == nil {
 		_, _ = s.awardLearningXP(userID, "WRITING_COMPLETE", sessionID, int(evaluation.OverallScore))
 	} else {
 		s.RefundAIConfidence(userID, AICreditActionWritingEvaluation, sessionID, aiCreditAmount(AICreditActionWritingEvaluation))
 	}
+}
+
+func (s *Service) markWritingEvaluationFailed(userID string, session domain.WritingSession, message string) {
+	session.Status = "EVALUATION_FAILED"
+	session.ProgressMessage = message
+	if _, err := s.store.UpdateWritingSessionExisting(session); err != nil {
+		log.Printf("writing evaluation failure state persist failed session_id=%s err=%v", session.ID, err)
+	}
+	s.RefundAIConfidence(userID, AICreditActionWritingEvaluation, session.ID, aiCreditAmount(AICreditActionWritingEvaluation))
 }
 
 func normalizeWritingExam(value string) string {
@@ -169,21 +244,4 @@ func normalizeWritingExam(value string) string {
 	default:
 		return ""
 	}
-}
-func fallbackWritingPrompt(exam string) domain.WritingPrompt {
-	if exam == "IELTS" {
-		return domain.WritingPrompt{Title: "Remote work and community", Instructions: "Some people believe remote work improves quality of life, while others think it weakens local communities. Discuss both views and give your own opinion. Write in English.", SuggestedWordCount: 250}
-	}
-	return domain.WritingPrompt{Title: "A meaningful change on campus", Instructions: "Write an English essay describing one change that would improve university life. Explain the problem, your solution, and the expected benefits.", SuggestedWordCount: 150}
-}
-func fallbackWritingEvaluation(session domain.WritingSession) domain.WritingEvaluation {
-	words := session.WordCount
-	score := float64(min(82, 45+words/4))
-	if words < 80 {
-		score -= 12
-	}
-	if score < 20 {
-		score = 20
-	}
-	return domain.WritingEvaluation{OverallScore: score, GrammarScore: score - 2, VocabularyScore: score, CoherenceScore: score - 1, TaskResponseScore: score, Strengths: []string{"已完成完整英文表达，并保持了基本的段落结构。"}, Issues: []string{"请检查长句中的主谓一致、冠词和连接词使用。"}, Suggestions: []string{"每段先给中心句，再用一个具体例子支撑观点。", "提交前用 2 分钟检查时态、单复数和拼写。"}, RevisedExcerpt: fmt.Sprintf("One practical way to improve this situation is to introduce a clear policy and explain its benefits to students. (%d words submitted)", words), Summary: "已生成基础评分；配置模型后可获得更细致的逐句分析。"}
 }

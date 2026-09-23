@@ -1,4 +1,4 @@
-import type { AICreditCost, ASRConfig, AdPlacement, AuthResult, BillingProduct, BillingStatus, ContentSource, Course, EmailActionResult, LoginCandidate, ModelConfig, PaymentOrder, PracticeResult, ReadingMaterial, RoleplaySession, TTSConfig, Theater, TheaterSummary, User, VoiceProfile, WritingSession, XPEvent } from "./types";
+import type { AICreditCost, ASRConfig, AdPlacement, AuthResult, BillingProduct, BillingStatus, ContentSource, Course, EmailActionResult, LoginCandidate, MockExam, ModelConfig, PaymentOrder, PracticeResult, ReadingMaterial, RoleplaySession, SpeakingSession, TTSConfig, Theater, TheaterSummary, User, VoiceProfile, WritingSession, XPEvent } from "./types";
 
 export const DESKTOP_API_CONFIGURATION_ERROR = "桌面端 API 未配置，请联系管理员重新构建应用。";
 
@@ -738,6 +738,130 @@ export async function deleteWritingSession(sessionId: string): Promise<boolean> 
     { sessionId }
   );
   return data.deleteWritingSession;
+}
+
+const SPEAKING_FIELDS = `id status part promptIndex pendingPromptIndex processingMessage lastError prompts { part question cueCard preparationSec answerSec questionId source audioUrl } turns { part promptIndex prompt transcript audioUrl examinerText examinerAudioUrl audioEvidence asrProvider asrModel } evaluation { textCoherence fluencyCoherence lexicalResource grammarAccuracy pronunciation overallBand isPartial assessmentMode strengths improvements evidence summary }`;
+export async function startSpeakingSession(): Promise<SpeakingSession> { await ensureAccessToken(); const data = await request<{startSpeakingSession: SpeakingSession}>(`mutation { startSpeakingSession { ${SPEAKING_FIELDS} } }`); return data.startSpeakingSession; }
+export async function getSpeakingSession(id: string): Promise<SpeakingSession> { await ensureAccessToken(); const data = await request<{speakingSession: SpeakingSession}>(`query($id: ID!) { speakingSession(sessionId: $id) { ${SPEAKING_FIELDS} } }`, {id}); return data.speakingSession; }
+export async function getLatestSpeakingSession(): Promise<SpeakingSession | null> { await ensureAccessToken(); const data = await request<{latestSpeakingSession: SpeakingSession | null}>(`query { latestSpeakingSession { ${SPEAKING_FIELDS} } }`); return data.latestSpeakingSession; }
+export async function submitSpeakingTurn(id: string, promptIndex: number, audioDataUrl = "", text = "", language = "ENGLISH"): Promise<SpeakingSession> { await ensureAccessToken(); const data = await request<{submitSpeakingTurn: SpeakingSession}>(`mutation($id: ID!, $promptIndex: Int, $audio: String, $text: String, $language: String) { submitSpeakingTurn(sessionId: $id, promptIndex: $promptIndex, audioDataUrl: $audio, text: $text, language: $language) { ${SPEAKING_FIELDS} } }`, {id, promptIndex, audio: audioDataUrl, text, language}); return data.submitSpeakingTurn; }
+export async function finishSpeakingSession(id: string): Promise<SpeakingSession> { await ensureAccessToken(); const data = await request<{finishSpeakingSession: SpeakingSession}>(`mutation($id: ID!) { finishSpeakingSession(sessionId: $id) { ${SPEAKING_FIELDS} } }`, {id}); return data.finishSpeakingSession; }
+export async function abandonSpeakingSession(id: string): Promise<boolean> { await ensureAccessToken(); const data = await request<{abandonSpeakingSession: boolean}>(`mutation($id: ID!) { abandonSpeakingSession(sessionId: $id) }`, {id}); return data.abandonSpeakingSession; }
+
+const MOCK_EXAM_SUMMARY_FIELDS = `id exam status currentSection targetBand paperVersion totalDurationSeconds estimatedReadySeconds generationEstimateSamples createdAt startedAt submittedAt result { estimatedBand scoreScale totalScore completedAt }`;
+const MOCK_EXAM_FIELDS = `${MOCK_EXAM_SUMMARY_FIELDS} sections { key title skill durationSeconds generationDurationSeconds instructions passage audioUrl audioUrls questions { question options type } writingPrompts { title instructions suggestedWordCount } answers responses } result { writingEvaluations { bandEstimate overallScore grammarScore vocabularyScore coherenceScore taskResponseScore strengths issues suggestions revisedExcerpt summary evidence } translationEvaluation { bandEstimate overallScore grammarScore vocabularyScore coherenceScore taskResponseScore strengths issues suggestions revisedExcerpt summary evidence } readingCorrect readingTotal listeningCorrect listeningTotal readingScore listeningScore writingScore translationScore writingTask1Score writingTask2Score writingBand writingTask1Band writingTask2Band estimatedBand qualityStatus feedback strengths weaknesses recommendations completedAt }`;
+
+const LISTENING_SUMMARY_FIELDS = `id part status message title targetBand createdAt estimatedReadySeconds generationEstimateSamples correct total accuracy`;
+const LISTENING_FIELDS = `${LISTENING_SUMMARY_FIELDS} instructions transcript audioUrls answers questions { question type options answerKey evidence correct } feedback recommendations`;
+
+export async function getListeningGenerationCost(): Promise<number> {
+  await ensureAccessToken();
+  const data = await request<{ listeningTrainingGenerationCost: number }>(`query { listeningTrainingGenerationCost }`);
+  if (!Number.isInteger(data.listeningTrainingGenerationCost) || data.listeningTrainingGenerationCost < 0) throw new Error("无法确认听力生成费用，请重试");
+  return data.listeningTrainingGenerationCost;
+}
+
+export async function listListeningTrainings(): Promise<import("./types").ListeningTraining[]> {
+  await ensureAccessToken();
+  const data = await request<{ listeningTrainings: import("./types").ListeningTraining[] }>(`query { listeningTrainings { ${LISTENING_SUMMARY_FIELDS} } }`);
+  return data.listeningTrainings;
+}
+
+export async function getListeningTraining(id: string): Promise<import("./types").ListeningTraining> {
+  await ensureAccessToken();
+  const data = await request<{ listeningTraining: import("./types").ListeningTraining }>(`query($id: ID!) { listeningTraining(id: $id) { ${LISTENING_FIELDS} } }`, { id });
+  return data.listeningTraining;
+}
+
+export async function startListeningTraining(part: number, targetBand: number): Promise<import("./types").ListeningTraining> {
+  await ensureAccessToken();
+  const data = await request<{ startListeningTraining: import("./types").ListeningTraining }>(`mutation($part: Int!, $targetBand: Float) { startListeningTraining(part: $part, targetBand: $targetBand) { ${LISTENING_FIELDS} } }`, { part, targetBand });
+  return data.startListeningTraining;
+}
+
+export async function beginListeningTraining(id: string): Promise<import("./types").ListeningTraining> {
+  await ensureAccessToken();
+  const data = await request<{ beginListeningTraining: import("./types").ListeningTraining }>(`mutation($id: ID!) { beginListeningTraining(id: $id) { ${LISTENING_FIELDS} } }`, { id });
+  return data.beginListeningTraining;
+}
+
+export async function saveListeningAnswers(id: string, answers: string[]): Promise<import("./types").ListeningTraining> {
+  await ensureAccessToken();
+  const data = await request<{ saveListeningAnswers: import("./types").ListeningTraining }>(`mutation($id: ID!, $answers: [String!]!) { saveListeningAnswers(id: $id, answers: $answers) { ${LISTENING_FIELDS} } }`, { id, answers });
+  return data.saveListeningAnswers;
+}
+
+export async function finishListeningTraining(id: string, answers: string[]): Promise<import("./types").ListeningTraining> {
+  await ensureAccessToken();
+  const data = await request<{ finishListeningTraining: import("./types").ListeningTraining }>(`mutation($id: ID!, $answers: [String!]!) { finishListeningTraining(id: $id, answers: $answers) { ${LISTENING_FIELDS} } }`, { id, answers });
+  return data.finishListeningTraining;
+}
+
+export async function deleteListeningTraining(id: string): Promise<boolean> {
+  await ensureAccessToken();
+  const data = await request<{ deleteListeningTraining: boolean }>(`mutation($id: ID!) { deleteListeningTraining(id: $id) }`, { id });
+  return data.deleteListeningTraining;
+}
+
+export async function getMockExamGenerationCost(): Promise<number> {
+  await ensureAccessToken();
+  const data = await request<{ mockExamGenerationCost: number }>(`query MockExamGenerationCost { mockExamGenerationCost }`);
+  if (!Number.isInteger(data.mockExamGenerationCost) || data.mockExamGenerationCost < 0) throw new Error("无法确认模拟考试生成费用");
+  return data.mockExamGenerationCost;
+}
+
+export async function startMockExam(exam: "IELTS" | "CET4" | "CET6", targetBand = 7): Promise<MockExam> {
+  await ensureAccessToken();
+  const data = await request<{ startMockExam: MockExam }>(`mutation StartMockExam($exam: String!, $targetBand: Float) { startMockExam(exam: $exam, targetBand: $targetBand) { ${MOCK_EXAM_FIELDS} } }`, { exam, targetBand });
+	return data.startMockExam;
+}
+
+export async function retryMockExam(id: string): Promise<MockExam> {
+  await ensureAccessToken();
+  const data = await request<{ retryMockExam: MockExam }>(`mutation RetryMockExam($examId: ID!) { retryMockExam(examId: $examId) { ${MOCK_EXAM_FIELDS} } }`, { examId: id });
+  return data.retryMockExam;
+}
+
+export async function deleteMockExam(id: string): Promise<boolean> {
+  await ensureAccessToken();
+  const data = await request<{ deleteMockExam: boolean }>(`mutation DeleteMockExam($examId: ID!) { deleteMockExam(examId: $examId) }`, { examId: id });
+  return data.deleteMockExam;
+}
+
+export async function beginMockExam(id: string): Promise<MockExam> {
+  await ensureAccessToken();
+  const data = await request<{ beginMockExam: MockExam }>(`mutation BeginMockExam($examId: ID!) { beginMockExam(examId: $examId) { ${MOCK_EXAM_FIELDS} } }`, { examId: id });
+  return data.beginMockExam;
+}
+
+export async function saveMockExamAnswers(id: string, sectionKey: string, answers: string[] = [], responses: string[] = []): Promise<MockExam> {
+  await ensureAccessToken();
+  const data = await request<{ saveMockExamAnswers: MockExam }>(`mutation SaveMockExamAnswers($examId: ID!, $sectionKey: String!, $answers: [String!], $responses: [String!]) { saveMockExamAnswers(examId: $examId, sectionKey: $sectionKey, answers: $answers, responses: $responses) { ${MOCK_EXAM_FIELDS} } }`, { examId: id, sectionKey, answers, responses });
+  return data.saveMockExamAnswers;
+}
+
+export async function getMockExam(id: string): Promise<MockExam> {
+  await ensureAccessToken();
+  const data = await request<{ mockExam: MockExam }>(`query MockExam($id: ID!) { mockExam(id: $id) { ${MOCK_EXAM_FIELDS} } }`, { id });
+  return data.mockExam;
+}
+
+export async function listMockExams(): Promise<MockExam[]> {
+  await ensureAccessToken();
+  const data = await request<{ mockExams: MockExam[] }>(`query MockExams { mockExams { ${MOCK_EXAM_SUMMARY_FIELDS} } }`);
+  return data.mockExams;
+}
+
+export async function submitMockExamSection(id: string, sectionKey: string, answers: string[] = [], responses: string[] = []): Promise<MockExam> {
+  await ensureAccessToken();
+  const data = await request<{ submitMockExamSection: MockExam }>(`mutation SubmitMockExamSection($examId: ID!, $sectionKey: String!, $answers: [String!], $responses: [String!]) { submitMockExamSection(examId: $examId, sectionKey: $sectionKey, answers: $answers, responses: $responses) { ${MOCK_EXAM_FIELDS} } }`, { examId: id, sectionKey, answers, responses });
+  return data.submitMockExamSection;
+}
+
+export async function finishMockExam(id: string): Promise<MockExam> {
+  await ensureAccessToken();
+  const data = await request<{ finishMockExam: MockExam }>(`mutation FinishMockExam($examId: ID!) { finishMockExam(examId: $examId) { ${MOCK_EXAM_FIELDS} } }`, { examId: id });
+  return data.finishMockExam;
 }
 
 export async function contentSources(filter?: { exam?: string; category?: string }): Promise<ContentSource[]> {

@@ -13,6 +13,8 @@ import (
 	"github.com/linguaquest/server/internal/domain"
 )
 
+var errSpeakingSessionNotFound = errors.New("speaking session not found")
+
 type MemoryStore struct {
 	mu                  sync.RWMutex
 	users               map[string]domain.User
@@ -25,6 +27,8 @@ type MemoryStore struct {
 	sessions            map[string]domain.RoleplaySession
 	oauth               map[string]domain.OAuthAccount
 	writings            map[string]domain.WritingSession
+	mockExams           map[string]domain.MockExam
+	speaking            map[string]domain.SpeakingSession
 	orders              map[string]domain.PaymentOrder
 	billing             map[string]domain.BillingStatus
 	creditUses          map[string]memoryCreditUse
@@ -64,6 +68,8 @@ func NewMemoryStore() *MemoryStore {
 		sessions:            map[string]domain.RoleplaySession{},
 		oauth:               map[string]domain.OAuthAccount{},
 		writings:            map[string]domain.WritingSession{},
+		mockExams:           map[string]domain.MockExam{},
+		speaking:            map[string]domain.SpeakingSession{},
 		orders:              map[string]domain.PaymentOrder{},
 		billing:             map[string]domain.BillingStatus{},
 		creditUses:          map[string]memoryCreditUse{},
@@ -72,6 +78,110 @@ func NewMemoryStore() *MemoryStore {
 		productMetricsDaily: map[string]analytics.ProductMetric{},
 		demoAssignments:     map[string]string{},
 	}
+}
+
+func (s *MemoryStore) SaveMockExam(exam domain.MockExam) (domain.MockExam, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if exam.ID == "" || exam.UserID == "" {
+		return domain.MockExam{}, errors.New("mock exam id and user id are required")
+	}
+	s.mockExams[exam.ID] = exam
+	return exam, nil
+}
+
+func (s *MemoryStore) GetMockExam(examID string, userID string) (domain.MockExam, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	exam, ok := s.mockExams[examID]
+	if !ok || exam.UserID != userID {
+		return domain.MockExam{}, errors.New("mock exam not found")
+	}
+	return exam, nil
+}
+
+func (s *MemoryStore) ListMockExams(userID string) ([]domain.MockExam, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]domain.MockExam, 0)
+	for _, exam := range s.mockExams {
+		if exam.UserID == userID {
+			items = append(items, exam)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
+	return items, nil
+}
+
+func (s *MemoryStore) UpdateMockExam(exam domain.MockExam) (domain.MockExam, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.mockExams[exam.ID]; !ok {
+		return domain.MockExam{}, errors.New("mock exam not found")
+	}
+	s.mockExams[exam.ID] = exam
+	return exam, nil
+}
+
+func (s *MemoryStore) DeleteMockExam(id, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.mockExams[id]
+	if !ok || item.UserID != userID {
+		return errors.New("mock exam not found")
+	}
+	listening := item.Exam == "IELTS_LISTENING_PART_1" || item.Exam == "IELTS_LISTENING_PART_2" || item.Exam == "IELTS_LISTENING_PART_3" || item.Exam == "IELTS_LISTENING_PART_4"
+	if item.Status != "READY" && item.Status != "COMPLETED" && item.Status != "FAILED" && item.Status != "EVALUATION_FAILED" && !(listening && item.Status == "IN_PROGRESS") {
+		return errors.New("考试记录当前状态不可删除")
+	}
+	delete(s.mockExams, id)
+	return nil
+}
+
+func (s *MemoryStore) CreateSpeakingSession(session domain.SpeakingSession) (domain.SpeakingSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if session.ID == "" || session.UserID == "" {
+		return domain.SpeakingSession{}, errors.New("speaking session id and user id are required")
+	}
+	s.speaking[session.ID] = session
+	return session, nil
+}
+
+func (s *MemoryStore) GetSpeakingSession(id, userID string) (domain.SpeakingSession, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	item, ok := s.speaking[id]
+	if !ok || item.UserID != userID {
+		return domain.SpeakingSession{}, errSpeakingSessionNotFound
+	}
+	return item, nil
+}
+
+func (s *MemoryStore) LatestSpeakingSession(userID string) (*domain.SpeakingSession, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var latest *domain.SpeakingSession
+	for _, item := range s.speaking {
+		if item.UserID != userID || item.Status == "COMPLETED" || item.Status == "ABANDONED" || item.Status == "QUALITY_REVIEW_PENDING" {
+			continue
+		}
+		if latest == nil || item.UpdatedAt.After(latest.UpdatedAt) {
+			copy := item
+			latest = &copy
+		}
+	}
+	return latest, nil
+}
+
+func (s *MemoryStore) UpdateSpeakingSession(session domain.SpeakingSession) (domain.SpeakingSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.speaking[session.ID]; !ok {
+		return domain.SpeakingSession{}, errSpeakingSessionNotFound
+	}
+	s.speaking[session.ID] = session
+	return session, nil
 }
 
 func (s *MemoryStore) GetDemoAssignment(userID string) (string, error) {

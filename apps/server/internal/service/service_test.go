@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linguaquest/server/internal/ai"
 	"github.com/linguaquest/server/internal/contentquality"
 	"github.com/linguaquest/server/internal/domain"
 	"github.com/linguaquest/server/internal/ielts"
@@ -82,6 +83,48 @@ func (s *sequenceTTS) Synthesize(_ context.Context, _ string, _ string, _ string
 
 type failingGenerator struct {
 	err error
+}
+
+type readingReviewRetryGenerator struct {
+	mu               sync.Mutex
+	generationCalls  int
+	revisionFeedback string
+}
+
+func (g *readingReviewRetryGenerator) Generate(context.Context, string, string, float64, string) ([]domain.Dialogue, []domain.QuizQuestion, error) {
+	return g.GenerateReading(context.Background(), domain.ReadingGenerationRequest{})
+}
+
+func (g *readingReviewRetryGenerator) GenerateReading(_ context.Context, request domain.ReadingGenerationRequest) ([]domain.Dialogue, []domain.QuizQuestion, error) {
+	g.mu.Lock()
+	g.generationCalls++
+	g.revisionFeedback = request.RevisionFeedback
+	attempt := g.generationCalls
+	g.mu.Unlock()
+	dialogues := []domain.Dialogue{{Speaker: "Passage", Text: fmt.Sprintf("Attempt %d presents a carefully qualified hypothetical example without claiming an invented study as fact.", attempt)}}
+	questions := make([]domain.QuizQuestion, 5)
+	for i := range questions {
+		questions[i] = domain.QuizQuestion{Type: "Multiple Choice", Question: fmt.Sprintf("Question %d?", i+1), Options: []string{"A", "B", "C", "D"}, AnswerKey: "A", Evidence: dialogues[0].Text}
+	}
+	return dialogues, questions, nil
+}
+
+func (g *readingReviewRetryGenerator) ReviewReading(_ context.Context, material domain.ReadingMaterial) (domain.ProductionApproval, error) {
+	hash, err := contentquality.ReadingContentHash(material)
+	if err != nil {
+		return domain.ProductionApproval{}, err
+	}
+	g.mu.Lock()
+	attempt := g.generationCalls
+	g.mu.Unlock()
+	if attempt == 1 {
+		return domain.ProductionApproval{Status: contentquality.ApprovalRejected, RubricVersion: contentquality.ReadingRubricVersion, ContentHash: hash}, fmt.Errorf("source integrity rejected: %w", ai.ErrProductionReviewRejected)
+	}
+	checks := make([]domain.QualityCheck, 0, len(contentquality.ReadingRequiredChecks))
+	for _, key := range contentquality.ReadingRequiredChecks {
+		checks = append(checks, domain.QualityCheck{Key: key, Status: contentquality.CheckPassed, Reason: "controlled independent review passed"})
+	}
+	return contentquality.ApprovedApproval(contentquality.ReadingRubricVersion, "controlled-reviewer", hash, time.Now().UTC(), checks), nil
 }
 
 type blockingTTS struct {
@@ -409,6 +452,41 @@ func TestGenerateReadingMaterialMarksFailedWhenAIGenerationFails(t *testing.T) {
 	t.Fatal("reading material did not reach FAILED after AI generation error")
 }
 
+func TestGenerateReadingMaterialRetriesRejectedDraftBeforeTTS(t *testing.T) {
+	mem := store.NewMemoryStore()
+	generator := &readingReviewRetryGenerator{}
+	svc := New(mem, nil, generator, nil, "secret")
+	created, err := svc.GenerateReadingMaterial("user-1", "IELTS", "urban transport resilience", "advanced", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		current, getErr := mem.GetReadingMaterial(created.ID, "user-1")
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if current.Status == "READY" {
+			if !strings.Contains(current.Passage, "Attempt 2") || current.ProductionApproval.Status != contentquality.ApprovalApproved {
+				t.Fatalf("reading retry did not persist the approved second draft: %+v", current)
+			}
+			generator.mu.Lock()
+			calls := generator.generationCalls
+			feedback := generator.revisionFeedback
+			generator.mu.Unlock()
+			if calls != 2 {
+				t.Fatalf("generation calls = %d, want 2", calls)
+			}
+			if !strings.Contains(feedback, "source integrity rejected") || !strings.Contains(feedback, "Attempt 1") {
+				t.Fatal("retry did not receive rejected draft and review diagnostic")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("reading retry did not reach READY")
+}
+
 func TestGenerateReadingMaterialPersistsNormalizedMetadataBeforeQueueing(t *testing.T) {
 	mem := store.NewMemoryStore()
 	svc := New(mem, nil, failingGenerator{err: errors.New("upstream unavailable")}, nil, "secret")
@@ -494,12 +572,8 @@ func TestReadingMaterialFallsBackToIDWhenUserTokenChanges(t *testing.T) {
 	}
 	svc := New(mem, nil, nil, nil, "secret")
 
-	got, err := svc.ReadingMaterial("new-guest-user", material.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.ID != material.ID {
-		t.Fatalf("ReadingMaterial ID = %q, want %q", got.ID, material.ID)
+	if _, err := svc.ReadingMaterial("new-guest-user", material.ID); err == nil {
+		t.Fatal("cross-user reading access was allowed")
 	}
 }
 
@@ -655,6 +729,15 @@ func TestReadingMaterialTitleRemovesMetadataTags(t *testing.T) {
 	}
 }
 
+func TestReadingMaterialTitleWithChineseTopic(t *testing.T) {
+	for _, topic := range []string{"测试工程工作", "[IELTS Reading] 城市与环境", "Urban 城市 transport"} {
+		title := readingMaterialTitle("IELTS", topic, ielts.ReadingMetadata{})
+		if containsHanText(title) || !strings.HasPrefix(title, "IELTS Reading Drill:") {
+			t.Fatalf("invalid English title %q", title)
+		}
+	}
+}
+
 func TestGenerateReadingAudioPreservesAndResumesChunks(t *testing.T) {
 	mem := store.NewMemoryStore()
 	material := domain.ReadingMaterial{
@@ -740,7 +823,7 @@ func TestGenerateReadingAudioClearsProgressNoteAfterReady(t *testing.T) {
 	}
 }
 
-func TestReadingMaterialRetriesFallbackAudioAndDeduplicatesJobs(t *testing.T) {
+func TestUnreviewedFallbackReadingDoesNotSpendTTS(t *testing.T) {
 	mem := store.NewMemoryStore()
 	material := domain.ReadingMaterial{
 		ID:             "reading-fallback",
@@ -773,27 +856,17 @@ func TestReadingMaterialRetriesFallbackAudioAndDeduplicatesJobs(t *testing.T) {
 		t.Fatalf("unexpected material ids: %q %q", first.ID, second.ID)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		ready, err := mem.GetReadingMaterial(material.ID, material.UserID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ready.AudioStatus == "READY" {
-			if got := strings.Join(ready.AudioURLs, ","); got != "audio-1,audio-2" {
-				t.Fatalf("AudioURLs = %q, want audio-1,audio-2", got)
-			}
-			if tts.calls != 2 {
-				t.Fatalf("TTS calls = %d, want 2", tts.calls)
-			}
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	if tts.calls != 0 {
+		t.Fatalf("unreviewed content triggered %d TTS calls", tts.calls)
 	}
-	t.Fatal("fallback reading audio did not reach READY in time")
+	stored, err := mem.GetReadingMaterial(material.ID, material.UserID)
+	if err != nil || stored.AudioStatus != "PENDING" {
+		t.Fatal("unreviewed historical content was mutated")
+	}
 }
 
-func TestReadingMaterialsQueuesLimitedFallbackAudioRetriesWithCooldown(t *testing.T) {
+func TestReadingMaterialsDoNotQueueUnreviewedFallbackAudio(t *testing.T) {
 	mem := store.NewMemoryStore()
 	now := time.Now()
 	for i := 0; i < 3; i++ {
@@ -825,23 +898,17 @@ func TestReadingMaterialsQueuesLimitedFallbackAudioRetriesWithCooldown(t *testin
 		t.Fatalf("ReadingMaterials len = %d, want 3", len(items))
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if tts.calls >= maxReadingAudioListRetries {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if tts.calls != maxReadingAudioListRetries {
-		t.Fatalf("initial TTS calls = %d, want %d", tts.calls, maxReadingAudioListRetries)
+	time.Sleep(100 * time.Millisecond)
+	if tts.calls != 0 {
+		t.Fatalf("unreviewed list triggered %d TTS calls", tts.calls)
 	}
 
 	if _, err := svc.ReadingMaterials("user-1", "IELTS"); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
-	if tts.calls != maxReadingAudioListRetries {
-		t.Fatalf("TTS calls after second list = %d, want still %d", tts.calls, maxReadingAudioListRetries)
+	if tts.calls != 0 {
+		t.Fatalf("second unreviewed list triggered %d TTS calls", tts.calls)
 	}
 }
 

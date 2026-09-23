@@ -12,12 +12,17 @@ function encodeWav(audioBuffer: AudioBuffer): Blob {
   return new Blob([bytes], { type: "audio/wav" });
 }
 
-export async function recordingToWavDataURL(recording: Blob): Promise<string> {
+export async function recordingToWavDataURL(recording: Blob, sampleRate?: number): Promise<string> {
   const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!AudioContextClass) throw new Error("当前浏览器不支持音频转换，请上传 WAV/MP3 或使用新版 Chrome。");
   const context = new AudioContextClass();
   try {
-    const decoded = await context.decodeAudioData(await recording.arrayBuffer());
+    let decoded = await context.decodeAudioData(await recording.arrayBuffer());
+    if (sampleRate && decoded.sampleRate !== sampleRate) {
+      const offline = new OfflineAudioContext(1, Math.ceil(decoded.duration * sampleRate), sampleRate);
+      const source = offline.createBufferSource(); source.buffer = decoded; source.connect(offline.destination); source.start();
+      decoded = await offline.startRendering();
+    }
     const wav = encodeWav(decoded);
     if (wav.size > 10 * 1024 * 1024) throw new Error("录音转换后超过 10MB，请缩短到 90 秒以内。");
     return await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(reader.error ?? new Error("录音读取失败")); reader.onload = () => resolve(String(reader.result)); reader.readAsDataURL(wav); });

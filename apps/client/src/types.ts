@@ -229,6 +229,8 @@ export interface WritingPrompt {
 }
 
 export interface WritingEvaluation {
+  bandEstimate?: number | null;
+  evidence?: string[] | null;
   overallScore: number;
   grammarScore: number;
   vocabularyScore: number;
@@ -248,11 +250,113 @@ export interface WritingSession {
   prompt: WritingPrompt;
   essay: string;
   wordCount: number;
-  status: "WRITING" | "EVALUATING" | "COMPLETED";
+  status: "WRITING" | "EVALUATING" | "COMPLETED" | "FAILED";
   progressMessage: string;
   evaluation?: WritingEvaluation;
   startedAt: string;
   submittedAt?: string;
+}
+
+export interface SpeakingPrompt { part: number; question: string; cueCard: string; preparationSec: number; answerSec: number; questionId?: string; source?: string; audioUrl?: string; }
+export interface SpeakingTurn { part: number; promptIndex: number; prompt: string; transcript: string; audioUrl?: string; examinerText?: string; examinerAudioUrl?: string; audioEvidence?: boolean; asrProvider?: string; asrModel?: string; }
+export interface SpeakingEvaluation { textCoherence?: number | null; fluencyCoherence?: number | null; lexicalResource?: number | null; grammarAccuracy?: number | null; pronunciation?: number | null; overallBand?: number | null; isPartial?: boolean; assessmentMode?: string; strengths: string[]; improvements: string[]; evidence: string[]; summary: string; }
+export interface SpeakingSession { id: string; status: string; part: number; promptIndex: number; pendingPromptIndex?: number; processingMessage?: string; lastError?: string; prompts: SpeakingPrompt[]; turns: SpeakingTurn[]; evaluation?: SpeakingEvaluation | null; }
+
+export interface ListeningTrainingQuestion {
+  question: string;
+  type: string;
+  options: string[];
+  answerKey?: string | null;
+  evidence?: string | null;
+  correct?: boolean | null;
+}
+
+export interface ListeningTraining {
+  id: string;
+  part: number;
+  status: "GENERATING" | "READY" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
+  message: string;
+  title?: string | null;
+  targetBand: number;
+  createdAt: string;
+  estimatedReadySeconds: number;
+  generationEstimateSamples: number;
+  instructions?: string | null;
+  transcript?: string | null;
+  audioUrls: string[];
+  questions: ListeningTrainingQuestion[];
+  answers: string[];
+  correct?: number | null;
+  total?: number | null;
+  accuracy?: number | null;
+  feedback?: string | null;
+  recommendations?: string[] | null;
+}
+
+export interface MockExamQuestion {
+  question: string;
+  options: string[];
+  type: string;
+}
+
+export interface MockExamSection {
+  key: string;
+  title: string;
+  skill: "LISTENING" | "READING" | "WRITING" | "TRANSLATION";
+  durationSeconds: number;
+  generationDurationSeconds?: number | null;
+  instructions: string;
+  passage: string | null;
+  audioUrl?: string | null;
+  audioUrls?: (string | null)[] | null;
+  questions: MockExamQuestion[] | null;
+  writingPrompts: WritingPrompt[] | null;
+  answers?: (string | null)[] | null;
+  responses?: (string | null)[] | null;
+}
+
+export interface MockExamResult {
+  scoreScale?: string;
+  totalScore?: number;
+  translationScore?: number;
+  translationEvaluation?: WritingEvaluation | null;
+  writingEvaluations?: WritingEvaluation[] | null;
+  readingCorrect: number;
+  readingTotal: number;
+  listeningCorrect: number;
+  listeningTotal: number;
+  readingScore: number;
+  listeningScore: number;
+  writingScore: number;
+  writingTask1Score: number;
+  writingTask2Score: number;
+  writingBand?: number | null;
+  writingTask1Band?: number | null;
+  writingTask2Band?: number | null;
+  estimatedBand: number;
+  qualityStatus: string;
+  feedback: string;
+  strengths: string[];
+  weaknesses: string[];
+  recommendations: string[];
+  completedAt: string;
+}
+
+export interface MockExam {
+  id: string;
+  exam: string;
+  status: "GENERATING" | "READY" | "IN_PROGRESS" | "EVALUATING" | "COMPLETED" | "FAILED" | "EVALUATION_FAILED";
+  targetBand?: number | null;
+  paperVersion?: string | null;
+  currentSection: string;
+  totalDurationSeconds: number;
+  sections: MockExamSection[];
+  result?: MockExamResult | null;
+  startedAt: string;
+  submittedAt?: string;
+  estimatedReadySeconds?: number;
+  generationEstimateSamples?: number;
+  createdAt?: string;
 }
 
 export interface ContentSource {

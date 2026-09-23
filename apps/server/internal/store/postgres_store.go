@@ -418,10 +418,14 @@ func (s *PostgresStore) SaveTheater(theater domain.Theater) (domain.Theater, err
 	if err != nil {
 		return domain.Theater{}, err
 	}
+	approvalJSON, err := marshalProductionApproval(theater.ProductionApproval)
+	if err != nil {
+		return domain.Theater{}, err
+	}
 	err = s.pool.QueryRow(
 		ctx,
-		`INSERT INTO theaters (id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, scene_description, characters, dialogues, quiz_questions, is_favorite, share_code)
-		 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15)
+		`INSERT INTO theaters (id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, scene_description, characters, dialogues, quiz_questions, is_favorite, share_code, production_approval)
+		 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15, $16::jsonb)
 		 ON CONFLICT (id) DO UPDATE SET
 			user_id = EXCLUDED.user_id,
 			language = EXCLUDED.language,
@@ -436,14 +440,16 @@ func (s *PostgresStore) SaveTheater(theater domain.Theater) (domain.Theater, err
 			dialogues = EXCLUDED.dialogues,
 			quiz_questions = EXCLUDED.quiz_questions,
 			is_favorite = EXCLUDED.is_favorite,
-			share_code = EXCLUDED.share_code
-		 RETURNING id::text, user_id::text, language, topic, difficulty, mode, status, generation_progress, generation_message, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), COALESCE(characters, '[]'::jsonb), created_at`,
-		theater.ID, theater.UserID, theater.Language, theater.Topic, theater.Difficulty, theater.Mode, theater.Status, theater.GenerationProgress, theater.GenerationMessage, theater.SceneDescription, string(charactersJSON), string(dialoguesJSON), string(quizJSON), theater.IsFavorite, theater.ShareCode,
-	).Scan(&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode, &theater.Status, &theater.GenerationProgress, &theater.GenerationMessage, &theater.IsFavorite, &theater.ShareCode, &theater.SceneDescription, &charactersJSON, &theater.CreatedAt)
+			share_code = EXCLUDED.share_code,
+			production_approval = EXCLUDED.production_approval
+		 RETURNING id::text, user_id::text, language, topic, difficulty, mode, status, generation_progress, generation_message, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), COALESCE(characters, '[]'::jsonb), production_approval, created_at`,
+		theater.ID, theater.UserID, theater.Language, theater.Topic, theater.Difficulty, theater.Mode, theater.Status, theater.GenerationProgress, theater.GenerationMessage, theater.SceneDescription, string(charactersJSON), string(dialoguesJSON), string(quizJSON), theater.IsFavorite, theater.ShareCode, string(approvalJSON),
+	).Scan(&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode, &theater.Status, &theater.GenerationProgress, &theater.GenerationMessage, &theater.IsFavorite, &theater.ShareCode, &theater.SceneDescription, &charactersJSON, &approvalJSON, &theater.CreatedAt)
 	if err != nil {
 		return domain.Theater{}, err
 	}
 	_ = json.Unmarshal(charactersJSON, &theater.Characters)
+	theater.ProductionApproval = unmarshalProductionApproval(approvalJSON)
 	return theater, nil
 }
 
@@ -454,12 +460,13 @@ func (s *PostgresStore) GetTheater(id string) (domain.Theater, error) {
 	var charactersRaw []byte
 	var dialoguesRaw []byte
 	var quizRaw []byte
+	var approvalRaw []byte
 	err := s.pool.QueryRow(
 		ctx,
-		`SELECT id::text, user_id::text, language, topic, difficulty, mode, status, generation_progress, generation_message, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), COALESCE(characters, '[]'::jsonb), dialogues, COALESCE(quiz_questions, '[]'::jsonb), created_at
+		`SELECT id::text, user_id::text, language, topic, difficulty, mode, status, generation_progress, generation_message, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), COALESCE(characters, '[]'::jsonb), dialogues, COALESCE(quiz_questions, '[]'::jsonb), production_approval, created_at
 		 FROM theaters WHERE id = $1::uuid`,
 		id,
-	).Scan(&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode, &theater.Status, &theater.GenerationProgress, &theater.GenerationMessage, &theater.IsFavorite, &theater.ShareCode, &theater.SceneDescription, &charactersRaw, &dialoguesRaw, &quizRaw, &theater.CreatedAt)
+	).Scan(&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode, &theater.Status, &theater.GenerationProgress, &theater.GenerationMessage, &theater.IsFavorite, &theater.ShareCode, &theater.SceneDescription, &charactersRaw, &dialoguesRaw, &quizRaw, &approvalRaw, &theater.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Theater{}, errors.New("theater not found")
 	}
@@ -481,6 +488,7 @@ func (s *PostgresStore) GetTheater(id string) (domain.Theater, error) {
 			return domain.Theater{}, err
 		}
 	}
+	theater.ProductionApproval = unmarshalProductionApproval(approvalRaw)
 	return theater, nil
 }
 
@@ -491,12 +499,13 @@ func (s *PostgresStore) GetTheaterByShareCode(shareCode string) (domain.Theater,
 	var charactersRaw []byte
 	var dialoguesRaw []byte
 	var quizRaw []byte
+	var approvalRaw []byte
 	err := s.pool.QueryRow(
 		ctx,
-		`SELECT id::text, user_id::text, language, topic, difficulty, mode, status, generation_progress, generation_message, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), COALESCE(characters, '[]'::jsonb), dialogues, COALESCE(quiz_questions, '[]'::jsonb), created_at
+		`SELECT id::text, user_id::text, language, topic, difficulty, mode, status, generation_progress, generation_message, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), COALESCE(characters, '[]'::jsonb), dialogues, COALESCE(quiz_questions, '[]'::jsonb), production_approval, created_at
 		 FROM theaters WHERE UPPER(share_code) = UPPER($1) AND share_code <> ''`,
 		shareCode,
-	).Scan(&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode, &theater.Status, &theater.GenerationProgress, &theater.GenerationMessage, &theater.IsFavorite, &theater.ShareCode, &theater.SceneDescription, &charactersRaw, &dialoguesRaw, &quizRaw, &theater.CreatedAt)
+	).Scan(&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode, &theater.Status, &theater.GenerationProgress, &theater.GenerationMessage, &theater.IsFavorite, &theater.ShareCode, &theater.SceneDescription, &charactersRaw, &dialoguesRaw, &quizRaw, &approvalRaw, &theater.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Theater{}, errors.New("theater not found")
 	}
@@ -518,6 +527,7 @@ func (s *PostgresStore) GetTheaterByShareCode(shareCode string) (domain.Theater,
 			return domain.Theater{}, err
 		}
 	}
+	theater.ProductionApproval = unmarshalProductionApproval(approvalRaw)
 	return theater, nil
 }
 
@@ -532,7 +542,7 @@ func (s *PostgresStore) ListTheatersByUser(userID string, language string, statu
 	}
 	rows, err := s.pool.Query(
 		ctx,
-		`SELECT id::text, user_id::text, language, topic, difficulty, mode, status, generation_progress, generation_message, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), created_at
+		`SELECT id::text, user_id::text, language, topic, difficulty, mode, status, generation_progress, generation_message, COALESCE(is_favorite, false), COALESCE(share_code, ''), COALESCE(scene_description, ''), production_approval, created_at
 		 FROM theaters
 		 WHERE user_id = $1::uuid
 		   AND ($2 = '' OR language = $2)
@@ -549,12 +559,14 @@ func (s *PostgresStore) ListTheatersByUser(userID string, language string, statu
 	result := make([]domain.Theater, 0)
 	for rows.Next() {
 		var item domain.Theater
+		var approvalRaw []byte
 		if scanErr := rows.Scan(
 			&item.ID, &item.UserID, &item.Language, &item.Topic, &item.Difficulty, &item.Mode,
-			&item.Status, &item.GenerationProgress, &item.GenerationMessage, &item.IsFavorite, &item.ShareCode, &item.SceneDescription, &item.CreatedAt,
+			&item.Status, &item.GenerationProgress, &item.GenerationMessage, &item.IsFavorite, &item.ShareCode, &item.SceneDescription, &approvalRaw, &item.CreatedAt,
 		); scanErr != nil {
 			return nil, scanErr
 		}
+		item.ProductionApproval = unmarshalProductionApproval(approvalRaw)
 		result = append(result, item)
 	}
 	return result, rows.Err()
@@ -708,14 +720,18 @@ func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (do
 	if err != nil {
 		return domain.ReadingMaterial{}, err
 	}
+	approvalJSON, err := marshalProductionApproval(material.ProductionApproval)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
 	err = s.pool.QueryRow(
 		ctx,
 		`INSERT INTO reading_materials (
 			id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids,
-			generation_note, audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
+			generation_note, audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, production_approval, created_at
 		) VALUES (
 			$1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb,
-			$18, $19, $20::jsonb, $21, $22, $23, $24, $25::jsonb, $26::jsonb, $27::jsonb, $28
+			$18, $19, $20::jsonb, $21, $22, $23, $24, $25::jsonb, $26::jsonb, $27::jsonb, $28::jsonb, $29
         )
         ON CONFLICT (id) DO UPDATE SET
             user_id = EXCLUDED.user_id,
@@ -744,17 +760,18 @@ func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (do
             vocabulary_items = EXCLUDED.vocabulary_items,
             association_sentences = EXCLUDED.association_sentences,
             grammar_insights = EXCLUDED.grammar_insights,
+			production_approval = EXCLUDED.production_approval,
             created_at = EXCLUDED.created_at
 		RETURNING id::text, user_id::text, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids,
 			COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status, status, generation_progress, generation_message,
-			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at`,
+			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), production_approval, created_at`,
 		material.ID, material.UserID, material.Exam, material.Language, material.Level, material.Topic, material.Band, material.Stage, material.Section, material.SkillFocus, material.QuestionType, material.ScenarioFamily, material.Title, material.Passage,
 		string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL,
-		string(audioURLsJSON), material.AudioStatus, material.Status, material.GenerationProgress, material.GenerationMessage, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), material.CreatedAt,
+		string(audioURLsJSON), material.AudioStatus, material.Status, material.GenerationProgress, material.GenerationMessage, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), string(approvalJSON), material.CreatedAt,
 	).Scan(
 		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Band, &material.Stage, &material.Section, &material.SkillFocus, &material.QuestionType, &material.ScenarioFamily, &material.Title, &material.Passage,
 		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus, &material.Status, &material.GenerationProgress, &material.GenerationMessage,
-		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &material.CreatedAt,
+		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &approvalJSON, &material.CreatedAt,
 	)
 	if err != nil {
 		return domain.ReadingMaterial{}, err
@@ -766,6 +783,7 @@ func (s *PostgresStore) SaveReadingMaterial(material domain.ReadingMaterial) (do
 	_ = json.Unmarshal(vocabularyItemsJSON, &material.VocabularyItems)
 	_ = json.Unmarshal(associationJSON, &material.AssociationSentences)
 	_ = json.Unmarshal(grammarJSON, &material.GrammarInsights)
+	material.ProductionApproval = unmarshalProductionApproval(approvalJSON)
 	return material, nil
 }
 
@@ -800,8 +818,12 @@ func (s *PostgresStore) UpdateReadingMaterialExisting(material domain.ReadingMat
 	if err != nil {
 		return domain.ReadingMaterial{}, err
 	}
-	result, err := s.pool.Exec(ctx, `UPDATE reading_materials SET exam = $3, language = $4, level = $5, topic = $6, band = $7, stage = $8, section = $9, skill_focus = $10, question_type = $11, scenario_family = $12, title = $13, passage = $14, vocabulary = $15::jsonb, questions = $16::jsonb, source_ids = $17::jsonb, generation_note = $18, audio_url = $19, audio_urls = $20::jsonb, audio_status = $21, status = $22, generation_progress = $23, generation_message = $24, vocabulary_items = $25::jsonb, association_sentences = $26::jsonb, grammar_insights = $27::jsonb WHERE id = $1::uuid AND user_id = $2::uuid`,
-		material.ID, material.UserID, material.Exam, material.Language, material.Level, material.Topic, material.Band, material.Stage, material.Section, material.SkillFocus, material.QuestionType, material.ScenarioFamily, material.Title, material.Passage, string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL, string(audioURLsJSON), material.AudioStatus, material.Status, material.GenerationProgress, material.GenerationMessage, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON))
+	approvalJSON, err := marshalProductionApproval(material.ProductionApproval)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
+	result, err := s.pool.Exec(ctx, `UPDATE reading_materials SET exam = $3, language = $4, level = $5, topic = $6, band = $7, stage = $8, section = $9, skill_focus = $10, question_type = $11, scenario_family = $12, title = $13, passage = $14, vocabulary = $15::jsonb, questions = $16::jsonb, source_ids = $17::jsonb, generation_note = $18, audio_url = $19, audio_urls = $20::jsonb, audio_status = $21, status = $22, generation_progress = $23, generation_message = $24, vocabulary_items = $25::jsonb, association_sentences = $26::jsonb, grammar_insights = $27::jsonb, production_approval = $28::jsonb WHERE id = $1::uuid AND user_id = $2::uuid`,
+		material.ID, material.UserID, material.Exam, material.Language, material.Level, material.Topic, material.Band, material.Stage, material.Section, material.SkillFocus, material.QuestionType, material.ScenarioFamily, material.Title, material.Passage, string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL, string(audioURLsJSON), material.AudioStatus, material.Status, material.GenerationProgress, material.GenerationMessage, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), string(approvalJSON))
 	if err != nil {
 		return domain.ReadingMaterial{}, err
 	}
@@ -816,19 +838,19 @@ func (s *PostgresStore) GetReadingMaterial(id string, userID string) (domain.Rea
 	defer cancel()
 	var material domain.ReadingMaterial
 	var vocabularyJSON, questionsJSON, sourceIDsJSON []byte
-	var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON []byte
+	var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON, approvalJSON []byte
 	err := s.pool.QueryRow(
 		ctx,
 		`SELECT id::text, user_id::text, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids,
 			COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status, status, generation_progress, generation_message,
-			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
+			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), production_approval, created_at
          FROM reading_materials
          WHERE id = $1::uuid AND ($2 = '' OR user_id = NULLIF($2, '')::uuid)`,
 		id, userID,
 	).Scan(
 		&material.ID, &material.UserID, &material.Exam, &material.Language, &material.Level, &material.Topic, &material.Band, &material.Stage, &material.Section, &material.SkillFocus, &material.QuestionType, &material.ScenarioFamily, &material.Title, &material.Passage,
 		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &material.GenerationNote, &material.AudioURL, &audioURLsJSON, &material.AudioStatus, &material.Status, &material.GenerationProgress, &material.GenerationMessage,
-		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &material.CreatedAt,
+		&vocabularyItemsJSON, &associationJSON, &grammarJSON, &approvalJSON, &material.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ReadingMaterial{}, errors.New("reading material not found")
@@ -843,6 +865,7 @@ func (s *PostgresStore) GetReadingMaterial(id string, userID string) (domain.Rea
 	_ = json.Unmarshal(vocabularyItemsJSON, &material.VocabularyItems)
 	_ = json.Unmarshal(associationJSON, &material.AssociationSentences)
 	_ = json.Unmarshal(grammarJSON, &material.GrammarInsights)
+	material.ProductionApproval = unmarshalProductionApproval(approvalJSON)
 	return material, nil
 }
 
@@ -853,7 +876,7 @@ func (s *PostgresStore) ListReadingMaterialsByUser(userID string, exam string) (
 		ctx,
 		`SELECT id::text, user_id::text, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids,
 			COALESCE(generation_note, ''), COALESCE(audio_url, ''), COALESCE(audio_urls, '[]'::jsonb), audio_status, status, generation_progress, generation_message,
-			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), created_at
+			COALESCE(vocabulary_items, '[]'::jsonb), COALESCE(association_sentences, '[]'::jsonb), COALESCE(grammar_insights, '[]'::jsonb), production_approval, created_at
          FROM reading_materials
          WHERE user_id = $1::uuid AND ($2 = '' OR exam = $2)
          ORDER BY created_at DESC`,
@@ -868,11 +891,11 @@ func (s *PostgresStore) ListReadingMaterialsByUser(userID string, exam string) (
 	for rows.Next() {
 		var item domain.ReadingMaterial
 		var vocabularyJSON, questionsJSON, sourceIDsJSON []byte
-		var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON []byte
+		var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON, approvalJSON []byte
 		if scanErr := rows.Scan(
 			&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic, &item.Band, &item.Stage, &item.Section, &item.SkillFocus, &item.QuestionType, &item.ScenarioFamily, &item.Title, &item.Passage,
 			&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &item.GenerationNote, &item.AudioURL, &audioURLsJSON, &item.AudioStatus, &item.Status, &item.GenerationProgress, &item.GenerationMessage,
-			&vocabularyItemsJSON, &associationJSON, &grammarJSON, &item.CreatedAt,
+			&vocabularyItemsJSON, &associationJSON, &grammarJSON, &approvalJSON, &item.CreatedAt,
 		); scanErr != nil {
 			return nil, scanErr
 		}
@@ -883,6 +906,7 @@ func (s *PostgresStore) ListReadingMaterialsByUser(userID string, exam string) (
 		_ = json.Unmarshal(vocabularyItemsJSON, &item.VocabularyItems)
 		_ = json.Unmarshal(associationJSON, &item.AssociationSentences)
 		_ = json.Unmarshal(grammarJSON, &item.GrammarInsights)
+		item.ProductionApproval = unmarshalProductionApproval(approvalJSON)
 		result = append(result, item)
 	}
 	return result, rows.Err()
@@ -980,6 +1004,106 @@ func (s *PostgresStore) UpdateRoleplaySession(session domain.RoleplaySession) (d
 	return session, nil
 }
 
+func (s *PostgresStore) CreateSpeakingSession(session domain.SpeakingSession) (domain.SpeakingSession, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	prompts, err := json.Marshal(session.Prompts)
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	turns, err := json.Marshal(session.Turns)
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	var evaluation []byte
+	if session.Evaluation != nil {
+		evaluation, err = json.Marshal(session.Evaluation)
+		if err != nil {
+			return domain.SpeakingSession{}, err
+		}
+	}
+	approval, err := marshalProductionApproval(session.EvaluationApproval)
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	return scanSpeaking(s.pool.QueryRow(ctx, `INSERT INTO speaking_sessions (id,user_id,status,part,prompt_index,preparation_ends_at,answer_ends_at,prompts,turns,evaluation,evaluation_approval,processing_message) VALUES ($1::uuid,$2::uuid,$3,$4,$5,NULLIF($6,'')::timestamptz,NULLIF($7,'')::timestamptz,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12) RETURNING id::text,user_id::text,status,part,prompt_index,preparation_ends_at,answer_ends_at,prompts,turns,evaluation,evaluation_approval,processing_message,created_at,updated_at`, session.ID, session.UserID, session.Status, session.Part, session.PromptIndex, formatTime(session.PreparationEndsAt), formatTime(session.AnswerEndsAt), string(prompts), string(turns), speakingNullableJSON(evaluation), string(approval), session.ProcessingMessage))
+}
+
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339Nano)
+}
+func speakingNullableJSON(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return string(b)
+}
+
+func (s *PostgresStore) GetSpeakingSession(id, userID string) (domain.SpeakingSession, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return scanSpeaking(s.pool.QueryRow(ctx, `SELECT id::text,user_id::text,status,part,prompt_index,preparation_ends_at,answer_ends_at,prompts,turns,evaluation,evaluation_approval,processing_message,created_at,updated_at FROM speaking_sessions WHERE id=$1::uuid AND user_id=$2::uuid`, id, userID))
+}
+
+func (s *PostgresStore) LatestSpeakingSession(userID string) (*domain.SpeakingSession, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	session, err := scanSpeaking(s.pool.QueryRow(ctx, `SELECT id::text,user_id::text,status,part,prompt_index,preparation_ends_at,answer_ends_at,prompts,turns,evaluation,evaluation_approval,processing_message,created_at,updated_at FROM speaking_sessions WHERE user_id=$1::uuid AND status NOT IN ('COMPLETED','ABANDONED','QUALITY_REVIEW_PENDING') ORDER BY updated_at DESC LIMIT 1`, userID))
+	if err != nil {
+		if errors.Is(err, errSpeakingSessionNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &session, nil
+}
+
+func (s *PostgresStore) UpdateSpeakingSession(session domain.SpeakingSession) (domain.SpeakingSession, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	prompts, _ := json.Marshal(session.Prompts)
+	turns, _ := json.Marshal(session.Turns)
+	var evaluation []byte
+	if session.Evaluation != nil {
+		evaluation, _ = json.Marshal(session.Evaluation)
+	}
+	approval, err := marshalProductionApproval(session.EvaluationApproval)
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	return scanSpeaking(s.pool.QueryRow(ctx, `UPDATE speaking_sessions SET status=$3,part=$4,prompt_index=$5,preparation_ends_at=NULLIF($6,'')::timestamptz,answer_ends_at=NULLIF($7,'')::timestamptz,prompts=$8::jsonb,turns=$9::jsonb,evaluation=$10::jsonb,evaluation_approval=$11::jsonb,processing_message=$12,updated_at=NOW() WHERE id=$1::uuid AND user_id=$2::uuid RETURNING id::text,user_id::text,status,part,prompt_index,preparation_ends_at,answer_ends_at,prompts,turns,evaluation,evaluation_approval,processing_message,created_at,updated_at`, session.ID, session.UserID, session.Status, session.Part, session.PromptIndex, formatTime(session.PreparationEndsAt), formatTime(session.AnswerEndsAt), string(prompts), string(turns), speakingNullableJSON(evaluation), string(approval), session.ProcessingMessage))
+}
+
+func scanSpeaking(scanner interface{ Scan(...any) error }) (domain.SpeakingSession, error) {
+	var s domain.SpeakingSession
+	var prep, answer *time.Time
+	var prompts, turns, evaluation, approval []byte
+	err := scanner.Scan(&s.ID, &s.UserID, &s.Status, &s.Part, &s.PromptIndex, &prep, &answer, &prompts, &turns, &evaluation, &approval, &s.ProcessingMessage, &s.CreatedAt, &s.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.SpeakingSession{}, errSpeakingSessionNotFound
+	}
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	if prep != nil {
+		s.PreparationEndsAt = *prep
+	}
+	if answer != nil {
+		s.AnswerEndsAt = *answer
+	}
+	_ = json.Unmarshal(prompts, &s.Prompts)
+	_ = json.Unmarshal(turns, &s.Turns)
+	if len(evaluation) > 0 {
+		s.Evaluation = &domain.SpeakingEvaluation{}
+		_ = json.Unmarshal(evaluation, s.Evaluation)
+	}
+	s.EvaluationApproval = unmarshalProductionApproval(approval)
+	return s, nil
+}
+
 func (s *PostgresStore) SaveWritingSession(session domain.WritingSession) (domain.WritingSession, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -987,7 +1111,7 @@ func (s *PostgresStore) SaveWritingSession(session domain.WritingSession) (domai
 		session.ID = uuid.NewString()
 	}
 	now := time.Now().UTC()
-	if session.StartedAt.IsZero() {
+	if session.StartedAt.IsZero() && session.Status == "WRITING" {
 		session.StartedAt = now
 	}
 	if session.CreatedAt.IsZero() {
@@ -1004,13 +1128,21 @@ func (s *PostgresStore) SaveWritingSession(session domain.WritingSession) (domai
 			return domain.WritingSession{}, err
 		}
 	}
+	promptApproval, err := marshalProductionApproval(session.PromptApproval)
+	if err != nil {
+		return domain.WritingSession{}, err
+	}
+	evaluationApproval, err := marshalProductionApproval(session.EvaluationApproval)
+	if err != nil {
+		return domain.WritingSession{}, err
+	}
 	var submittedAt *time.Time
-	err = s.pool.QueryRow(ctx, `INSERT INTO writing_sessions (id, user_id, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, started_at, submitted_at, created_at, updated_at)
-        VALUES ($1::uuid, $2::uuid, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::jsonb, $11, NULLIF($12::text, '')::timestamptz, $13, NOW())
-        ON CONFLICT(id) DO UPDATE SET essay=EXCLUDED.essay, word_count=EXCLUDED.word_count, status=EXCLUDED.status, progress_message=EXCLUDED.progress_message, evaluation=EXCLUDED.evaluation, submitted_at=EXCLUDED.submitted_at, updated_at=NOW()
-        RETURNING id::text, user_id::text, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, started_at, submitted_at, created_at, updated_at`,
-		session.ID, session.UserID, session.Exam, session.TimeLimitSeconds, string(prompt), session.Essay, session.WordCount, session.Status, session.ProgressMessage, nullableJSON(evaluation), session.StartedAt, nullablePostgresTime(session.SubmittedAt), session.CreatedAt).Scan(
-		&session.ID, &session.UserID, &session.Exam, &session.TimeLimitSeconds, &prompt, &session.Essay, &session.WordCount, &session.Status, &session.ProgressMessage, &evaluation, &session.StartedAt, &submittedAt, &session.CreatedAt, &session.UpdatedAt)
+	err = s.pool.QueryRow(ctx, `INSERT INTO writing_sessions (id, user_id, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, prompt_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at)
+		VALUES ($1::uuid, $2::uuid, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, NULLIF($14::text, '')::timestamptz, $15, NOW())
+		ON CONFLICT(id) DO UPDATE SET essay=EXCLUDED.essay, word_count=EXCLUDED.word_count, status=EXCLUDED.status, progress_message=EXCLUDED.progress_message, evaluation=EXCLUDED.evaluation, prompt_approval=EXCLUDED.prompt_approval, evaluation_approval=EXCLUDED.evaluation_approval, submitted_at=EXCLUDED.submitted_at, updated_at=NOW()
+		RETURNING id::text, user_id::text, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, prompt_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at`,
+		session.ID, session.UserID, session.Exam, session.TimeLimitSeconds, string(prompt), session.Essay, session.WordCount, session.Status, session.ProgressMessage, nullableJSON(evaluation), string(promptApproval), string(evaluationApproval), session.StartedAt, nullablePostgresTime(session.SubmittedAt), session.CreatedAt).Scan(
+		&session.ID, &session.UserID, &session.Exam, &session.TimeLimitSeconds, &prompt, &session.Essay, &session.WordCount, &session.Status, &session.ProgressMessage, &evaluation, &promptApproval, &evaluationApproval, &session.StartedAt, &submittedAt, &session.CreatedAt, &session.UpdatedAt)
 	if err != nil {
 		return domain.WritingSession{}, err
 	}
@@ -1018,6 +1150,8 @@ func (s *PostgresStore) SaveWritingSession(session domain.WritingSession) (domai
 		session.SubmittedAt = *submittedAt
 	}
 	_ = json.Unmarshal(prompt, &session.Prompt)
+	session.PromptApproval = unmarshalProductionApproval(promptApproval)
+	session.EvaluationApproval = unmarshalProductionApproval(evaluationApproval)
 	if len(evaluation) > 0 && string(evaluation) != "null" {
 		var e domain.WritingEvaluation
 		if json.Unmarshal(evaluation, &e) == nil {
@@ -1042,8 +1176,16 @@ func (s *PostgresStore) UpdateWritingSessionExisting(session domain.WritingSessi
 			return domain.WritingSession{}, err
 		}
 	}
-	result, err := s.pool.Exec(ctx, `UPDATE writing_sessions SET exam = $3, time_limit_seconds = $4, prompt = $5::jsonb, essay = $6, word_count = $7, status = $8, progress_message = $9, evaluation = $10::jsonb, started_at = $11, submitted_at = NULLIF($12::text, '')::timestamptz, updated_at = $13 WHERE id = $1::uuid AND user_id = $2::uuid`,
-		session.ID, session.UserID, session.Exam, session.TimeLimitSeconds, string(prompt), session.Essay, session.WordCount, session.Status, session.ProgressMessage, nullableJSON(evaluation), session.StartedAt, nullablePostgresTime(session.SubmittedAt), session.UpdatedAt)
+	promptApproval, err := marshalProductionApproval(session.PromptApproval)
+	if err != nil {
+		return domain.WritingSession{}, err
+	}
+	evaluationApproval, err := marshalProductionApproval(session.EvaluationApproval)
+	if err != nil {
+		return domain.WritingSession{}, err
+	}
+	result, err := s.pool.Exec(ctx, `UPDATE writing_sessions SET exam = $3, time_limit_seconds = $4, prompt = $5::jsonb, essay = $6, word_count = $7, status = $8, progress_message = $9, evaluation = $10::jsonb, prompt_approval = $11::jsonb, evaluation_approval = $12::jsonb, started_at = $13, submitted_at = NULLIF($14::text, '')::timestamptz, updated_at = $15 WHERE id = $1::uuid AND user_id = $2::uuid`,
+		session.ID, session.UserID, session.Exam, session.TimeLimitSeconds, string(prompt), session.Essay, session.WordCount, session.Status, session.ProgressMessage, nullableJSON(evaluation), string(promptApproval), string(evaluationApproval), session.StartedAt, nullablePostgresTime(session.SubmittedAt), session.UpdatedAt)
 	if err != nil {
 		return domain.WritingSession{}, err
 	}
@@ -1056,13 +1198,13 @@ func (s *PostgresStore) UpdateWritingSessionExisting(session domain.WritingSessi
 func (s *PostgresStore) GetWritingSession(sessionID string, userID string) (domain.WritingSession, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return s.scanWritingSession(s.pool.QueryRow(ctx, `SELECT id::text, user_id::text, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, started_at, submitted_at, created_at, updated_at FROM writing_sessions WHERE id=$1::uuid AND user_id=$2::uuid`, sessionID, userID))
+	return s.scanWritingSession(s.pool.QueryRow(ctx, `SELECT id::text, user_id::text, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, prompt_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at FROM writing_sessions WHERE id=$1::uuid AND user_id=$2::uuid`, sessionID, userID))
 }
 
 func (s *PostgresStore) ListWritingSessions(userID string) ([]domain.WritingSession, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	rows, err := s.pool.Query(ctx, `SELECT id::text, user_id::text, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, started_at, submitted_at, created_at, updated_at FROM writing_sessions WHERE user_id=$1::uuid ORDER BY created_at DESC`, userID)
+	rows, err := s.pool.Query(ctx, `SELECT id::text, user_id::text, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, prompt_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at FROM writing_sessions WHERE user_id=$1::uuid ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -1091,6 +1233,102 @@ func (s *PostgresStore) DeleteWritingSession(userID string, sessionID string) er
 	return nil
 }
 
+func (s *PostgresStore) SaveMockExam(exam domain.MockExam) (domain.MockExam, error) {
+	sections, err := json.Marshal(exam.Sections)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	var result []byte
+	if exam.Result != nil {
+		result, err = json.Marshal(exam.Result)
+		if err != nil {
+			return domain.MockExam{}, err
+		}
+	}
+	approval, err := marshalProductionApproval(exam.ProductionApproval)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	evaluationApproval, err := marshalProductionApproval(exam.EvaluationApproval)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = s.pool.Exec(ctx, `INSERT INTO mock_exams (id, user_id, exam, status, current_section, total_duration_seconds, sections, result, production_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12, $13, $14)`, exam.ID, exam.UserID, exam.Exam, exam.Status, exam.CurrentSection, exam.TotalDurationSeconds, string(sections), nullableJSON(result), string(approval), string(evaluationApproval), exam.StartedAt, nullablePostgresTime(exam.SubmittedAt), exam.CreatedAt, exam.UpdatedAt)
+	return exam, err
+}
+
+func (s *PostgresStore) GetMockExam(examID string, userID string) (domain.MockExam, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return scanMockExam(s.pool.QueryRow(ctx, `SELECT id::text, user_id::text, exam, status, current_section, total_duration_seconds, sections, result, production_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at FROM mock_exams WHERE id=$1::uuid AND user_id=$2::uuid`, examID, userID))
+}
+
+func (s *PostgresStore) ListMockExams(userID string) ([]domain.MockExam, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := s.pool.Query(ctx, `SELECT id::text, user_id::text, exam, status, current_section, total_duration_seconds, sections, result, production_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at FROM mock_exams WHERE user_id=$1::uuid ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]domain.MockExam, 0)
+	for rows.Next() {
+		item, scanErr := scanMockExam(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *PostgresStore) UpdateMockExam(exam domain.MockExam) (domain.MockExam, error) {
+	sections, err := json.Marshal(exam.Sections)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	var result []byte
+	if exam.Result != nil {
+		result, err = json.Marshal(exam.Result)
+		if err != nil {
+			return domain.MockExam{}, err
+		}
+	}
+	approval, err := marshalProductionApproval(exam.ProductionApproval)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	evaluationApproval, err := marshalProductionApproval(exam.EvaluationApproval)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command, err := s.pool.Exec(ctx, `UPDATE mock_exams SET status=$1, current_section=$2, sections=$3::jsonb, result=$4::jsonb, production_approval=$5::jsonb, evaluation_approval=$6::jsonb, submitted_at=$7, updated_at=$8, started_at=$11, total_duration_seconds=$12 WHERE id=$9::uuid AND user_id=$10::uuid`, exam.Status, exam.CurrentSection, string(sections), nullableJSON(result), string(approval), string(evaluationApproval), nullablePostgresTime(exam.SubmittedAt), exam.UpdatedAt, exam.ID, exam.UserID, exam.StartedAt, exam.TotalDurationSeconds)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	if command.RowsAffected() == 0 {
+		return domain.MockExam{}, errors.New("mock exam not found")
+	}
+	return exam, nil
+}
+
+func (s *PostgresStore) DeleteMockExam(id, userID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	res, err := s.pool.Exec(ctx, `DELETE FROM mock_exams WHERE id=$1::uuid AND user_id=$2::uuid AND (status IN ('READY','COMPLETED','FAILED','EVALUATION_FAILED') OR (status='IN_PROGRESS' AND exam IN ('IELTS_LISTENING_PART_1','IELTS_LISTENING_PART_2','IELTS_LISTENING_PART_3','IELTS_LISTENING_PART_4')))`, id, userID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return errors.New("mock exam not found or status is not deletable")
+	}
+	return nil
+}
+
 func (s *PostgresStore) GetDemoAssignment(userID string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1109,11 +1347,36 @@ func (s *PostgresStore) SaveDemoAssignment(userID string, difficulty string) err
 	return err
 }
 
+func scanMockExam(scanner interface{ Scan(dest ...any) error }) (domain.MockExam, error) {
+	var item domain.MockExam
+	var sections, result, approval, evaluationApproval []byte
+	var submittedAt *time.Time
+	if err := scanner.Scan(&item.ID, &item.UserID, &item.Exam, &item.Status, &item.CurrentSection, &item.TotalDurationSeconds, &sections, &result, &approval, &evaluationApproval, &item.StartedAt, &submittedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.MockExam{}, errors.New("mock exam not found")
+		}
+		return domain.MockExam{}, err
+	}
+	_ = json.Unmarshal(sections, &item.Sections)
+	item.ProductionApproval = unmarshalProductionApproval(approval)
+	item.EvaluationApproval = unmarshalProductionApproval(evaluationApproval)
+	if len(result) > 0 && string(result) != "null" {
+		var value domain.MockExamResult
+		if json.Unmarshal(result, &value) == nil {
+			item.Result = &value
+		}
+	}
+	if submittedAt != nil {
+		item.SubmittedAt = *submittedAt
+	}
+	return item, nil
+}
+
 func (s *PostgresStore) scanWritingSession(scanner interface{ Scan(dest ...any) error }) (domain.WritingSession, error) {
 	var item domain.WritingSession
-	var prompt, evaluation []byte
+	var prompt, evaluation, promptApproval, evaluationApproval []byte
 	var submittedAt *time.Time
-	err := scanner.Scan(&item.ID, &item.UserID, &item.Exam, &item.TimeLimitSeconds, &prompt, &item.Essay, &item.WordCount, &item.Status, &item.ProgressMessage, &evaluation, &item.StartedAt, &submittedAt, &item.CreatedAt, &item.UpdatedAt)
+	err := scanner.Scan(&item.ID, &item.UserID, &item.Exam, &item.TimeLimitSeconds, &prompt, &item.Essay, &item.WordCount, &item.Status, &item.ProgressMessage, &evaluation, &promptApproval, &evaluationApproval, &item.StartedAt, &submittedAt, &item.CreatedAt, &item.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.WritingSession{}, errors.New("writing session not found")
 	}
@@ -1124,6 +1387,8 @@ func (s *PostgresStore) scanWritingSession(scanner interface{ Scan(dest ...any) 
 		item.SubmittedAt = *submittedAt
 	}
 	_ = json.Unmarshal(prompt, &item.Prompt)
+	item.PromptApproval = unmarshalProductionApproval(promptApproval)
+	item.EvaluationApproval = unmarshalProductionApproval(evaluationApproval)
 	if len(evaluation) > 0 && string(evaluation) != "null" {
 		var value domain.WritingEvaluation
 		if json.Unmarshal(evaluation, &value) == nil {

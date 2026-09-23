@@ -19,6 +19,7 @@ function parseWritingMinutes(value: string): { value?: number; error?: string } 
 
 function getWritingStatus(session: WritingSession): { label: string; action: string; className: string } {
   if (session.status === "COMPLETED") return { label: "已评分", action: "查看评分", className: "done" };
+  if (session.status === "FAILED") return { label: "评分失败", action: "查看错误", className: "failed" };
   if (session.status === "EVALUATING") return { label: "评分中", action: "查看进度", className: "todo" };
   return { label: "待写作", action: "继续写作", className: "todo" };
 }

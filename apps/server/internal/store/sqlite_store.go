@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -102,6 +103,7 @@ func applySQLiteSchema(db *sql.DB) error {
             characters TEXT NOT NULL DEFAULT '[]',
             dialogues TEXT NOT NULL,
             quiz_questions TEXT NOT NULL,
+			production_approval TEXT NOT NULL DEFAULT '{"status":"LEGACY_UNVERIFIED"}',
             created_at TEXT NOT NULL
         )`,
 		`CREATE INDEX IF NOT EXISTS idx_theaters_user ON theaters(user_id)`,
@@ -140,12 +142,48 @@ func applySQLiteSchema(db *sql.DB) error {
             status TEXT NOT NULL,
             progress_message TEXT NOT NULL DEFAULT '',
             evaluation TEXT,
+			prompt_approval TEXT NOT NULL DEFAULT '{"status":"LEGACY_UNVERIFIED"}',
+			evaluation_approval TEXT NOT NULL DEFAULT '{"status":"LEGACY_UNVERIFIED"}',
             started_at TEXT NOT NULL,
             submitted_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )`,
 		`CREATE INDEX IF NOT EXISTS idx_writing_sessions_user_created ON writing_sessions(user_id, created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS mock_exams (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            exam TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_section TEXT NOT NULL DEFAULT '',
+            total_duration_seconds INTEGER NOT NULL,
+            sections TEXT NOT NULL DEFAULT '[]',
+			result TEXT,
+			production_approval TEXT NOT NULL DEFAULT '{"status":"LEGACY_UNVERIFIED"}',
+			evaluation_approval TEXT NOT NULL DEFAULT '{"status":"LEGACY_UNVERIFIED"}',
+            started_at TEXT NOT NULL,
+            submitted_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )`,
+		`CREATE INDEX IF NOT EXISTS idx_mock_exams_user_created ON mock_exams(user_id, created_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS speaking_sessions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            part INTEGER NOT NULL DEFAULT 1,
+            prompt_index INTEGER NOT NULL DEFAULT 0,
+            preparation_ends_at TEXT,
+            answer_ends_at TEXT,
+            prompts TEXT NOT NULL DEFAULT '[]',
+            turns TEXT NOT NULL DEFAULT '[]',
+            evaluation TEXT,
+			evaluation_approval TEXT NOT NULL DEFAULT '{"status":"LEGACY_UNVERIFIED"}',
+            processing_message TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )`,
+		`CREATE INDEX IF NOT EXISTS idx_speaking_sessions_user_created ON speaking_sessions(user_id, created_at DESC)`,
 		`CREATE TABLE IF NOT EXISTS reading_materials (
             id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
@@ -174,6 +212,7 @@ func applySQLiteSchema(db *sql.DB) error {
             vocabulary_items TEXT NOT NULL DEFAULT '[]',
             association_sentences TEXT NOT NULL DEFAULT '[]',
             grammar_insights TEXT NOT NULL DEFAULT '[]',
+			production_approval TEXT NOT NULL DEFAULT '{"status":"LEGACY_UNVERIFIED"}',
             created_at TEXT NOT NULL
         )`,
 		`CREATE TABLE IF NOT EXISTS reading_practice_records (
@@ -330,6 +369,23 @@ func applySQLiteSchema(db *sql.DB) error {
 			return err
 		}
 	}
+	approvalColumns := []struct {
+		table  string
+		column string
+	}{
+		{table: "theaters", column: "production_approval"},
+		{table: "reading_materials", column: "production_approval"},
+		{table: "writing_sessions", column: "prompt_approval"},
+		{table: "writing_sessions", column: "evaluation_approval"},
+		{table: "mock_exams", column: "production_approval"},
+		{table: "mock_exams", column: "evaluation_approval"},
+		{table: "speaking_sessions", column: "evaluation_approval"},
+	}
+	for _, column := range approvalColumns {
+		if err := addSQLiteColumnIfMissing(db, column.table, column.column, `TEXT NOT NULL DEFAULT '{"status":"LEGACY_UNVERIFIED"}'`); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -449,21 +505,37 @@ func (s *SQLiteStore) UpdateUserProfile(userID string, nickname string, avatarUR
 }
 
 func (s *SQLiteStore) GetModelConfig() (domain.ModelConfig, error) {
-	row := s.db.QueryRow(`SELECT provider, model, base_url, api_key, updated_at FROM model_configs WHERE id = 1`)
+	config, err := ReadSQLiteModelConfig(context.Background(), s.db)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ModelConfig{}, errors.New("model config not found")
+	}
+	return config, err
+}
+
+// ReadSQLiteModelConfig 供服务和只读验收共用，避免测试跳过生产配置校验。
+func ReadSQLiteModelConfig(ctx context.Context, db *sql.DB) (domain.ModelConfig, error) {
+	row := db.QueryRowContext(ctx, `SELECT provider, model, base_url, api_key, updated_at FROM model_configs WHERE id = 1`)
 	var config domain.ModelConfig
 	var updatedAt string
 	if err := row.Scan(&config.Provider, &config.Model, &config.BaseURL, &config.APIKey, &updatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.ModelConfig{}, errors.New("model config not found")
-		}
 		return domain.ModelConfig{}, err
 	}
-	parsed, err := time.Parse(sqliteTimeLayout, updatedAt)
+	parsed, err := parseSQLiteConfigTime(updatedAt)
 	if err != nil {
 		return domain.ModelConfig{}, err
 	}
 	config.UpdatedAt = parsed
 	return config, nil
+}
+
+func parseSQLiteConfigTime(value string) (time.Time, error) {
+	// CURRENT_TIMESTAMP/datetime('now') 产生无时区的 UTC SQLite 时间。
+	for _, layout := range []string{sqliteTimeLayout, "2006-01-02 15:04:05"} {
+		if parsed, err := time.Parse(layout, strings.TrimSpace(value)); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, errors.New("invalid SQLite configuration timestamp")
 }
 
 func (s *SQLiteStore) SaveModelConfig(config domain.ModelConfig) (domain.ModelConfig, error) {
@@ -751,9 +823,13 @@ func (s *SQLiteStore) SaveTheater(theater domain.Theater) (domain.Theater, error
 	if err != nil {
 		return domain.Theater{}, err
 	}
+	approvalJSON, err := marshalProductionApproval(theater.ProductionApproval)
+	if err != nil {
+		return domain.Theater{}, err
+	}
 	_, err = s.db.Exec(
-		`INSERT INTO theaters (id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, is_favorite, share_code, scene_description, characters, dialogues, quiz_questions, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO theaters (id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, is_favorite, share_code, scene_description, characters, dialogues, quiz_questions, production_approval, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             user_id=excluded.user_id,
             language=excluded.language,
@@ -769,6 +845,7 @@ func (s *SQLiteStore) SaveTheater(theater domain.Theater) (domain.Theater, error
             characters=excluded.characters,
             dialogues=excluded.dialogues,
             quiz_questions=excluded.quiz_questions,
+			production_approval=excluded.production_approval,
             created_at=excluded.created_at`,
 		theater.ID,
 		theater.UserID,
@@ -785,6 +862,7 @@ func (s *SQLiteStore) SaveTheater(theater domain.Theater) (domain.Theater, error
 		string(charactersJSON),
 		string(dialoguesJSON),
 		string(quizJSON),
+		string(approvalJSON),
 		theater.CreatedAt.Format(sqliteTimeLayout),
 	)
 	if err != nil {
@@ -794,17 +872,17 @@ func (s *SQLiteStore) SaveTheater(theater domain.Theater) (domain.Theater, error
 }
 
 func (s *SQLiteStore) GetTheater(id string) (domain.Theater, error) {
-	row := s.db.QueryRow(`SELECT id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, is_favorite, share_code, scene_description, characters, dialogues, quiz_questions, created_at FROM theaters WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, is_favorite, share_code, scene_description, characters, dialogues, quiz_questions, production_approval, created_at FROM theaters WHERE id = ?`, id)
 	return scanTheater(row)
 }
 
 func (s *SQLiteStore) GetTheaterByShareCode(shareCode string) (domain.Theater, error) {
-	row := s.db.QueryRow(`SELECT id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, is_favorite, share_code, scene_description, characters, dialogues, quiz_questions, created_at FROM theaters WHERE UPPER(share_code) = UPPER(?) AND share_code <> ''`, shareCode)
+	row := s.db.QueryRow(`SELECT id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, is_favorite, share_code, scene_description, characters, dialogues, quiz_questions, production_approval, created_at FROM theaters WHERE UPPER(share_code) = UPPER(?) AND share_code <> ''`, shareCode)
 	return scanTheater(row)
 }
 
 func (s *SQLiteStore) ListTheatersByUser(userID string, language string, status string, favorite *bool) ([]domain.Theater, error) {
-	query := `SELECT id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, is_favorite, share_code, scene_description, created_at FROM theaters WHERE user_id = ?`
+	query := `SELECT id, user_id, language, topic, difficulty, mode, status, generation_progress, generation_message, is_favorite, share_code, scene_description, production_approval, created_at FROM theaters WHERE user_id = ?`
 	args := []any{userID}
 	if language != "" {
 		query += " AND language = ?"
@@ -827,15 +905,16 @@ func (s *SQLiteStore) ListTheatersByUser(userID string, language string, status 
 	result := make([]domain.Theater, 0)
 	for rows.Next() {
 		var theater domain.Theater
-		var createdAt string
+		var createdAt, approvalJSON string
 		if err := rows.Scan(
 			&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode,
 			&theater.Status, &theater.GenerationProgress, &theater.GenerationMessage, &theater.IsFavorite,
-			&theater.ShareCode, &theater.SceneDescription, &createdAt,
+			&theater.ShareCode, &theater.SceneDescription, &approvalJSON, &createdAt,
 		); err != nil {
 			return nil, err
 		}
 		theater.CreatedAt = parseSQLiteTime(createdAt)
+		theater.ProductionApproval = unmarshalProductionApproval([]byte(approvalJSON))
 		result = append(result, theater)
 	}
 	if err := rows.Err(); err != nil {
@@ -963,11 +1042,15 @@ func (s *SQLiteStore) SaveReadingMaterial(material domain.ReadingMaterial) (doma
 	if err != nil {
 		return domain.ReadingMaterial{}, err
 	}
+	approvalJSON, err := marshalProductionApproval(material.ProductionApproval)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
 	_, err = s.db.Exec(
 		`INSERT INTO reading_materials (
 			id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids,
-			generation_note, audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			generation_note, audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, production_approval, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             user_id=excluded.user_id,
             exam=excluded.exam,
@@ -995,6 +1078,7 @@ func (s *SQLiteStore) SaveReadingMaterial(material domain.ReadingMaterial) (doma
             vocabulary_items=excluded.vocabulary_items,
             association_sentences=excluded.association_sentences,
             grammar_insights=excluded.grammar_insights,
+			production_approval=excluded.production_approval,
             created_at=excluded.created_at`,
 		material.ID,
 		material.UserID,
@@ -1023,6 +1107,7 @@ func (s *SQLiteStore) SaveReadingMaterial(material domain.ReadingMaterial) (doma
 		string(vocabularyItemsJSON),
 		string(associationJSON),
 		string(grammarJSON),
+		string(approvalJSON),
 		material.CreatedAt.Format(sqliteTimeLayout),
 	)
 	if err != nil {
@@ -1060,9 +1145,13 @@ func (s *SQLiteStore) UpdateReadingMaterialExisting(material domain.ReadingMater
 	if err != nil {
 		return domain.ReadingMaterial{}, err
 	}
+	approvalJSON, err := marshalProductionApproval(material.ProductionApproval)
+	if err != nil {
+		return domain.ReadingMaterial{}, err
+	}
 
-	res, err := s.db.Exec(`UPDATE reading_materials SET exam = ?, language = ?, level = ?, topic = ?, band = ?, stage = ?, section = ?, skill_focus = ?, question_type = ?, scenario_family = ?, title = ?, passage = ?, vocabulary = ?, questions = ?, source_ids = ?, generation_note = ?, audio_url = ?, audio_urls = ?, audio_status = ?, status = ?, generation_progress = ?, generation_message = ?, vocabulary_items = ?, association_sentences = ?, grammar_insights = ? WHERE id = ? AND user_id = ?`,
-		material.Exam, material.Language, material.Level, material.Topic, material.Band, material.Stage, material.Section, material.SkillFocus, material.QuestionType, material.ScenarioFamily, material.Title, material.Passage, string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL, string(audioURLsJSON), material.AudioStatus, material.Status, material.GenerationProgress, material.GenerationMessage, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), material.ID, material.UserID)
+	res, err := s.db.Exec(`UPDATE reading_materials SET exam = ?, language = ?, level = ?, topic = ?, band = ?, stage = ?, section = ?, skill_focus = ?, question_type = ?, scenario_family = ?, title = ?, passage = ?, vocabulary = ?, questions = ?, source_ids = ?, generation_note = ?, audio_url = ?, audio_urls = ?, audio_status = ?, status = ?, generation_progress = ?, generation_message = ?, vocabulary_items = ?, association_sentences = ?, grammar_insights = ?, production_approval = ? WHERE id = ? AND user_id = ?`,
+		material.Exam, material.Language, material.Level, material.Topic, material.Band, material.Stage, material.Section, material.SkillFocus, material.QuestionType, material.ScenarioFamily, material.Title, material.Passage, string(vocabularyJSON), string(questionsJSON), string(sourceIDsJSON), material.GenerationNote, material.AudioURL, string(audioURLsJSON), material.AudioStatus, material.Status, material.GenerationProgress, material.GenerationMessage, string(vocabularyItemsJSON), string(associationJSON), string(grammarJSON), string(approvalJSON), material.ID, material.UserID)
 	if err != nil {
 		return domain.ReadingMaterial{}, err
 	}
@@ -1075,7 +1164,7 @@ func (s *SQLiteStore) UpdateReadingMaterialExisting(material domain.ReadingMater
 func (s *SQLiteStore) GetReadingMaterial(id string, userID string) (domain.ReadingMaterial, error) {
 	row := s.db.QueryRow(
 		`SELECT id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids, generation_note,
-			audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
+			audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, production_approval, created_at
          FROM reading_materials WHERE id = ? AND (? = '' OR user_id = ?)`,
 		id, userID, userID,
 	)
@@ -1085,7 +1174,7 @@ func (s *SQLiteStore) GetReadingMaterial(id string, userID string) (domain.Readi
 func (s *SQLiteStore) ListReadingMaterialsByUser(userID string, exam string) ([]domain.ReadingMaterial, error) {
 	rows, err := s.db.Query(
 		`SELECT id, user_id, exam, language, level, topic, band, stage, section, skill_focus, question_type, scenario_family, title, passage, vocabulary, questions, source_ids, generation_note,
-			audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, created_at
+			audio_url, audio_urls, audio_status, status, generation_progress, generation_message, vocabulary_items, association_sentences, grammar_insights, production_approval, created_at
          FROM reading_materials
          WHERE user_id = ? AND (? = '' OR exam = ?)
          ORDER BY datetime(created_at) DESC`,
@@ -1169,6 +1258,127 @@ func (s *SQLiteStore) UpdateRoleplaySession(session domain.RoleplaySession) (dom
 	return session, nil
 }
 
+func (s *SQLiteStore) CreateSpeakingSession(session domain.SpeakingSession) (domain.SpeakingSession, error) {
+	if session.ID == "" {
+		session.ID = uuid.NewString()
+	}
+	now := time.Now().UTC()
+	if session.CreatedAt.IsZero() {
+		session.CreatedAt = now
+	}
+	session.UpdatedAt = now
+	prompts, err := json.Marshal(session.Prompts)
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	turns, err := json.Marshal(session.Turns)
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	var evaluation any
+	if session.Evaluation != nil {
+		b, e := json.Marshal(session.Evaluation)
+		if e != nil {
+			return domain.SpeakingSession{}, e
+		}
+		evaluation = string(b)
+	}
+	approval, err := marshalProductionApproval(session.EvaluationApproval)
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	_, err = s.db.Exec(`INSERT INTO speaking_sessions (id,user_id,status,part,prompt_index,preparation_ends_at,answer_ends_at,prompts,turns,evaluation,evaluation_approval,processing_message,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, session.ID, session.UserID, session.Status, session.Part, session.PromptIndex, nullableTime(session.PreparationEndsAt), nullableTime(session.AnswerEndsAt), string(prompts), string(turns), evaluation, string(approval), session.ProcessingMessage, session.CreatedAt.Format(sqliteTimeLayout), session.UpdatedAt.Format(sqliteTimeLayout))
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	return session, nil
+}
+
+func nullableTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.Format(sqliteTimeLayout)
+}
+
+func (s *SQLiteStore) GetSpeakingSession(id, userID string) (domain.SpeakingSession, error) {
+	row := s.db.QueryRow(`SELECT id,user_id,status,part,prompt_index,preparation_ends_at,answer_ends_at,prompts,turns,evaluation,evaluation_approval,processing_message,created_at,updated_at FROM speaking_sessions WHERE id=? AND user_id=?`, id, userID)
+	return scanSQLiteSpeaking(row)
+}
+
+func (s *SQLiteStore) LatestSpeakingSession(userID string) (*domain.SpeakingSession, error) {
+	row := s.db.QueryRow(`SELECT id,user_id,status,part,prompt_index,preparation_ends_at,answer_ends_at,prompts,turns,evaluation,evaluation_approval,processing_message,created_at,updated_at FROM speaking_sessions WHERE user_id=? AND status NOT IN ('COMPLETED','ABANDONED','QUALITY_REVIEW_PENDING') ORDER BY updated_at DESC LIMIT 1`, userID)
+	session, err := scanSQLiteSpeaking(row)
+	if err != nil {
+		if errors.Is(err, errSpeakingSessionNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &session, nil
+}
+
+func (s *SQLiteStore) UpdateSpeakingSession(session domain.SpeakingSession) (domain.SpeakingSession, error) {
+	session.UpdatedAt = time.Now().UTC()
+	prompts, err := json.Marshal(session.Prompts)
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	turns, err := json.Marshal(session.Turns)
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	var evaluation any
+	if session.Evaluation != nil {
+		b, e := json.Marshal(session.Evaluation)
+		if e != nil {
+			return domain.SpeakingSession{}, e
+		}
+		evaluation = string(b)
+	}
+	approval, err := marshalProductionApproval(session.EvaluationApproval)
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	res, err := s.db.Exec(`UPDATE speaking_sessions SET status=?,part=?,prompt_index=?,preparation_ends_at=?,answer_ends_at=?,prompts=?,turns=?,evaluation=?,evaluation_approval=?,processing_message=?,updated_at=? WHERE id=? AND user_id=?`, session.Status, session.Part, session.PromptIndex, nullableTime(session.PreparationEndsAt), nullableTime(session.AnswerEndsAt), string(prompts), string(turns), evaluation, string(approval), session.ProcessingMessage, session.UpdatedAt.Format(sqliteTimeLayout), session.ID, session.UserID)
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return domain.SpeakingSession{}, errSpeakingSessionNotFound
+	}
+	return session, nil
+}
+
+func scanSQLiteSpeaking(scanner interface{ Scan(...any) error }) (domain.SpeakingSession, error) {
+	var s domain.SpeakingSession
+	var prep, answer, prompts, turns, evaluation, approval, created, updated sql.NullString
+	err := scanner.Scan(&s.ID, &s.UserID, &s.Status, &s.Part, &s.PromptIndex, &prep, &answer, &prompts, &turns, &evaluation, &approval, &s.ProcessingMessage, &created, &updated)
+	if err == sql.ErrNoRows {
+		return domain.SpeakingSession{}, errSpeakingSessionNotFound
+	}
+	if err != nil {
+		return domain.SpeakingSession{}, err
+	}
+	if prep.Valid {
+		s.PreparationEndsAt, _ = time.Parse(sqliteTimeLayout, prep.String)
+	}
+	if answer.Valid {
+		s.AnswerEndsAt, _ = time.Parse(sqliteTimeLayout, answer.String)
+	}
+	_ = json.Unmarshal([]byte(prompts.String), &s.Prompts)
+	_ = json.Unmarshal([]byte(turns.String), &s.Turns)
+	if evaluation.Valid && evaluation.String != "" {
+		s.Evaluation = &domain.SpeakingEvaluation{}
+		_ = json.Unmarshal([]byte(evaluation.String), s.Evaluation)
+	}
+	s.EvaluationApproval = unmarshalProductionApproval([]byte(approval.String))
+	s.CreatedAt, _ = time.Parse(sqliteTimeLayout, created.String)
+	s.UpdatedAt, _ = time.Parse(sqliteTimeLayout, updated.String)
+	return s, nil
+}
+
 func (s *SQLiteStore) SaveWritingSession(session domain.WritingSession) (domain.WritingSession, error) {
 	if session.ID == "" {
 		session.ID = uuid.NewString()
@@ -1177,7 +1387,7 @@ func (s *SQLiteStore) SaveWritingSession(session domain.WritingSession) (domain.
 	if session.CreatedAt.IsZero() {
 		session.CreatedAt = now
 	}
-	if session.StartedAt.IsZero() {
+	if session.StartedAt.IsZero() && session.Status == "WRITING" {
 		session.StartedAt = now
 	}
 	session.UpdatedAt = now
@@ -1192,10 +1402,18 @@ func (s *SQLiteStore) SaveWritingSession(session domain.WritingSession) (domain.
 			return domain.WritingSession{}, err
 		}
 	}
-	_, err = s.db.Exec(`INSERT INTO writing_sessions (id, user_id, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, started_at, submitted_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET essay=excluded.essay, word_count=excluded.word_count, status=excluded.status, progress_message=excluded.progress_message, evaluation=excluded.evaluation, submitted_at=excluded.submitted_at, updated_at=excluded.updated_at`,
-		session.ID, session.UserID, session.Exam, session.TimeLimitSeconds, string(prompt), session.Essay, session.WordCount, session.Status, session.ProgressMessage, evaluation, session.StartedAt.Format(sqliteTimeLayout), nullableSQLiteTime(session.SubmittedAt), session.CreatedAt.Format(sqliteTimeLayout), session.UpdatedAt.Format(sqliteTimeLayout))
+	promptApproval, err := marshalProductionApproval(session.PromptApproval)
+	if err != nil {
+		return domain.WritingSession{}, err
+	}
+	evaluationApproval, err := marshalProductionApproval(session.EvaluationApproval)
+	if err != nil {
+		return domain.WritingSession{}, err
+	}
+	_, err = s.db.Exec(`INSERT INTO writing_sessions (id, user_id, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, prompt_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET essay=excluded.essay, word_count=excluded.word_count, status=excluded.status, progress_message=excluded.progress_message, evaluation=excluded.evaluation, prompt_approval=excluded.prompt_approval, evaluation_approval=excluded.evaluation_approval, submitted_at=excluded.submitted_at, updated_at=excluded.updated_at`,
+		session.ID, session.UserID, session.Exam, session.TimeLimitSeconds, string(prompt), session.Essay, session.WordCount, session.Status, session.ProgressMessage, evaluation, string(promptApproval), string(evaluationApproval), session.StartedAt.Format(sqliteTimeLayout), nullableSQLiteTime(session.SubmittedAt), session.CreatedAt.Format(sqliteTimeLayout), session.UpdatedAt.Format(sqliteTimeLayout))
 	if err != nil {
 		return domain.WritingSession{}, err
 	}
@@ -1215,8 +1433,16 @@ func (s *SQLiteStore) UpdateWritingSessionExisting(session domain.WritingSession
 			return domain.WritingSession{}, err
 		}
 	}
-	res, err := s.db.Exec(`UPDATE writing_sessions SET exam = ?, time_limit_seconds = ?, prompt = ?, essay = ?, word_count = ?, status = ?, progress_message = ?, evaluation = ?, started_at = ?, submitted_at = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
-		session.Exam, session.TimeLimitSeconds, string(prompt), session.Essay, session.WordCount, session.Status, session.ProgressMessage, evaluation, session.StartedAt.Format(sqliteTimeLayout), nullableSQLiteTime(session.SubmittedAt), session.UpdatedAt.Format(sqliteTimeLayout), session.ID, session.UserID)
+	promptApproval, err := marshalProductionApproval(session.PromptApproval)
+	if err != nil {
+		return domain.WritingSession{}, err
+	}
+	evaluationApproval, err := marshalProductionApproval(session.EvaluationApproval)
+	if err != nil {
+		return domain.WritingSession{}, err
+	}
+	res, err := s.db.Exec(`UPDATE writing_sessions SET exam = ?, time_limit_seconds = ?, prompt = ?, essay = ?, word_count = ?, status = ?, progress_message = ?, evaluation = ?, prompt_approval = ?, evaluation_approval = ?, started_at = ?, submitted_at = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+		session.Exam, session.TimeLimitSeconds, string(prompt), session.Essay, session.WordCount, session.Status, session.ProgressMessage, evaluation, string(promptApproval), string(evaluationApproval), session.StartedAt.Format(sqliteTimeLayout), nullableSQLiteTime(session.SubmittedAt), session.UpdatedAt.Format(sqliteTimeLayout), session.ID, session.UserID)
 	if err != nil {
 		return domain.WritingSession{}, err
 	}
@@ -1227,12 +1453,12 @@ func (s *SQLiteStore) UpdateWritingSessionExisting(session domain.WritingSession
 }
 
 func (s *SQLiteStore) GetWritingSession(sessionID string, userID string) (domain.WritingSession, error) {
-	row := s.db.QueryRow(`SELECT id, user_id, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, started_at, submitted_at, created_at, updated_at FROM writing_sessions WHERE id = ? AND user_id = ?`, sessionID, userID)
+	row := s.db.QueryRow(`SELECT id, user_id, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, prompt_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at FROM writing_sessions WHERE id = ? AND user_id = ?`, sessionID, userID)
 	return scanWritingSession(row)
 }
 
 func (s *SQLiteStore) ListWritingSessions(userID string) ([]domain.WritingSession, error) {
-	rows, err := s.db.Query(`SELECT id, user_id, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, started_at, submitted_at, created_at, updated_at FROM writing_sessions WHERE user_id = ? ORDER BY datetime(created_at) DESC`, userID)
+	rows, err := s.db.Query(`SELECT id, user_id, exam, time_limit_seconds, prompt, essay, word_count, status, progress_message, evaluation, prompt_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at FROM writing_sessions WHERE user_id = ? ORDER BY datetime(created_at) DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -1255,6 +1481,97 @@ func (s *SQLiteStore) DeleteWritingSession(userID string, sessionID string) erro
 	}
 	if rows, _ := res.RowsAffected(); rows == 0 {
 		return errors.New("writing session not found")
+	}
+	return nil
+}
+
+func (s *SQLiteStore) SaveMockExam(exam domain.MockExam) (domain.MockExam, error) {
+	sections, err := json.Marshal(exam.Sections)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	var result any
+	if exam.Result != nil {
+		resultJSON, marshalErr := json.Marshal(exam.Result)
+		if marshalErr != nil {
+			return domain.MockExam{}, marshalErr
+		}
+		result = string(resultJSON)
+	}
+	approval, err := marshalProductionApproval(exam.ProductionApproval)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	evaluationApproval, err := marshalProductionApproval(exam.EvaluationApproval)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	_, err = s.db.Exec(`INSERT INTO mock_exams (id, user_id, exam, status, current_section, total_duration_seconds, sections, result, production_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		exam.ID, exam.UserID, exam.Exam, exam.Status, exam.CurrentSection, exam.TotalDurationSeconds, string(sections), result, string(approval), string(evaluationApproval), exam.StartedAt.Format(sqliteTimeLayout), nullableSQLiteTime(exam.SubmittedAt), exam.CreatedAt.Format(sqliteTimeLayout), exam.UpdatedAt.Format(sqliteTimeLayout))
+	return exam, err
+}
+
+func (s *SQLiteStore) GetMockExam(examID string, userID string) (domain.MockExam, error) {
+	row := s.db.QueryRow(`SELECT id, user_id, exam, status, current_section, total_duration_seconds, sections, result, production_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at FROM mock_exams WHERE id = ? AND user_id = ?`, examID, userID)
+	return scanSQLiteMockExam(row)
+}
+
+func (s *SQLiteStore) ListMockExams(userID string) ([]domain.MockExam, error) {
+	rows, err := s.db.Query(`SELECT id, user_id, exam, status, current_section, total_duration_seconds, sections, result, production_approval, evaluation_approval, started_at, submitted_at, created_at, updated_at FROM mock_exams WHERE user_id = ? ORDER BY datetime(created_at) DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]domain.MockExam, 0)
+	for rows.Next() {
+		item, scanErr := scanSQLiteMockExam(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *SQLiteStore) UpdateMockExam(exam domain.MockExam) (domain.MockExam, error) {
+	sections, err := json.Marshal(exam.Sections)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	var result any
+	if exam.Result != nil {
+		resultJSON, marshalErr := json.Marshal(exam.Result)
+		if marshalErr != nil {
+			return domain.MockExam{}, marshalErr
+		}
+		result = string(resultJSON)
+	}
+	approval, err := marshalProductionApproval(exam.ProductionApproval)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	evaluationApproval, err := marshalProductionApproval(exam.EvaluationApproval)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	res, err := s.db.Exec(`UPDATE mock_exams SET status = ?, current_section = ?, sections = ?, result = ?, production_approval = ?, evaluation_approval = ?, submitted_at = ?, updated_at = ?, started_at = ?, total_duration_seconds = ? WHERE id = ? AND user_id = ?`, exam.Status, exam.CurrentSection, string(sections), result, string(approval), string(evaluationApproval), nullableSQLiteTime(exam.SubmittedAt), exam.UpdatedAt.Format(sqliteTimeLayout), exam.StartedAt.Format(sqliteTimeLayout), exam.TotalDurationSeconds, exam.ID, exam.UserID)
+	if err != nil {
+		return domain.MockExam{}, err
+	}
+	if count, _ := res.RowsAffected(); count == 0 {
+		return domain.MockExam{}, errors.New("mock exam not found")
+	}
+	return exam, nil
+}
+
+func (s *SQLiteStore) DeleteMockExam(id, userID string) error {
+	res, err := s.db.Exec(`DELETE FROM mock_exams WHERE id = ? AND user_id = ? AND (status IN ('READY','COMPLETED','FAILED','EVALUATION_FAILED') OR (status='IN_PROGRESS' AND exam IN ('IELTS_LISTENING_PART_1','IELTS_LISTENING_PART_2','IELTS_LISTENING_PART_3','IELTS_LISTENING_PART_4')))`, id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return errors.New("mock exam not found or status is not deletable")
 	}
 	return nil
 }
@@ -1303,8 +1620,8 @@ func scanOAuthAccount(scanner interface{ Scan(dest ...any) error }) (domain.OAut
 func scanTheater(scanner interface{ Scan(dest ...any) error }) (domain.Theater, error) {
 	var theater domain.Theater
 	var favorite int
-	var charactersJSON, dialoguesJSON, quizJSON, createdAt string
-	if err := scanner.Scan(&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode, &theater.Status, &theater.GenerationProgress, &theater.GenerationMessage, &favorite, &theater.ShareCode, &theater.SceneDescription, &charactersJSON, &dialoguesJSON, &quizJSON, &createdAt); err != nil {
+	var charactersJSON, dialoguesJSON, quizJSON, approvalJSON, createdAt string
+	if err := scanner.Scan(&theater.ID, &theater.UserID, &theater.Language, &theater.Topic, &theater.Difficulty, &theater.Mode, &theater.Status, &theater.GenerationProgress, &theater.GenerationMessage, &favorite, &theater.ShareCode, &theater.SceneDescription, &charactersJSON, &dialoguesJSON, &quizJSON, &approvalJSON, &createdAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Theater{}, errors.New("theater not found")
 		}
@@ -1313,6 +1630,7 @@ func scanTheater(scanner interface{ Scan(dest ...any) error }) (domain.Theater, 
 	_ = json.Unmarshal([]byte(charactersJSON), &theater.Characters)
 	_ = json.Unmarshal([]byte(dialoguesJSON), &theater.Dialogues)
 	_ = json.Unmarshal([]byte(quizJSON), &theater.QuizQuestions)
+	theater.ProductionApproval = unmarshalProductionApproval([]byte(approvalJSON))
 	theater.IsFavorite = favorite != 0
 	theater.CreatedAt = parseSQLiteTime(createdAt)
 	return theater, nil
@@ -1333,19 +1651,51 @@ func scanRoleplay(scanner interface{ Scan(dest ...any) error }) (domain.Roleplay
 	return session, nil
 }
 
+func scanSQLiteMockExam(scanner interface{ Scan(dest ...any) error }) (domain.MockExam, error) {
+	var item domain.MockExam
+	var sectionsJSON, approvalJSON, evaluationApprovalJSON string
+	var resultJSON sql.NullString
+	var startedAt, createdAt, updatedAt string
+	var submittedAt sql.NullString
+	if err := scanner.Scan(&item.ID, &item.UserID, &item.Exam, &item.Status, &item.CurrentSection, &item.TotalDurationSeconds, &sectionsJSON, &resultJSON, &approvalJSON, &evaluationApprovalJSON, &startedAt, &submittedAt, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.MockExam{}, errors.New("mock exam not found")
+		}
+		return domain.MockExam{}, err
+	}
+	_ = json.Unmarshal([]byte(sectionsJSON), &item.Sections)
+	item.ProductionApproval = unmarshalProductionApproval([]byte(approvalJSON))
+	item.EvaluationApproval = unmarshalProductionApproval([]byte(evaluationApprovalJSON))
+	if resultJSON.Valid && resultJSON.String != "" {
+		var result domain.MockExamResult
+		if json.Unmarshal([]byte(resultJSON.String), &result) == nil {
+			item.Result = &result
+		}
+	}
+	item.StartedAt = parseSQLiteTime(startedAt)
+	item.CreatedAt = parseSQLiteTime(createdAt)
+	item.UpdatedAt = parseSQLiteTime(updatedAt)
+	if submittedAt.Valid {
+		item.SubmittedAt = parseSQLiteTime(submittedAt.String)
+	}
+	return item, nil
+}
+
 func scanWritingSession(scanner interface{ Scan(dest ...any) error }) (domain.WritingSession, error) {
 	var item domain.WritingSession
-	var promptJSON string
+	var promptJSON, promptApprovalJSON, evaluationApprovalJSON string
 	var evaluationJSON sql.NullString
 	var startedAt, createdAt, updatedAt string
 	var submittedAt sql.NullString
-	if err := scanner.Scan(&item.ID, &item.UserID, &item.Exam, &item.TimeLimitSeconds, &promptJSON, &item.Essay, &item.WordCount, &item.Status, &item.ProgressMessage, &evaluationJSON, &startedAt, &submittedAt, &createdAt, &updatedAt); err != nil {
+	if err := scanner.Scan(&item.ID, &item.UserID, &item.Exam, &item.TimeLimitSeconds, &promptJSON, &item.Essay, &item.WordCount, &item.Status, &item.ProgressMessage, &evaluationJSON, &promptApprovalJSON, &evaluationApprovalJSON, &startedAt, &submittedAt, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.WritingSession{}, errors.New("writing session not found")
 		}
 		return domain.WritingSession{}, err
 	}
 	_ = json.Unmarshal([]byte(promptJSON), &item.Prompt)
+	item.PromptApproval = unmarshalProductionApproval([]byte(promptApprovalJSON))
+	item.EvaluationApproval = unmarshalProductionApproval([]byte(evaluationApprovalJSON))
 	if evaluationJSON.Valid && evaluationJSON.String != "" {
 		var evaluation domain.WritingEvaluation
 		if json.Unmarshal([]byte(evaluationJSON.String), &evaluation) == nil {
@@ -1372,12 +1722,12 @@ func scanReadingMaterial(scanner interface{ Scan(dest ...any) error }) (domain.R
 	var item domain.ReadingMaterial
 	var vocabularyJSON, questionsJSON, sourceIDsJSON string
 	var audioURLsJSON, vocabularyItemsJSON, associationJSON, grammarJSON string
-	var createdAt string
+	var approvalJSON, createdAt string
 	if err := scanner.Scan(
 		&item.ID, &item.UserID, &item.Exam, &item.Language, &item.Level, &item.Topic, &item.Band, &item.Stage,
 		&item.Section, &item.SkillFocus, &item.QuestionType, &item.ScenarioFamily, &item.Title, &item.Passage,
 		&vocabularyJSON, &questionsJSON, &sourceIDsJSON, &item.GenerationNote, &item.AudioURL, &audioURLsJSON,
-		&item.AudioStatus, &item.Status, &item.GenerationProgress, &item.GenerationMessage, &vocabularyItemsJSON, &associationJSON, &grammarJSON, &createdAt,
+		&item.AudioStatus, &item.Status, &item.GenerationProgress, &item.GenerationMessage, &vocabularyItemsJSON, &associationJSON, &grammarJSON, &approvalJSON, &createdAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.ReadingMaterial{}, errors.New("reading material not found")
@@ -1391,6 +1741,7 @@ func scanReadingMaterial(scanner interface{ Scan(dest ...any) error }) (domain.R
 	_ = json.Unmarshal([]byte(vocabularyItemsJSON), &item.VocabularyItems)
 	_ = json.Unmarshal([]byte(associationJSON), &item.AssociationSentences)
 	_ = json.Unmarshal([]byte(grammarJSON), &item.GrammarInsights)
+	item.ProductionApproval = unmarshalProductionApproval([]byte(approvalJSON))
 	item.CreatedAt = parseSQLiteTime(createdAt)
 	return item, nil
 }

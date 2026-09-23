@@ -11,6 +11,36 @@ tests/
 **/*.spec.tsx
 **/*_test.go
 !apps/server/internal/store/sqlite_store_test.go
+# Keep IELTS generation/scoring and lifecycle regressions in CI.
+!apps/server/internal/ai/mock_exam_test.go
+!apps/server/internal/ai/mock_exam_section_live_test.go
+!apps/server/internal/ai/writing_test.go
+!apps/server/internal/service/mock_exam_test.go
+!apps/server/internal/service/mock_exam_live_test.go
+!apps/server/internal/store/mock_exam_test.go
+!apps/server/internal/graph/mock_exam_test.go
+!apps/server/internal/ai/cet_mock_exam_test.go
+!apps/server/internal/service/cet_mock_exam_test.go
+!apps/server/internal/ai/speaking_test.go
+!apps/server/internal/ai/speaking_quality_test.go
+!apps/server/internal/ai/speaking_live_test.go
+!apps/server/internal/service/speaking_test.go
+!apps/client/src/mockExam.spec.ts
+!apps/server/internal/questionbank/speaking_test.go
+!apps/server/internal/graph/speaking_bank_test.go
+!apps/server/internal/service/speaking_bank_audio_test.go
+!apps/server/internal/store/speaking_bank_test.go
+!apps/server/internal/ai/listening_training_test.go
+!apps/server/internal/ai/listening_source_review_test.go
+!apps/server/internal/ai/listening_question_plan_test.go
+!apps/server/internal/ai/listening_text_live_test.go
+!apps/server/internal/ai/listening_difficulty_live_test.go
+!apps/server/internal/service/listening_training_test.go
+!apps/server/internal/graph/listening_training_test.go
+!apps/client/tests/
+apps/client/tests/*
+!apps/client/tests/mock-exam-flow.pw.mjs
+!apps/client/tests/mock-exam-flow.config.mjs
 .DS_Store
 
 # Environment files
@@ -60,6 +90,8 @@ profile-*.png
 output/
 
 # Generated local state
+apps/server/data/question-bank/
+scripts/__pycache__/
 **/*.tsbuildinfo
 **/*.db
 apps/server.env

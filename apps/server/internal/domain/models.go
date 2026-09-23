@@ -272,6 +272,26 @@ type Character struct {
 	Color string `json:"color"`
 }
 
+// QualityCheck is one immutable decision recorded by a production review.
+// Unknown or missing checks are intentionally treated as failures by the
+// content quality gate.
+type QualityCheck struct {
+	Key    string `json:"key"`
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// ProductionApproval authorizes one exact content revision for production.
+// Readiness, media generation and legacy booleans are not approval signals.
+type ProductionApproval struct {
+	Status        string         `json:"status"`
+	RubricVersion string         `json:"rubricVersion,omitempty"`
+	Reviewer      string         `json:"reviewer,omitempty"`
+	ContentHash   string         `json:"contentHash,omitempty"`
+	ReviewedAt    time.Time      `json:"reviewedAt,omitempty"`
+	Checks        []QualityCheck `json:"checks,omitempty"`
+}
+
 type Theater struct {
 	ID                 string
 	UserID             string
@@ -288,6 +308,7 @@ type Theater struct {
 	Characters         []Character
 	Dialogues          []Dialogue
 	QuizQuestions      []QuizQuestion
+	ProductionApproval ProductionApproval
 	CreatedAt          time.Time
 }
 
@@ -350,6 +371,7 @@ type ReadingMaterial struct {
 	VocabularyItems      []VocabularyItem
 	AssociationSentences []string
 	GrammarInsights      []GrammarInsight
+	ProductionApproval   ProductionApproval
 	CreatedAt            time.Time
 }
 
@@ -367,16 +389,18 @@ type ReadingGenerationInput struct {
 }
 
 type ReadingGenerationRequest struct {
-	Exam           string
-	Language       string
-	Topic          string
-	Level          string
-	Band           float64
-	Stage          string
-	Section        string
-	SkillFocus     string
-	QuestionType   string
-	ScenarioFamily string
+	// RevisionFeedback 只由服务端独立审核产生，不属于用户输入。
+	RevisionFeedback string
+	Exam             string
+	Language         string
+	Topic            string
+	Level            string
+	Band             float64
+	Stage            string
+	Section          string
+	SkillFocus       string
+	QuestionType     string
+	ScenarioFamily   string
 }
 
 type VocabularyItem struct {
@@ -429,23 +453,122 @@ type WritingEvaluation struct {
 	Suggestions       []string
 	RevisedExcerpt    string
 	Summary           string
+	Evidence          []string
+	BandEstimate      float64
 }
 
 type WritingSession struct {
-	ID               string
-	UserID           string
-	Exam             string
-	TimeLimitSeconds int
-	Prompt           WritingPrompt
-	Essay            string
-	WordCount        int
-	Status           string
-	ProgressMessage  string
-	Evaluation       *WritingEvaluation
-	StartedAt        time.Time
-	SubmittedAt      time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                 string
+	UserID             string
+	Exam               string
+	TimeLimitSeconds   int
+	Prompt             WritingPrompt
+	Essay              string
+	WordCount          int
+	Status             string
+	ProgressMessage    string
+	Evaluation         *WritingEvaluation
+	PromptApproval     ProductionApproval
+	EvaluationApproval ProductionApproval
+	StartedAt          time.Time
+	SubmittedAt        time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+// MockExam is an immutable exam snapshot for one user attempt. The answer
+// keys stay server-side in the same JSON document as the paper.
+type MockExam struct {
+	ID                        string
+	UserID                    string
+	Exam                      string
+	Status                    string
+	CurrentSection            string
+	TotalDurationSeconds      int
+	Sections                  []MockExamSection
+	Result                    *MockExamResult
+	StartedAt                 time.Time
+	SubmittedAt               time.Time
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	EstimatedReadySeconds     int
+	GenerationEstimateSamples int
+	ProductionApproval        ProductionApproval
+	EvaluationApproval        ProductionApproval
+}
+
+type MockExamSection struct {
+	ListeningDifficulty       *ListeningDifficultyAudit `json:",omitempty"`
+	AudioURLs                 []string
+	GenerationDurationSeconds int
+	PaperVersion              string
+	TargetBand                float64
+	QualityApproved           bool
+	ProductionApproval        ProductionApproval
+	Key                       string
+	Title                     string
+	Skill                     string
+	DurationSeconds           int
+	Instructions              string
+	Passage                   string
+	AudioURL                  string
+	AudioScript               string
+	Questions                 []QuizQuestion
+	WritingPrompts            []WritingPrompt
+	Answers                   []string
+	Responses                 []string
+}
+
+// 难度复核由服务端写入，与作答、音频和用户评分分开保存，不直接暴露给学员。
+type ListeningDifficultyAudit struct {
+	RubricVersion string
+	ReviewerModel string
+	ContentHash   string
+	ReviewedAt    time.Time
+	Review        ListeningDifficultyReview
+}
+
+type ListeningDifficultyReview struct {
+	Approved   bool                      `json:"approved"`
+	Confidence string                    `json:"confidence"`
+	Feedback   string                    `json:"feedback"`
+	Items      []ListeningDifficultyItem `json:"items"`
+}
+
+type ListeningDifficultyItem struct {
+	Number     int      `json:"number"`
+	Level      string   `json:"level"`
+	Answer     string   `json:"answer"`
+	Evidence   string   `json:"evidence"`
+	Reason     string   `json:"reason"`
+	Mechanisms []string `json:"mechanisms"`
+}
+
+type MockExamResult struct {
+	WritingEvaluations    []WritingEvaluation
+	TranslationEvaluation *WritingEvaluation
+	WritingBand           float64
+	WritingTask1Band      float64
+	WritingTask2Band      float64
+	ReadingCorrect        int
+	ReadingTotal          int
+	ListeningCorrect      int
+	ListeningTotal        int
+	ReadingScore          float64
+	ListeningScore        float64
+	WritingScore          float64
+	WritingTask1Score     float64
+	WritingTask2Score     float64
+	TranslationScore      float64
+	EstimatedBand         float64
+	TotalScore            float64
+	ScoreScale            string
+	QualityStatus         string
+	Feedback              string
+	Strengths             []string
+	Weaknesses            []string
+	Recommendations       []string
+	CompletedAt           time.Time
 }
 
 type RoleplayTurnEval struct {
@@ -456,4 +579,73 @@ type RoleplayTurnEval struct {
 	Naturalness    int
 	Total          int
 	Feedback       string
+}
+
+// SpeakingSession 是独立于剧场角色扮演的 IELTS 口语模拟会话。
+// 题目和回答按服务端顺序保存，评分只在完整会话结束后生成。
+type SpeakingSession struct {
+	ID                 string
+	UserID             string
+	Status             string
+	Part               int
+	PromptIndex        int
+	PendingPromptIndex int
+	PreparationEndsAt  time.Time
+	AnswerEndsAt       time.Time
+	Prompts            []SpeakingPrompt
+	Turns              []SpeakingTurn
+	Evaluation         *SpeakingEvaluation
+	EvaluationApproval ProductionApproval
+	ProcessingMessage  string
+	LastError          string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type SpeakingPrompt struct {
+	QuestionID         string
+	Source             string
+	AudioURL           string
+	Part               int
+	Question           string
+	CueCard            string
+	PreparationSec     int
+	AnswerSec          int
+	ProductionApproval *ProductionApproval `json:",omitempty"`
+}
+
+type SpeakingTurn struct {
+	Part             int
+	PromptIndex      int
+	Prompt           string
+	Transcript       string
+	AudioURL         string
+	ExaminerText     string
+	ExaminerAudioURL string
+	AudioEvidence    bool
+	ASRProvider      string
+	ASRModel         string
+	DurationSec      int
+	SubmittedAt      time.Time
+}
+
+type SpeakingEvaluation struct {
+	FluencyCoherence *float64
+	TextCoherence    *float64
+	LexicalResource  *float64
+	GrammarAccuracy  *float64
+	Pronunciation    *float64
+	OverallBand      *float64
+	IsPartial        bool
+	AssessmentMode   string
+	Strengths        []string
+	Improvements     []string
+	Evidence         []string
+	Summary          string
+}
+
+type SpeakingExaminerReply struct {
+	Text     string
+	Question string
+	CueCard  string
 }

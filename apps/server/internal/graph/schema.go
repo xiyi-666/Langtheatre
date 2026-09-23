@@ -306,6 +306,119 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 			"totalCount":   &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
 		},
 	})
+	writingPromptType := graphql.NewObject(graphql.ObjectConfig{Name: "WritingPrompt", Fields: graphql.Fields{"title": &graphql.Field{Type: graphql.String}, "instructions": &graphql.Field{Type: graphql.String}, "suggestedWordCount": &graphql.Field{Type: graphql.Int}}})
+
+	mockExamQuestionType := graphql.NewObject(graphql.ObjectConfig{Name: "MockExamQuestion", Fields: graphql.Fields{
+		"question": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+		"options":  &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(graphql.String)))},
+		"type":     &graphql.Field{Type: graphql.String},
+	}})
+	mockExamSectionType := graphql.NewObject(graphql.ObjectConfig{Name: "MockExamSection", Fields: graphql.Fields{
+		"audioUrls":                 &graphql.Field{Type: graphql.NewList(graphql.String)},
+		"targetBand":                &graphql.Field{Type: graphql.Float},
+		"paperVersion":              &graphql.Field{Type: graphql.String},
+		"generationDurationSeconds": &graphql.Field{Type: graphql.Int},
+		"answers":                   &graphql.Field{Type: graphql.NewList(graphql.String)},
+		"key":                       &graphql.Field{Type: graphql.String},
+		"title":                     &graphql.Field{Type: graphql.String},
+		"skill":                     &graphql.Field{Type: graphql.String},
+		"durationSeconds":           &graphql.Field{Type: graphql.Int},
+		"instructions":              &graphql.Field{Type: graphql.String},
+		"passage":                   &graphql.Field{Type: graphql.String},
+		"audioUrl":                  &graphql.Field{Type: graphql.String},
+		"responses":                 &graphql.Field{Type: graphql.NewList(graphql.String)},
+		"questions": &graphql.Field{Type: graphql.NewList(mockExamQuestionType), Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			section, ok := p.Source.(domain.MockExamSection)
+			if !ok {
+				return nil, errors.New("invalid mock exam section")
+			}
+			items := make([]map[string]interface{}, 0, len(section.Questions))
+			for _, question := range section.Questions {
+				options := question.Options
+				if options == nil {
+					options = []string{}
+				}
+				items = append(items, map[string]interface{}{"question": question.Question, "options": options, "type": question.Type})
+			}
+			return items, nil
+		}},
+		"writingPrompts": &graphql.Field{Type: graphql.NewList(writingPromptType), Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			section, ok := p.Source.(domain.MockExamSection)
+			if !ok {
+				return nil, errors.New("invalid mock exam section")
+			}
+			return section.WritingPrompts, nil
+		}},
+	}})
+	mockExamResultType := graphql.NewObject(graphql.ObjectConfig{Name: "MockExamResult", Fields: graphql.Fields{
+		"scoreScale": &graphql.Field{Type: graphql.String}, "totalScore": &graphql.Field{Type: graphql.Float}, "translationScore": &graphql.Field{Type: graphql.Float},
+		"writingBand": &graphql.Field{Type: graphql.Float}, "writingTask1Band": &graphql.Field{Type: graphql.Float}, "writingTask2Band": &graphql.Field{Type: graphql.Float},
+		"readingCorrect": &graphql.Field{Type: graphql.Int}, "readingTotal": &graphql.Field{Type: graphql.Int}, "listeningCorrect": &graphql.Field{Type: graphql.Int}, "listeningTotal": &graphql.Field{Type: graphql.Int},
+		"readingScore": &graphql.Field{Type: graphql.Float}, "listeningScore": &graphql.Field{Type: graphql.Float}, "writingScore": &graphql.Field{Type: graphql.Float}, "writingTask1Score": &graphql.Field{Type: graphql.Float}, "writingTask2Score": &graphql.Field{Type: graphql.Float}, "estimatedBand": &graphql.Field{Type: graphql.Float}, "qualityStatus": &graphql.Field{Type: graphql.String}, "feedback": &graphql.Field{Type: graphql.String}, "strengths": &graphql.Field{Type: graphql.NewList(graphql.String)}, "weaknesses": &graphql.Field{Type: graphql.NewList(graphql.String)}, "recommendations": &graphql.Field{Type: graphql.NewList(graphql.String)},
+		"completedAt": &graphql.Field{Type: graphql.String, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			result, ok := p.Source.(domain.MockExamResult)
+			if !ok || result.CompletedAt.IsZero() {
+				return "", nil
+			}
+			return result.CompletedAt.Format(time.RFC3339), nil
+		}},
+	}})
+	mockExamType := graphql.NewObject(graphql.ObjectConfig{Name: "MockExam", Fields: graphql.Fields{
+		"generationEstimateSamples": &graphql.Field{Type: graphql.Int},
+		"createdAt": &graphql.Field{Type: graphql.String, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			exam, ok := p.Source.(domain.MockExam)
+			if !ok || exam.CreatedAt.IsZero() {
+				return "", nil
+			}
+			return exam.CreatedAt.Format(time.RFC3339), nil
+		}},
+		"targetBand": &graphql.Field{Type: graphql.Float, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			exam, ok := p.Source.(domain.MockExam)
+			if !ok || len(exam.Sections) == 0 || exam.Exam != "IELTS" {
+				return nil, nil
+			}
+			return exam.Sections[0].TargetBand, nil
+		}},
+		"paperVersion": &graphql.Field{Type: graphql.String, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			exam, ok := p.Source.(domain.MockExam)
+			if !ok || len(exam.Sections) == 0 {
+				return nil, nil
+			}
+			return exam.Sections[0].PaperVersion, nil
+		}},
+		"id": &graphql.Field{Type: graphql.String}, "exam": &graphql.Field{Type: graphql.String}, "status": &graphql.Field{Type: graphql.String}, "currentSection": &graphql.Field{Type: graphql.String}, "totalDurationSeconds": &graphql.Field{Type: graphql.Int}, "estimatedReadySeconds": &graphql.Field{Type: graphql.Int},
+		"sections": &graphql.Field{Type: graphql.NewList(mockExamSectionType), Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			exam, ok := p.Source.(domain.MockExam)
+			if !ok {
+				return nil, errors.New("invalid mock exam source")
+			}
+			sections := append([]domain.MockExamSection{}, exam.Sections...)
+			if exam.Status == "GENERATING" || exam.Status == "READY" || exam.Status == "FAILED" {
+				for i := range sections {
+					sections[i].Passage, sections[i].Instructions, sections[i].AudioURL = "", "", ""
+					sections[i].AudioURLs = []string{}
+					sections[i].Questions = []domain.QuizQuestion{}
+					sections[i].WritingPrompts = []domain.WritingPrompt{}
+				}
+			}
+			return sections, nil
+		}},
+		"result": &graphql.Field{Type: mockExamResultType},
+		"startedAt": &graphql.Field{Type: graphql.String, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			exam, ok := p.Source.(domain.MockExam)
+			if !ok || exam.StartedAt.IsZero() {
+				return "", nil
+			}
+			return exam.StartedAt.Format(time.RFC3339), nil
+		}},
+		"submittedAt": &graphql.Field{Type: graphql.String, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			exam, ok := p.Source.(domain.MockExam)
+			if !ok || exam.SubmittedAt.IsZero() {
+				return "", nil
+			}
+			return exam.SubmittedAt.Format(time.RFC3339), nil
+		}},
+	}})
 
 	courseType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Course",
@@ -436,8 +549,18 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 		},
 	})
 
-	writingPromptType := graphql.NewObject(graphql.ObjectConfig{Name: "WritingPrompt", Fields: graphql.Fields{"title": &graphql.Field{Type: graphql.String}, "instructions": &graphql.Field{Type: graphql.String}, "suggestedWordCount": &graphql.Field{Type: graphql.Int}}})
+	speakingPromptType := graphql.NewObject(graphql.ObjectConfig{Name: "SpeakingPrompt", Fields: graphql.Fields{"part": &graphql.Field{Type: graphql.Int}, "question": &graphql.Field{Type: graphql.String}, "cueCard": &graphql.Field{Type: graphql.String}, "preparationSec": &graphql.Field{Type: graphql.Int}, "answerSec": &graphql.Field{Type: graphql.Int}}})
+	speakingTurnType := graphql.NewObject(graphql.ObjectConfig{Name: "SpeakingTurn", Fields: graphql.Fields{"part": &graphql.Field{Type: graphql.Int}, "promptIndex": &graphql.Field{Type: graphql.Int}, "prompt": &graphql.Field{Type: graphql.String}, "transcript": &graphql.Field{Type: graphql.String}, "audioUrl": &graphql.Field{Type: graphql.String}, "examinerText": &graphql.Field{Type: graphql.String}, "examinerAudioUrl": &graphql.Field{Type: graphql.String}, "audioEvidence": &graphql.Field{Type: graphql.Boolean}, "asrProvider": &graphql.Field{Type: graphql.String}, "asrModel": &graphql.Field{Type: graphql.String}}})
+	speakingEvaluationType := graphql.NewObject(graphql.ObjectConfig{Name: "SpeakingEvaluation", Fields: graphql.Fields{"fluencyCoherence": &graphql.Field{Type: graphql.Float}, "textCoherence": &graphql.Field{Type: graphql.Float}, "lexicalResource": &graphql.Field{Type: graphql.Float}, "grammarAccuracy": &graphql.Field{Type: graphql.Float}, "pronunciation": &graphql.Field{Type: graphql.Float}, "overallBand": &graphql.Field{Type: graphql.Float}, "isPartial": &graphql.Field{Type: graphql.Boolean}, "assessmentMode": &graphql.Field{Type: graphql.String}, "strengths": &graphql.Field{Type: graphql.NewList(graphql.String)}, "improvements": &graphql.Field{Type: graphql.NewList(graphql.String)}, "evidence": &graphql.Field{Type: graphql.NewList(graphql.String)}, "summary": &graphql.Field{Type: graphql.String}}})
+	speakingType := graphql.NewObject(graphql.ObjectConfig{Name: "SpeakingSession", Fields: graphql.Fields{"id": &graphql.Field{Type: graphql.String}, "status": &graphql.Field{Type: graphql.String}, "part": &graphql.Field{Type: graphql.Int}, "promptIndex": &graphql.Field{Type: graphql.Int}, "pendingPromptIndex": &graphql.Field{Type: graphql.Int}, "processingMessage": &graphql.Field{Type: graphql.String}, "lastError": &graphql.Field{Type: graphql.String}, "prompts": &graphql.Field{Type: graphql.NewList(speakingPromptType)}, "turns": &graphql.Field{Type: graphql.NewList(speakingTurnType)}, "evaluation": &graphql.Field{Type: speakingEvaluationType}}})
 	writingEvaluationType := graphql.NewObject(graphql.ObjectConfig{Name: "WritingEvaluation", Fields: graphql.Fields{"overallScore": &graphql.Field{Type: graphql.Float}, "grammarScore": &graphql.Field{Type: graphql.Float}, "vocabularyScore": &graphql.Field{Type: graphql.Float}, "coherenceScore": &graphql.Field{Type: graphql.Float}, "taskResponseScore": &graphql.Field{Type: graphql.Float}, "strengths": &graphql.Field{Type: graphql.NewList(graphql.String)}, "issues": &graphql.Field{Type: graphql.NewList(graphql.String)}, "suggestions": &graphql.Field{Type: graphql.NewList(graphql.String)}, "revisedExcerpt": &graphql.Field{Type: graphql.String}, "summary": &graphql.Field{Type: graphql.String}}})
+	speakingPromptType.AddFieldConfig("questionId", &graphql.Field{Type: graphql.String})
+	speakingPromptType.AddFieldConfig("source", &graphql.Field{Type: graphql.String})
+	speakingPromptType.AddFieldConfig("audioUrl", &graphql.Field{Type: graphql.String})
+	writingEvaluationType.AddFieldConfig("bandEstimate", &graphql.Field{Type: graphql.Float})
+	writingEvaluationType.AddFieldConfig("evidence", &graphql.Field{Type: graphql.NewList(graphql.String)})
+	mockExamResultType.AddFieldConfig("writingEvaluations", &graphql.Field{Type: graphql.NewList(writingEvaluationType)})
+	mockExamResultType.AddFieldConfig("translationEvaluation", &graphql.Field{Type: writingEvaluationType})
 	writingSessionType := graphql.NewObject(graphql.ObjectConfig{Name: "WritingSession", Fields: graphql.Fields{
 		"id": &graphql.Field{Type: graphql.String}, "exam": &graphql.Field{Type: graphql.String}, "timeLimitSeconds": &graphql.Field{Type: graphql.Int}, "prompt": &graphql.Field{Type: writingPromptType}, "essay": &graphql.Field{Type: graphql.String}, "wordCount": &graphql.Field{Type: graphql.Int}, "status": &graphql.Field{Type: graphql.String}, "progressMessage": &graphql.Field{Type: graphql.String}, "evaluation": &graphql.Field{Type: writingEvaluationType},
 		"startedAt": &graphql.Field{Type: graphql.String, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -539,8 +662,12 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 				"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)},
 			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				userID, _ := p.Context.Value(UserIDKey).(string)
+				if userID == "" {
+					return nil, errors.New("unauthorized")
+				}
 				id := p.Args["id"].(string)
-				return svc.Theater(id)
+				return svc.Theater(userID, id)
 			},
 		},
 		"sharedTheater": &graphql.Field{
@@ -635,6 +762,20 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 				return svc.GetRoleplaySession(userID, p.Args["sessionId"].(string))
 			},
 		},
+		"speakingSession": &graphql.Field{Type: speakingType, Args: graphql.FieldConfigArgument{"sessionId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.GetSpeakingSession(userID, p.Args["sessionId"].(string))
+		}},
+		"latestSpeakingSession": &graphql.Field{Type: speakingType, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.LatestSpeakingSession(userID)
+		}},
 		"writingSession": &graphql.Field{Type: writingSessionType, Args: graphql.FieldConfigArgument{"sessionId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 			userID, _ := p.Context.Value(UserIDKey).(string)
 			if userID == "" {
@@ -648,6 +789,21 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 				return nil, errors.New("unauthorized")
 			}
 			return svc.WritingSessions(userID)
+		}},
+		"mockExam": &graphql.Field{Type: mockExamType, Args: graphql.FieldConfigArgument{"id": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.MockExam(userID, p.Args["id"].(string))
+		}},
+		"mockExamGenerationCost": &graphql.Field{Type: graphql.Int, Resolve: func(p graphql.ResolveParams) (interface{}, error) { return svc.MockExamGenerationCost(), nil }},
+		"mockExams": &graphql.Field{Type: graphql.NewList(mockExamType), Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.MockExams(userID)
 		}},
 	}
 	if svc.CommercialFeaturesEnabled() {
@@ -1154,6 +1310,64 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 			}
 			return true, nil
 		}},
+		"startMockExam": &graphql.Field{Type: mockExamType, Args: graphql.FieldConfigArgument{"exam": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)}, "targetBand": &graphql.ArgumentConfig{Type: graphql.Float, DefaultValue: 7.0}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.StartMockExam(userID, p.Args["exam"].(string), p.Args["targetBand"].(float64))
+		}},
+		"retryMockExam": &graphql.Field{Type: mockExamType, Args: graphql.FieldConfigArgument{"examId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.RetryMockExam(userID, p.Args["examId"].(string))
+		}},
+		"beginMockExam": &graphql.Field{Type: mockExamType, Args: graphql.FieldConfigArgument{"examId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.BeginMockExam(userID, p.Args["examId"].(string))
+		}},
+		"saveMockExamAnswers": &graphql.Field{Type: mockExamType, Args: graphql.FieldConfigArgument{
+			"examId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}, "sectionKey": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+			"answers": &graphql.ArgumentConfig{Type: graphql.NewList(graphql.NewNonNull(graphql.String))}, "responses": &graphql.ArgumentConfig{Type: graphql.NewList(graphql.NewNonNull(graphql.String))},
+		}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.SaveMockExamAnswers(userID, p.Args["examId"].(string), p.Args["sectionKey"].(string), graphQLStringList(p.Args["answers"]), graphQLStringList(p.Args["responses"]))
+		}},
+		"submitMockExamSection": &graphql.Field{Type: mockExamType, Args: graphql.FieldConfigArgument{
+			"examId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}, "sectionKey": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+			"answers": &graphql.ArgumentConfig{Type: graphql.NewList(graphql.NewNonNull(graphql.String))}, "responses": &graphql.ArgumentConfig{Type: graphql.NewList(graphql.NewNonNull(graphql.String))},
+		}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.SubmitMockExamSection(userID, p.Args["examId"].(string), p.Args["sectionKey"].(string), graphQLStringList(p.Args["answers"]), graphQLStringList(p.Args["responses"]))
+		}},
+		"finishMockExam": &graphql.Field{Type: mockExamType, Args: graphql.FieldConfigArgument{"examId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.FinishMockExam(userID, p.Args["examId"].(string))
+		}},
+		"deleteMockExam": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean), Args: graphql.FieldConfigArgument{"examId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return false, errors.New("未登录")
+			}
+			if err := svc.DeleteMockExam(userID, p.Args["examId"].(string)); err != nil {
+				return false, err
+			}
+			return true, nil
+		}},
 		"endRoleplay": &graphql.Field{
 			Type: roleplayType,
 			Args: graphql.FieldConfigArgument{
@@ -1167,6 +1381,44 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 				return svc.EndRoleplay(userID, p.Args["sessionId"].(string))
 			},
 		},
+		"startSpeakingSession": &graphql.Field{Type: speakingType, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.StartSpeakingSession(userID)
+		}},
+		"submitSpeakingTurn": &graphql.Field{Type: speakingType, Args: graphql.FieldConfigArgument{"sessionId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}, "promptIndex": &graphql.ArgumentConfig{Type: graphql.Int}, "audioDataUrl": &graphql.ArgumentConfig{Type: graphql.String}, "text": &graphql.ArgumentConfig{Type: graphql.String}, "language": &graphql.ArgumentConfig{Type: graphql.String}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			promptIndex, hasIndex := p.Args["promptIndex"].(int)
+			if !hasIndex {
+				return nil, errors.New("缺少当前题号，请刷新口语页面后重试")
+			}
+			audio, _ := p.Args["audioDataUrl"].(string)
+			text, _ := p.Args["text"].(string)
+			language, _ := p.Args["language"].(string)
+			return svc.SubmitSpeakingTurn(userID, p.Args["sessionId"].(string), promptIndex, audio, text, language)
+		}},
+		"finishSpeakingSession": &graphql.Field{Type: speakingType, Args: graphql.FieldConfigArgument{"sessionId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return nil, errors.New("unauthorized")
+			}
+			return svc.FinishSpeakingSession(userID, p.Args["sessionId"].(string))
+		}},
+		"abandonSpeakingSession": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean), Args: graphql.FieldConfigArgument{"sessionId": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.ID)}}, Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			userID, _ := p.Context.Value(UserIDKey).(string)
+			if userID == "" {
+				return false, errors.New("unauthorized")
+			}
+			if err := svc.AbandonSpeakingSession(userID, p.Args["sessionId"].(string)); err != nil {
+				return false, err
+			}
+			return true, nil
+		}},
 	}
 	if !svc.UserServiceConfigurationEnabled() {
 		delete(mutationFields, "updateModelConfig")
@@ -1186,12 +1438,27 @@ func NewSchema(svc *service.Service) (graphql.Schema, error) {
 			return svc.CreatePaymentOrder(userID, p.Args["productCode"].(string), channel)
 		}}
 	}
+	registerListeningTraining(svc, query, mutationFields)
 	mutation := graphql.NewObject(graphql.ObjectConfig{Name: "Mutation", Fields: mutationFields})
 
 	return graphql.NewSchema(graphql.SchemaConfig{
 		Query:    query,
 		Mutation: mutation,
 	})
+}
+
+func graphQLStringList(value interface{}) []string {
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if text, ok := item.(string); ok {
+			result = append(result, text)
+		}
+	}
+	return result
 }
 
 func billingStatusTimeResolver(extract func(domain.BillingStatus) time.Time) graphql.FieldResolveFn {

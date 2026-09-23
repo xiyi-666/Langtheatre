@@ -123,6 +123,7 @@ export function WritingDetailPage() {
       {isDeleting ? <p role="status" aria-live="polite">正在删除，请稍候…</p> : null}
       {deleteError ? <p className="field-error" role="alert">{deleteError}</p> : null}
       {session.status === "EVALUATING" ? <p className="muted-note">AI 正在评分，评分完成后可删除该练习。</p> : null}
+      {session.status === "FAILED" ? <section className="card writing-loading"><h3>评分系统暂时不可用</h3><p>{session.progressMessage}</p><p>系统没有生成任何替代分数，请稍后重新提交。</p></section> : null}
       <section className="writing-workspace">
         <article className="card writing-prompt-card">
           <div className="writing-timer"><Clock3 size={18} /><strong>{session.status === "WRITING" ? formatRemaining(remaining) : session.status === "EVALUATING" ? "评分中" : "已完成"}</strong></div>

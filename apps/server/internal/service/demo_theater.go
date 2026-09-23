@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/linguaquest/server/internal/contentquality"
 	"github.com/linguaquest/server/internal/domain"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -332,6 +333,7 @@ func demoTheaterFixtures(userID string) []domain.Theater {
 	base := demoTheaterBaseFixtures(userID)
 	result := make([]domain.Theater, 0, 6)
 	for _, item := range base {
+		item.ProductionApproval = contentquality.DemoApproval()
 		result = append(result, item)
 		for _, band := range []float64{6.5, 7.5} {
 			copy := item
@@ -342,6 +344,7 @@ func demoTheaterFixtures(userID string) []domain.Theater {
 			copy.Difficulty = band
 			copy.Topic = fmt.Sprintf("%s · Band %.1f", item.Topic, band)
 			copy.SceneDescription = fmt.Sprintf("%s · %.1f 难度档，包含更长的回应、原因解释和自然衔接。", item.SceneDescription, band)
+			copy.ProductionApproval = contentquality.DemoApproval()
 			for index := range copy.Dialogues {
 				copy.Dialogues[index].AudioURL = ""
 			}

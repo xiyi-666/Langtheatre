@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -20,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/linguaquest/server/internal/ai"
 	"github.com/linguaquest/server/internal/analytics"
 	"github.com/linguaquest/server/internal/auth"
 	"github.com/linguaquest/server/internal/contentquality"
@@ -71,6 +73,15 @@ type Store interface {
 	GetWritingSession(sessionID string, userID string) (domain.WritingSession, error)
 	ListWritingSessions(userID string) ([]domain.WritingSession, error)
 	DeleteWritingSession(userID string, sessionID string) error
+	SaveMockExam(exam domain.MockExam) (domain.MockExam, error)
+	GetMockExam(examID string, userID string) (domain.MockExam, error)
+	ListMockExams(userID string) ([]domain.MockExam, error)
+	UpdateMockExam(exam domain.MockExam) (domain.MockExam, error)
+	DeleteMockExam(examID string, userID string) error
+	CreateSpeakingSession(session domain.SpeakingSession) (domain.SpeakingSession, error)
+	GetSpeakingSession(sessionID string, userID string) (domain.SpeakingSession, error)
+	LatestSpeakingSession(userID string) (*domain.SpeakingSession, error)
+	UpdateSpeakingSession(session domain.SpeakingSession) (domain.SpeakingSession, error)
 	GetDemoAssignment(userID string) (string, error)
 	SaveDemoAssignment(userID string, difficulty string) error
 }
@@ -162,6 +173,7 @@ type Service struct {
 	publicAppURL             string
 	requireEmailVerification bool
 	tasks                    *taskQueue
+	mockMu                   sync.Mutex
 	readingMu                sync.RWMutex
 	readingMaterials         map[string]domain.ReadingMaterial
 	readingAudioJobs         map[string]bool
@@ -199,6 +211,10 @@ type loginFailureState struct {
 type roleplayEngine interface {
 	RoleplayTurn(ctx context.Context, theater domain.Theater, userRole string, transcript []domain.Dialogue, userReply string) (domain.RoleplayTurnEval, error)
 	RoleplaySummary(ctx context.Context, theater domain.Theater, transcript []domain.Dialogue, currentScore int) (string, error)
+}
+
+type speakingEngine interface {
+	EvaluateSpeaking(ctx context.Context, prompts []domain.SpeakingPrompt, turns []domain.SpeakingTurn) (domain.SpeakingEvaluation, error)
 }
 
 func New(store Store, session SessionStore, generator TheaterGenerator, tts SpeechSynthesizer, jwtSecret string) *Service {
@@ -1718,6 +1734,7 @@ func (s *Service) GenerateTheaterWithVoices(userID string, language string, topi
 		GenerationMessage:  "任务已排队",
 		Dialogues:          []domain.Dialogue{},
 		QuizQuestions:      []domain.QuizQuestion{},
+		ProductionApproval: contentquality.PendingApproval(),
 		CreatedAt:          time.Now(),
 	}
 	release, err := s.reserveAIRequest(userID)
@@ -1832,6 +1849,28 @@ func (s *Service) generateTheaterAsync(ctx context.Context, theater domain.Theat
 	theater.IsFavorite = current.IsFavorite
 	theater.ShareCode = current.ShareCode
 	theater.CreatedAt = current.CreatedAt
+	_ = s.updateTheaterProgress(theater.ID, "GENERATING", 95, "正在进行独立质量审核")
+	reviewer, reviewErr := productionReviewer[theaterProductionReviewer](s.generator)
+	if reviewErr == nil {
+		theater.ProductionApproval, reviewErr = reviewer.ReviewTheater(ctx, theater)
+	} else {
+		hash, _ := contentquality.TheaterContentHash(theater)
+		theater.ProductionApproval = inconclusiveApproval(contentquality.TheaterRubricVersion, hash, reviewErr.Error())
+	}
+	if reviewErr == nil {
+		reviewErr = ensureTheaterProductionApproved(theater)
+	}
+	if reviewErr != nil {
+		log.Printf("theater production review failed theater_id=%s err=%v", theater.ID, reviewErr)
+		theater.Status = "FAILED"
+		theater.GenerationProgress = 100
+		theater.GenerationMessage = "内容未通过独立质量审核，已隔离且不会用于练习或评分"
+		if _, err = s.store.SaveTheater(theater); err != nil {
+			log.Printf("persist rejected theater failed theater_id=%s err=%v", theater.ID, err)
+		}
+		s.RefundAIConfidence(theater.UserID, AICreditActionTheaterGeneration, theater.ID, aiCreditAmount(AICreditActionTheaterGeneration))
+		return
+	}
 	if _, err := s.store.SaveTheater(theater); err != nil {
 		log.Printf("persist ready theater failed theater_id=%s err=%v", theater.ID, err)
 		s.RefundAIConfidence(theater.UserID, AICreditActionTheaterGeneration, theater.ID, aiCreditAmount(AICreditActionTheaterGeneration))
@@ -2297,10 +2336,19 @@ func simplifiedToTraditionalHK(input string) string {
 	return replacer.Replace(strings.TrimSpace(input))
 }
 
-func (s *Service) Theater(id string) (domain.Theater, error) {
+func (s *Service) Theater(userID string, id string) (domain.Theater, error) {
 	theater, err := s.store.GetTheater(id)
 	if err != nil {
 		return domain.Theater{}, err
+	}
+	if strings.TrimSpace(userID) == "" || theater.UserID != userID {
+		return domain.Theater{}, errors.New("剧场不存在或无权访问")
+	}
+	if err = ensureTheaterProductionApproved(theater); err != nil {
+		if s.isDemoAccount(userID) && approvalIsDemoOnly(theater.ProductionApproval) {
+			return s.migrateTheaterAudioDataURLs(theater)
+		}
+		return redactTheaterForQuality(theater), nil
 	}
 	return s.migrateTheaterAudioDataURLs(theater)
 }
@@ -2422,6 +2470,9 @@ func (s *Service) SharedTheater(shareCode string) (domain.Theater, error) {
 	if err != nil {
 		return domain.Theater{}, err
 	}
+	if err = ensureTheaterProductionApproved(theater); err != nil {
+		return domain.Theater{}, productionGateError("剧场", err)
+	}
 	return s.migrateTheaterAudioDataURLs(theater)
 }
 
@@ -2436,6 +2487,12 @@ func (s *Service) MyTheaters(userID string, language string, status string, favo
 		return nil, err
 	}
 	for i := range items {
+		if approvalErr := ensureTheaterProductionApproved(items[i]); approvalErr != nil {
+			if !(s.isDemoAccount(userID) && approvalIsDemoOnly(items[i].ProductionApproval)) {
+				items[i] = redactTheaterForQuality(items[i])
+			}
+			continue
+		}
 		migrated, migrateErr := s.migrateTheaterAudioDataURLs(items[i])
 		if migrateErr != nil {
 			log.Printf("theater audio data migration failed theater_id=%s err=%v", items[i].ID, migrateErr)
@@ -2457,6 +2514,9 @@ func (s *Service) ShareTheater(userID string, theaterID string) (string, error) 
 	}
 	if theater.UserID != userID {
 		return "", errors.New("theater not found")
+	}
+	if err = ensureTheaterProductionApproved(theater); err != nil {
+		return "", productionGateError("剧场", err)
 	}
 	existing := strings.TrimSpace(theater.ShareCode)
 	if existing != "" {
@@ -2480,6 +2540,12 @@ func (s *Service) SubmitAnswers(userID string, theaterID string, answers []strin
 	}
 	if err = ensureTheaterReady(theater); err != nil {
 		return domain.PracticeResult{}, err
+	}
+	if theater.UserID != userID {
+		return domain.PracticeResult{}, errors.New("剧场不存在或无权访问")
+	}
+	if err = ensureTheaterProductionApproved(theater); err != nil {
+		return domain.PracticeResult{}, productionGateError("剧场", err)
 	}
 	quiz := theater.QuizQuestions
 	total := len(quiz)
@@ -2518,6 +2584,9 @@ func (s *Service) SubmitReadingAnswers(userID string, materialID string, answers
 	material, err := s.store.GetReadingMaterial(materialID, userID)
 	if err != nil {
 		return domain.PracticeResult{}, err
+	}
+	if err = ensureReadingProductionApproved(material); err != nil {
+		return domain.PracticeResult{}, productionGateError("阅读材料", err)
 	}
 	questions := material.Questions
 	total := len(questions)
@@ -2631,6 +2700,11 @@ func (s *Service) GenerateReadingMaterialWithInput(userID string, input domain.R
 			level = "upper-intermediate"
 		}
 	}
+	// IELTS 页面历史上统一传 upper-intermediate；7.0+ 的正式目标应由
+	// Band 驱动，避免生成器和独立审核收到互相矛盾的难度标签。
+	if exam == "IELTS" && input.Band >= 7.0 && strings.EqualFold(level, "upper-intermediate") {
+		level = "advanced"
+	}
 	metadata := ielts.NormalizeReadingMetadata(exam, topic, level, ielts.ReadingMetadata{
 		Band: input.Band, Stage: input.Stage, Section: input.Section, SkillFocus: input.SkillFocus,
 		QuestionType: input.QuestionType, ScenarioFamily: input.ScenarioFamily,
@@ -2656,6 +2730,7 @@ func (s *Service) GenerateReadingMaterialWithInput(userID string, input domain.R
 		Status:             "GENERATING",
 		GenerationProgress: 5,
 		GenerationMessage:  "任务已排队",
+		ProductionApproval: contentquality.PendingApproval(),
 		CreatedAt:          time.Now(),
 	}
 	release, err := s.reserveAIRequest(userID)
@@ -2702,42 +2777,92 @@ func (s *Service) generateReadingAsync(ctx context.Context, material domain.Read
 		Band: material.Band, Stage: material.Stage, Section: material.Section, SkillFocus: material.SkillFocus,
 		QuestionType: material.QuestionType, ScenarioFamily: material.ScenarioFamily,
 	}
-	var generated []domain.Dialogue
 	var questions []domain.QuizQuestion
+	var passage string
+	var vocabulary []string
+	var approval domain.ProductionApproval
 	var err error
-	if generator, ok := s.generator.(ReadingGenerator); ok {
-		generated, questions, err = generator.GenerateReading(ctx, request)
-	} else {
-		generated, questions, err = s.generator.Generate(ctx, material.Language, readingGenerationTopic(material.Exam, material.Topic, ielts.ReadingMetadata{
-			Band: material.Band, Stage: material.Stage, Section: material.Section, SkillFocus: material.SkillFocus,
-			QuestionType: material.QuestionType, ScenarioFamily: material.ScenarioFamily,
-		}), difficulty, "APPRECIATION")
+	reviewer, reviewerErr := productionReviewer[readingProductionReviewer](s.generator)
+	if reviewerErr != nil {
+		log.Printf("reading production reviewer unavailable material_id=%s err=%v", material.ID, reviewerErr)
+		s.RefundAIConfidence(material.UserID, AICreditActionReadingGeneration, material.ID, aiCreditAmount(AICreditActionReadingGeneration))
+		_ = s.updateReadingProgress(material.ID, material.UserID, "FAILED", 0, "阅读质量审核服务暂时不可用，请稍后重试")
+		return
 	}
-	if err != nil || len(generated) == 0 || len(questions) < 5 {
-		if err == nil {
-			err = errors.New("reading generation returned insufficient content")
+	const maxReadingProductionAttempts = 3
+	approved := false
+	for attempt := 1; attempt <= maxReadingProductionAttempts; attempt++ {
+		_ = s.updateReadingProgress(material.ID, material.UserID, "GENERATING", 15+(attempt-1)*10, fmt.Sprintf("正在生成并审核阅读文本 %d/%d", attempt, maxReadingProductionAttempts))
+		var generated []domain.Dialogue
+		if generator, ok := s.generator.(ReadingGenerator); ok {
+			generated, questions, err = generator.GenerateReading(ctx, request)
+		} else {
+			generated, questions, err = s.generator.Generate(ctx, material.Language, readingGenerationTopic(material.Exam, material.Topic, ielts.ReadingMetadata{
+				Band: material.Band, Stage: material.Stage, Section: material.Section, SkillFocus: material.SkillFocus,
+				QuestionType: material.QuestionType, ScenarioFamily: material.ScenarioFamily,
+			}), difficulty, "APPRECIATION")
 		}
+		if err != nil || len(generated) == 0 || len(questions) < 5 {
+			if err == nil {
+				err = errors.New("reading generation returned insufficient content")
+			}
+			break
+		}
+		if len(questions) > 5 {
+			questions = questions[:5]
+		}
+		passageParts := make([]string, 0, len(generated))
+		for _, dialogue := range generated {
+			if line := strings.TrimSpace(dialogue.Text); line != "" {
+				passageParts = append(passageParts, line)
+			}
+		}
+		passage = strings.Join(passageParts, "\n")
+		if strings.TrimSpace(passage) == "" {
+			err = errors.New("reading generation returned an empty passage")
+			break
+		}
+		vocabulary = extractReadingVocabulary(passage)
+		candidate := material
+		candidate.Passage = passage
+		candidate.Vocabulary = vocabulary
+		candidate.Questions = questions
+		approval, err = reviewer.ReviewReading(ctx, candidate)
+		candidate.ProductionApproval = approval
+		if err == nil {
+			err = ensureReadingProductionApproved(candidate)
+		}
+		if err == nil {
+			approved = true
+			break
+		}
+		log.Printf("reading production review attempt failed material_id=%s attempt=%d/%d err=%v", material.ID, attempt, maxReadingProductionAttempts, err)
+		if !errors.Is(err, ai.ErrProductionReviewRejected) || attempt == maxReadingProductionAttempts {
+			break
+		}
+		feedback, _ := json.Marshal(struct {
+			Diagnostic string
+			Passage    string
+			Questions  []domain.QuizQuestion
+		}{err.Error(), passage, questions})
+		request.RevisionFeedback = string(feedback)
+	}
+	if !approved {
 		log.Printf("reading generation failed material_id=%s err=%v", material.ID, err)
 		s.RefundAIConfidence(material.UserID, AICreditActionReadingGeneration, material.ID, aiCreditAmount(AICreditActionReadingGeneration))
-		_ = s.updateReadingProgress(material.ID, material.UserID, "FAILED", 0, "阅读文本生成失败，请稍后重试")
+		_ = s.updateReadingMaterial(material.ID, material.UserID, func(current *domain.ReadingMaterial) {
+			current.Status = "FAILED"
+			current.GenerationProgress = 100
+			current.GenerationMessage = "阅读内容未通过独立质量审核，本次点数或使用次数已退回。记录编号：" + material.ID
+			if !errors.Is(err, ai.ErrProductionReviewRejected) {
+				current.GenerationMessage = "阅读生成或审核服务暂时不可用，尚未完成质量检验，本次点数或使用次数已退回。记录编号：" + material.ID
+			}
+			if strings.TrimSpace(approval.Status) != "" {
+				current.ProductionApproval = approval
+			}
+		})
 		return
 	}
-	if len(questions) > 5 {
-		questions = questions[:5]
-	}
-	passageParts := make([]string, 0, len(generated))
-	for _, dialogue := range generated {
-		if line := strings.TrimSpace(dialogue.Text); line != "" {
-			passageParts = append(passageParts, line)
-		}
-	}
-	passage := strings.Join(passageParts, "\n")
-	if strings.TrimSpace(passage) == "" {
-		s.RefundAIConfidence(material.UserID, AICreditActionReadingGeneration, material.ID, aiCreditAmount(AICreditActionReadingGeneration))
-		_ = s.updateReadingProgress(material.ID, material.UserID, "FAILED", 0, "阅读文本生成失败，请稍后重试")
-		return
-	}
-	vocabulary := extractReadingVocabulary(passage)
 	_ = s.updateReadingProgress(material.ID, material.UserID, "GENERATING", 55, "正在分析词汇与语法")
 	analysis := domain.ReadingAnalysis{}
 	if analyzer, ok := s.generator.(ReadingAnalyzer); ok {
@@ -2757,6 +2882,7 @@ func (s *Service) generateReadingAsync(ctx context.Context, material domain.Read
 	current.Passage = passage
 	current.Vocabulary = vocabulary
 	current.Questions = questions
+	current.ProductionApproval = approval
 	current.VocabularyItems = analysis.VocabularyItems
 	current.AssociationSentences = analysis.AssociationSentences
 	current.GrammarInsights = analysis.GrammarInsights
@@ -2812,7 +2938,20 @@ func readingMaterialTitle(exam string, topic string, metadata ielts.ReadingMetad
 		cleanTopic = "Reading Practice"
 	}
 	cleanTopic = sentenceSubject(cleanTopic)
+	// 中文主题仍保留在元数据和生成请求中，英文练习标题不直接混入中文。
+	if containsHanText(cleanTopic) {
+		cleanTopic = "Academic Practice Passage"
+	}
 	return fmt.Sprintf("%s Reading Drill: %s", strings.TrimSpace(exam), cleanTopic)
+}
+
+func containsHanText(value string) bool {
+	for _, r := range value {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }
 
 func readingGenerationTopic(exam string, topic string, metadata ielts.ReadingMetadata) string {
@@ -3218,6 +3357,7 @@ func (s *Service) generateReadingAudioWithContext(ctx context.Context, material 
 	} else {
 		log.Printf("reading audio data migration failed material_id=%s err=%v", material.ID, err)
 	}
+	shouldReviewForProduction := strings.EqualFold(strings.TrimSpace(material.ProductionApproval.Status), contentquality.ApprovalPending)
 	chunks := splitTextChunks(material.Passage, 420)
 	audioURLs := append(make([]string, 0, len(chunks)), material.AudioURLs...)
 	if len(audioURLs) > len(chunks) {
@@ -3234,6 +3374,9 @@ func (s *Service) generateReadingAudioWithContext(ctx context.Context, material 
 			m.AudioURL = audioURLs[0]
 		}); err != nil {
 			log.Printf("reading audio resume ready persist failed material_id=%s err=%v", material.ID, err)
+		}
+		if shouldReviewForProduction {
+			s.reviewReadingForProduction(ctx, material.ID, material.UserID)
 		}
 		return
 	}
@@ -3296,7 +3439,46 @@ func (s *Service) generateReadingAudioWithContext(ctx context.Context, material 
 		}
 	}); err != nil {
 		log.Printf("reading audio ready state persist failed material_id=%s err=%v", material.ID, err)
+		return
 	}
+	if shouldReviewForProduction {
+		s.reviewReadingForProduction(ctx, material.ID, material.UserID)
+	}
+}
+
+func (s *Service) reviewReadingForProduction(ctx context.Context, materialID, userID string) {
+	material, err := s.store.GetReadingMaterial(materialID, userID)
+	if err != nil {
+		log.Printf("reading production review load failed material_id=%s err=%v", materialID, err)
+		return
+	}
+	reviewer, reviewErr := productionReviewer[readingProductionReviewer](s.generator)
+	if reviewErr == nil {
+		material.ProductionApproval, reviewErr = reviewer.ReviewReading(ctx, material)
+	} else {
+		hash, _ := contentquality.ReadingContentHash(material)
+		material.ProductionApproval = inconclusiveApproval(contentquality.ReadingRubricVersion, hash, reviewErr.Error())
+	}
+	if reviewErr == nil {
+		reviewErr = ensureReadingProductionApproved(material)
+	}
+	if reviewErr != nil {
+		log.Printf("reading production review failed material_id=%s err=%v", materialID, reviewErr)
+		material.Status = "FAILED"
+		material.GenerationProgress = 100
+		material.GenerationMessage = "内容未通过独立质量审核，已隔离且不会用于练习或评分"
+		material.GenerationNote = strings.TrimSpace(material.GenerationNote + " | production review rejected or inconclusive")
+		s.RefundAIConfidence(material.UserID, AICreditActionReadingGeneration, material.ID, aiCreditAmount(AICreditActionReadingGeneration))
+	} else {
+		material.Status = "READY"
+		material.GenerationProgress = 100
+		material.GenerationMessage = "生成完成并通过质量审核"
+	}
+	if _, err = s.store.UpdateReadingMaterialExisting(material); err != nil {
+		log.Printf("reading production review persist failed material_id=%s err=%v", materialID, err)
+		return
+	}
+	s.cacheReadingMaterial(material)
 }
 
 func (s *Service) updateReadingProgress(materialID string, userID string, status string, progress int, message string) error {
@@ -3369,6 +3551,12 @@ func (s *Service) ReadingMaterials(userID string, exam string) ([]domain.Reading
 	queued := 0
 	allowListRetry := s.allowReadingListAudioRetry(userID, exam, readingListRetryCooldown)
 	for i := range result {
+		if approvalErr := ensureReadingProductionApproved(result[i]); approvalErr != nil {
+			if !(s.isDemoAccount(userID) && approvalIsDemoOnly(result[i].ProductionApproval)) {
+				result[i] = redactReadingForQuality(result[i])
+			}
+			continue
+		}
 		if migrated, migrateErr := s.migrateReadingAudioDataURLs(result[i]); migrateErr == nil {
 			result[i] = migrated
 		} else {
@@ -3504,14 +3692,13 @@ func (s *Service) allowReadingListAudioRetry(userID string, exam string, cooldow
 func (s *Service) ReadingMaterial(userID string, materialID string) (domain.ReadingMaterial, error) {
 	item, err := s.store.GetReadingMaterial(materialID, userID)
 	if err != nil {
-		if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-			return domain.ReadingMaterial{}, err
+		return domain.ReadingMaterial{}, errors.New("阅读材料不存在或无权访问")
+	}
+	if approvalErr := ensureReadingProductionApproved(item); approvalErr != nil {
+		if s.isDemoAccount(userID) && approvalIsDemoOnly(item.ProductionApproval) {
+			return item, nil
 		}
-		item, err = s.store.GetReadingMaterial(materialID, "")
-		if err != nil {
-			return domain.ReadingMaterial{}, err
-		}
-		log.Printf("reading material loaded by id fallback material_id=%s user_id=%s", materialID, userID)
+		return redactReadingForQuality(item), nil
 	}
 	if migrated, migrateErr := s.migrateReadingAudioDataURLs(item); migrateErr == nil {
 		item = migrated
@@ -3666,8 +3853,14 @@ func (s *Service) StartRoleplay(userID string, theaterID string, userRole string
 	if err != nil {
 		return domain.RoleplaySession{}, err
 	}
+	if theater.UserID != userID {
+		return domain.RoleplaySession{}, errors.New("剧场不存在或无权访问")
+	}
 	if err = ensureTheaterReady(theater); err != nil {
 		return domain.RoleplaySession{}, err
+	}
+	if err = ensureTheaterProductionApproved(theater); err != nil {
+		return domain.RoleplaySession{}, productionGateError("剧场", err)
 	}
 	if !strings.EqualFold(strings.TrimSpace(theater.Mode), "ROLEPLAY") {
 		return domain.RoleplaySession{}, errors.New("当前剧场不是角色扮演模式")

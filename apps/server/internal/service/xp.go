@@ -55,7 +55,7 @@ func learningXPAmount(activity string, quality int) int {
 	switch activity {
 	case "THEATER_PRACTICE":
 		return 10 + quality*22/100
-	case "READING_PRACTICE":
+	case "READING_PRACTICE", "LISTENING_PRACTICE":
 		return 10 + quality*24/100
 	case "ROLEPLAY_COMPLETE":
 		return 16 + quality*30/100

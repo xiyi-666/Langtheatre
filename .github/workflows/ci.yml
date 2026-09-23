@@ -23,6 +23,12 @@ jobs:
       - run: npm ci
       - run: npm run lint --workspace apps/client
       - run: npm run typecheck --workspace apps/client
+      - name: Install browser for mock exam regressions
+        if: matrix.edition == 'mini-program'
+        run: npx playwright install --with-deps chromium
+      - name: Verify mock exam UI lifecycle (no paid providers)
+        if: matrix.edition == 'mini-program'
+        run: npm run test:mock-exam --workspace apps/client
       # - run: npm run test --workspace apps/client  # 已无测试文件，暂时注释
       - run: npm run build:${{ matrix.edition }} --workspace apps/client
 

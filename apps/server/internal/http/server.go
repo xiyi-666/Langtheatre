@@ -348,6 +348,7 @@ func isAIRequestOperation(query string) bool {
 	for _, operation := range []string{
 		"generatetheater", "generatereading", "createvoiceprofile", "startwritingsession",
 		"submitwritingsession", "startroleplay", "submitroleplayreply", "submitroleplayaudio", "endroleplay",
+		"startmockexam", "finishmockexam",
 	} {
 		if strings.Contains(query, operation) {
 			return true
