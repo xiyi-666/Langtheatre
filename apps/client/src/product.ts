@@ -7,9 +7,20 @@ export type ReleaseNote = {
 };
 
 // 发布新版本时只需在这里置顶添加一条记录，并同步更新 package.json 的版本号。
-export const currentProductVersion = "1.0.3";
+export const currentProductVersion = "1.0.4";
 
 export const releaseNotes: ReleaseNote[] = [
+  {
+    version: "1.0.4",
+    releasedOn: "2026-09-23",
+    title: "多平台发布稳定性修复",
+    summary: "修复 Android SDK 初始化和 Linux 服务端交叉编译流程，确保最新版本可以正常生成安装包。",
+    highlights: [
+      "改用 GitHub runner 预装 Android SDK，减少 Android 包构建失败。",
+      "发布前显式下载 Go 模块并验证 amd64、arm64 服务端构建。",
+      "小程序、Android、Linux、Windows 和 macOS 使用统一版本号。"
+    ]
+  },
   {
     version: "1.0.3",
     releasedOn: "2026-09-23",

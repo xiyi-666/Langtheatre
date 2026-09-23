@@ -204,13 +204,17 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          # 统一在下一步接受许可证，避免 setup-android 自带的 license
-          # 处理在 runner 镜像更新或网络波动时提前终止整个 Android job。
-          accept-android-sdk-licenses: false
-          log-accepted-android-sdk-licenses: false
+      - name: Use preinstalled Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?GitHub runner did not provide ANDROID_HOME}"
+          test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" || {
+            echo "GitHub runner Android SDK tools are unavailable at $ANDROID_HOME" >&2
+            exit 1
+          }
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
       - name: Install Android SDK and NDK components
         shell: bash
@@ -342,8 +346,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -p=1 -mod=readonly -trimpath -o /tmp/linguaquest-api-amd64 ./cmd/server
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -v -p=1 -mod=readonly -trimpath -o /tmp/linguaquest-api-arm64 ./cmd/server
+          go mod download
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -p=1 -mod=mod -trimpath -o /tmp/linguaquest-api-amd64 ./cmd/server
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -v -p=1 -mod=mod -trimpath -o /tmp/linguaquest-api-arm64 ./cmd/server
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
