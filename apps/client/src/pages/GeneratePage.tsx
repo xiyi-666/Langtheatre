@@ -38,7 +38,7 @@ const GENERATION_AVERAGE_DURATION_MS = 70000;
 const GENERATION_STATUS_MILESTONES = [0, 0.18, 0.48, 0.82] as const;
 const THEATER_STATUS_POLL_MS = 1500;
 
-export function parseDifficultyText(value: string): { value?: number; error?: string } {
+function parseDifficultyText(value: string): { value?: number; error?: string } {
   const normalized = value.trim();
   if (!normalized) return { error: "请输入难度。" };
   if (!/^\d+(?:\.\d+)?$/.test(normalized)) return { error: "难度必须是数字。" };
