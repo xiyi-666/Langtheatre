@@ -64,7 +64,11 @@ jobs:
             set -e
             if [[ "$status" -ne 0 ]]; then
               local summary
-              summary=$(tail -n 80 "$log_file" | tr '\r\n' '  ' | sed 's/%/%25/g' | cut -c1-4000)
+              summary=$(grep -E '(^--- FAIL:|^FAIL($|[[:space:]])|^panic:|^fatal error:|^    .*(Error|expected|got|want|missing|should))' "$log_file" | tail -n 40 || true)
+              if [[ -z "$summary" ]]; then
+                summary=$(tail -n 80 "$log_file")
+              fi
+              summary=$(printf '%s' "$summary" | tr '\r\n' '  ' | sed 's/%/%25/g' | cut -c1-4000)
               echo "::error file=.github/workflows/deploy.yml,line=54::$label failed: $summary"
               return "$status"
             fi
