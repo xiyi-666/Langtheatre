@@ -70,6 +70,11 @@ func TestListeningTextFixedInputsUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	inputDir := filepath.Join(root, "..", "..", ".workflow", "ielts-runtime", "automatic-text-sampling-20260916", "fresh-text-1687051642")
+	if _, err := os.Stat(inputDir); errors.Is(err, os.ErrNotExist) {
+		t.Skip("private listening text fixtures are not checked into the public repository")
+	} else if err != nil {
+		t.Fatal(err)
+	}
 	for _, fixed := range listeningTextFixedInputs {
 		if _, err := loadListeningTextFixedInput(inputDir, fixed); err != nil {
 			t.Fatal(err)
