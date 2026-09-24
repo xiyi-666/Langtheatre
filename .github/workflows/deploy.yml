@@ -21,6 +21,7 @@ concurrency:
 jobs:
   quality-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -49,8 +50,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test ./... -cover
+          go version
           go mod download
+          # GitHub-hosted runners have limited memory; serialize package tests
+          # so SQLite-heavy tests do not compete for resources during a cold run.
+          go test -p=1 -count=1 ./... -cover
           go build -v -p=1 -mod=mod -trimpath -o /tmp/linguaquest-api ./cmd/server
 
   build-and-push-images:
