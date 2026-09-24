@@ -52,10 +52,25 @@ jobs:
           set -euo pipefail
           go version
           go mod download
-          # GitHub-hosted runners have limited memory; serialize package tests
-          # so SQLite-heavy tests do not compete for resources during a cold run.
-          go test -p=1 -count=1 ./... -cover
-          go build -v -p=1 -mod=mod -trimpath -o /tmp/linguaquest-api ./cmd/server
+          # Keep SQLite-heavy tests deterministic on a cold GitHub-hosted runner.
+          export GOMAXPROCS=2
+          run_checked() {
+            local label="$1"
+            local log_file="/tmp/${label//[^a-zA-Z0-9_-]/_}.log"
+            shift
+            set +e
+            "$@" 2>&1 | tee "$log_file"
+            local status=${PIPESTATUS[0]}
+            set -e
+            if [[ "$status" -ne 0 ]]; then
+              local summary
+              summary=$(tail -n 80 "$log_file" | tr '\r\n' '  ' | sed 's/%/%25/g' | cut -c1-4000)
+              echo "::error file=.github/workflows/deploy.yml,line=54::$label failed: $summary"
+              return "$status"
+            fi
+          }
+          run_checked server-tests go test -p=1 -parallel=1 -count=1 -timeout=12m ./... -cover
+          run_checked server-build go build -v -p=1 -mod=mod -trimpath -o /tmp/linguaquest-api ./cmd/server
 
   build-and-push-images:
     runs-on: ubuntu-latest
