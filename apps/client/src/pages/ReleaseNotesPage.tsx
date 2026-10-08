@@ -1,4 +1,4 @@
-import { ArrowLeft, BadgeCheck, CalendarDays, CheckCircle2, History, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowLeft, CalendarDays, CheckCircle2, History, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 import { currentProductVersion, releaseNotes } from "../product";
 
@@ -8,12 +8,12 @@ export function ReleaseNotesPage() {
       <section className="release-notes-shell">
         <header className="release-notes-hero">
           <Link className="release-notes-back" to="/login"><ArrowLeft size={16} /> 返回登录</Link>
-          <span className="eyebrow"><History size={15} /> Product updates</span>
+          <span className="eyebrow"><History size={15} /> Feature guide</span>
           <div className="release-notes-hero-copy">
             <div>
               <span className="release-notes-version">当前版本 · V{currentProductVersion}</span>
-              <h1>产品更新日志</h1>
-              <p>我们会在每次功能更新时记录这里，让你清楚知道 LinguaQuest 有哪些新能力和体验改进。</p>
+              <h1>版本功能介绍</h1>
+              <p>这里集中介绍 LinguaQuest 已上线的学习能力，帮助你快速了解每个版本可以做什么。</p>
             </div>
             <div className="release-notes-seal" aria-hidden><Sparkles size={24} /></div>
           </div>
@@ -38,11 +38,6 @@ export function ReleaseNotesPage() {
           ))}
         </section>
 
-        <aside className="release-notes-feedback">
-          <BadgeCheck size={18} />
-          <span><strong>产品处于内测</strong>你的每一次学习和反馈，都会帮助我们决定下一版的优先级。</span>
-          <ShieldCheck size={18} aria-hidden />
-        </aside>
       </section>
     </main>
   );
